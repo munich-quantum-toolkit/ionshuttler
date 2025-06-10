@@ -1,15 +1,29 @@
+<<<<<<< HEAD
 from src.mqt.ionshuttler.multi_shuttler.Outside.graph_utils import GraphCreator, PZCreator, ProcessingZone, create_idc_dictionary
 from src.mqt.ionshuttler.multi_shuttler.Outside.cycles import create_starting_config, find_path_edge_to_edge, get_state_idxs
 from src.mqt.ionshuttler.multi_shuttler.Outside.scheduling import get_ions
 from src.mqt.ionshuttler.multi_shuttler.Outside.shuttle import main as run_shuttle_main
+=======
+from multi_shuttler.Outside.graph_utils import GraphCreator, PZCreator, ProcessingZone, create_idc_dictionary
+from multi_shuttler.Outside.cycles import create_starting_config, find_path_edge_to_edge, get_state_idxs
+from multi_shuttler.Outside.scheduling import get_ions
+from multi_shuttler.Outside.shuttle import main as run_shuttle_main
+>>>>>>> fe28403 (update paths)
 import math
 import networkx as nx
 import numpy as np
 from datetime import datetime
+<<<<<<< HEAD
 from src.mqt.ionshuttler.multi_shuttler.Outside.plotting import plot_state
 from src.mqt.ionshuttler.multi_shuttler.Outside.graph_utils import get_idx_from_idc
 from src.mqt.ionshuttler.multi_shuttler.Outside.compilation import create_initial_sequence, create_dag, create_updated_sequence_destructive, get_front_layer_non_destructive, get_all_first_gates_and_update_sequence_non_destructive, map_front_gates_to_pzs, create_dist_dict, update_distance_map
 from src.mqt.ionshuttler.multi_shuttler.Outside.partition import get_partition
+=======
+from multi_shuttler.Outside.plotting import plot_state
+from multi_shuttler.Outside.graph_utils import get_idx_from_idc
+from multi_shuttler.Outside.compilation import create_initial_sequence, create_dag, create_updated_sequence_destructive, get_front_layer_non_destructive, get_all_first_gates_and_update_sequence_non_destructive, map_front_gates_to_pzs, create_dist_dict, update_distance_map
+from multi_shuttler.Outside.partition import get_partition
+>>>>>>> fe28403 (update paths)
 
 plot = False
 save = False
@@ -22,26 +36,41 @@ failing_junctions = 0
 # 3333 seed0 pzs2 failing junctions1 paths -> can't push through to pz because of a blockage
 archs = [
     # [5, 5, 5, 5],
+<<<<<<< HEAD
     #[3, 3, 1, 1],
      [2, 4, 1, 1],
      [2, 6, 1, 1],
      [3, 3, 1, 1],
      [4, 4, 1, 1],
      [5, 5, 1, 1]
+=======
+    #[4, 4, 1, 1],
+    # # [3, 3, 2, 2],
+>>>>>>> fe28403 (update paths)
     #[3, 3, 3, 3],   # TODO hier langsamer als ohne compilation - nutzt pz4 erst zum Schluss - partitioning praktisch max schlecht? - eval für mehr seeds und vergleiche - gate selection anpassen, dass es so kommutiert, dass alle pzs beladen? - sollte das nicht eig. schon so sein?
     #[4, 4, 1, 1],
     # [4, 4, 2, 2],
     #[3, 3, 5, 5],
     #[5, 5, 1, 1],
+<<<<<<< HEAD
     #[4, 4, 3, 3],
+=======
+    [4, 4, 3, 3],
+>>>>>>> fe28403 (update paths)
     #[5, 5, 3, 3],
     # [7, 7, 1, 1],
     # [8, 8, 1, 1]
 ]
 # run all seeds
+<<<<<<< HEAD
 seeds = [0]#, 2, 3, 4, 5]#, 6, 7, 8, 9, 10]
 time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 number_of_pzs = [1]#, 2, 3, 4]
+=======
+seeds = [0, 1]
+time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+number_of_pzs = [4]#, 2, 3, 4]
+>>>>>>> fe28403 (update paths)
 
 for m, n, v, h in archs:
     timesteps_average = {}
@@ -120,9 +149,14 @@ for m, n, v, h in archs:
 
             print(f"Number of chains: {number_of_chains}")
             
+<<<<<<< HEAD
             #algorithm = "qv_test_transpiled"
             #algorithm = "random_500_gates_no_swaps_nativegates_quantinuum_tket"
             algorithm = "qft_no_swaps_nativegates_quantinuum_tket"
+=======
+            algorithm = "random_500_gates_no_swaps_nativegates_quantinuum_tket"
+            #algorithm = "qft_no_swaps_nativegates_quantinuum_tket"
+>>>>>>> fe28403 (update paths)
             #algorithm = "full_register_access"
             qasm_file_path = (
                 #f"../../../QASM_files/{algorithm}/{algorithm}_{number_of_chains}.qasm"
@@ -260,11 +294,19 @@ for m, n, v, h in archs:
 
         print('\nseed: ', seed)
 
+<<<<<<< HEAD
         # save averages
         with open(f"benchmarks/{time}{algorithm}.txt", "a") as f:
             f.write(
             f"{m, n, v, h}, ions{number_of_chains}/pos{number_of_mz_edges}: {number_of_chains/number_of_mz_edges}, #pzs: {num_pzs}, avg_ts: {timesteps_average[num_pzs]}, avg_cpu_time: {cpu_time_average[num_pzs]}, gates: {seq_length}, baseline: {None}, use_dag: {use_dag}, paths: {paths}\n"
         )
+=======
+        # # save averages
+        # with open(f"src/benchmarks/{time}{algorithm}.txt", "a") as f:
+        #     f.write(
+        #     f"{m, n, v, h}, ions{number_of_chains}/pos{number_of_mz_edges}: {number_of_chains/number_of_mz_edges}, #pzs: {num_pzs}, avg_ts: {timesteps_average[num_pzs]}, avg_cpu_time: {cpu_time_average[num_pzs]}, gates: {seq_length}, baseline: {None}, use_dag: {use_dag}, paths: {paths}\n"
+        # )
+>>>>>>> fe28403 (update paths)
 
 for num_pzs in number_of_pzs:
     print(f"{m, n, v, h}, ions{number_of_chains}/pos{number_of_mz_edges}: {number_of_chains/number_of_mz_edges}, #pzs: {num_pzs}, average_ts: {timesteps_average[num_pzs]}, average_cpu_time: {cpu_time_average[num_pzs]}, use_dag: {use_dag}, paths: {paths}")

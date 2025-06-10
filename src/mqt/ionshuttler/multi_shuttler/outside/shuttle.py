@@ -39,7 +39,7 @@ def check_duplicates(graph: Graph) -> None:
     for idx, count in counts.items():
         edge_idc = get_idc_from_idx(graph.idc_dict, idx)
         if graph.get_edge_data(edge_idc[0], edge_idc[1])["edge_type"] != "parking_edge" and count > 1:
-            message = f"More than one ion in edge {edge_idc}, arch: {graph.arch}, timestep: {timestep}, circuit depth: {len(graph.sequence)}, seed: {graph.seed}!"
+            message = f"More than one ion in edge {edge_idc}, arch: {graph.arch}, circuit depth: {len(graph.sequence)}, seed: {graph.seed}!"
             raise AssertionError(message)
 
         if (
@@ -92,7 +92,13 @@ def shuttle(
     for pz in graph.pzs:
         prio_queue = part_prio_queues[pz.name]
         move_list = create_move_list(graph, prio_queue, pz)
+<<<<<<< HEAD:src/mqt/ionshuttler/multi_shuttler/outside/shuttle.py
         cycles, in_and_into_exit_moves = create_cycles_for_moves(graph, move_list, cycle_or_paths, pz)
+=======
+        cycles, in_and_into_exit_moves = create_cycles_for_moves(
+            graph, move_list, cycle_or_paths, pz
+        )
+>>>>>>> fe28403 (update paths):src/mqt/ionshuttler/multi_shuttler/Outside/shuttle.py
         # add cycles to all_cycles
         all_cycles = {**all_cycles, **cycles}
     out_of_entry_moves = find_out_of_entry_moves(graph, other_next_edges=[])
