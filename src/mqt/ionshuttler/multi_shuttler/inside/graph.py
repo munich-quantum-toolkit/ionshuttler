@@ -12,6 +12,10 @@ if TYPE_CHECKING:
 
 
 class Graph(nx.Graph):  # type: ignore [type-arg]
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.executed_gates_next: list[dict[str, object]] = []
+
     @property
     def junction_nodes(self) -> list[Node]:
         return self._junction_nodes

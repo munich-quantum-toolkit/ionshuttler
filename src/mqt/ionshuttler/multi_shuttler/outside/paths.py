@@ -98,7 +98,6 @@ def find_nonfree_paths(graph: Graph, paths_idcs_dict: dict[int, list[Edge]]) -> 
 
     # Compare junction nodes (with edge_IDC)
     junction_nodes = [*graph.junction_nodes]  # , graph.pzgraph_creator.processing_zone]
-    # TODO: check why path is blocked by pz move
     for path_ion_1, path_ion_2 in combinations_of_paths:
         if len(paths_idcs_dict[path_ion_1]) == 2:
             # if same edge twice -> skip (no edge if twice parking edge, otherwise only first node)

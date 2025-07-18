@@ -26,10 +26,9 @@ def is_qasm_file(file_path: Path) -> bool:
         # Read the first line of the file (7th line, specific to MQT Bench)
         first_line = ""
         for _f in range(7):
-            prev_line = first_line
             first_line = file.readline()
         # Check if the first line contains the OPENQASM identifier
-        return "OPENQASM" in first_line or "OPENQASM" in prev_line
+        return "OPENQASM" in first_line
 
 
 def extract_qubits_from_gate(gate_line: str) -> list[int]:
