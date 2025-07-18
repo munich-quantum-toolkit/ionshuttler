@@ -62,7 +62,7 @@ def simulate_shuttling(plot: bool, arch: list[int], number_of_pzs: int) -> int:
     G.arch = str(arch)
     G.locked_gates = {}  # <-- added to prevent AttributeError
 
-    number_of_chains = math.ceil(1.0 * len(MZ_graph.edges()))
+    number_of_chains = math.ceil(0.5 * len(MZ_graph.edges()))
     algorithm = "qft_no_swaps_nativegates_quantinuum_tket"
     qasm_path = f"QASM_files/development/{algorithm}/{algorithm}_{number_of_chains}.qasm"
 
@@ -90,5 +90,5 @@ def simulate_shuttling(plot: bool, arch: list[int], number_of_pzs: int) -> int:
 
 
 if __name__ == "__main__":
-    ts = simulate_shuttling(plot=True, arch=[3, 3, 2, 2], number_of_pzs=1)
+    ts = simulate_shuttling(plot=True, arch=[3, 3, 2, 2], number_of_pzs=2)
     print(f"Total time steps: {ts}")
