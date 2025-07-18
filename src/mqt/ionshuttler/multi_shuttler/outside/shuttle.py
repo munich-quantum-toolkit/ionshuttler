@@ -92,13 +92,9 @@ def shuttle(
     for pz in graph.pzs:
         prio_queue = part_prio_queues[pz.name]
         move_list = create_move_list(graph, prio_queue, pz)
-<<<<<<< HEAD:src/mqt/ionshuttler/multi_shuttler/outside/shuttle.py
-        cycles, in_and_into_exit_moves = create_cycles_for_moves(graph, move_list, cycle_or_paths, pz)
-=======
         cycles, in_and_into_exit_moves = create_cycles_for_moves(
             graph, move_list, cycle_or_paths, pz
         )
->>>>>>> fe28403 (update paths):src/mqt/ionshuttler/multi_shuttler/Outside/shuttle.py
         # add cycles to all_cycles
         all_cycles = {**all_cycles, **cycles}
     out_of_entry_moves = find_out_of_entry_moves(graph, other_next_edges=[])

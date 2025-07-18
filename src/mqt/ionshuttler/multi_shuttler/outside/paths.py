@@ -98,7 +98,6 @@ def find_nonfree_paths(graph: Graph, paths_idcs_dict: dict[int, list[Edge]]) -> 
 
     # Compare junction nodes (with edge_IDC)
     junction_nodes = [*graph.junction_nodes]  # , graph.pzgraph_creator.processing_zone]
-    # TODO: check why path is blocked by pz move
     for path_ion_1, path_ion_2 in combinations_of_paths:
         if len(paths_idcs_dict[path_ion_1]) == 2:
             # if same edge twice -> skip (no edge if twice parking edge, otherwise only first node)
@@ -148,9 +147,11 @@ def find_nonfree_paths(graph: Graph, paths_idcs_dict: dict[int, list[Edge]]) -> 
 
         # new: exclude processing zone node -> if pz node in circles -> can both be executed -> now not in junction_nodes and also not checked in first check above
         # extra: if both end in same edge -> don't execute (scenario where path out of pz ends in same edge as next edge for other)
-        if (
-            len(nodes1.intersection(nodes2).intersection(junction_nodes)) > 0
-            # and graph.pzgraph_creator.processing_zone not in nodes1.intersection(nodes2)
+        # new from CYCLES: -> new exclude parking edge (can end both in parking edge, since stop moves in parking edge also end in parking edge)
+        if len(nodes1.intersection(nodes2).intersection(junction_nodes)) > 0 or ( # noqa: SIM102
+            get_idx_from_idc(graph.idc_dict, paths_idcs_dict[path_ion_1][-1])
+            == (get_idx_from_idc(graph.idc_dict, paths_idcs_dict[path_ion_2][-1]))
+            and (get_idx_from_idc(graph.idc_dict, paths_idcs_dict[path_ion_1][-1]) not in graph.parking_edges_idxs)
         ):
             # new from CYCLES: also exclude cases in which a stop move would block a junction (should only block moves into stop move, but not the whole junction)
             # -> do not append if path_ion_1 is stop move and path_ion_2 does not move into stop move and vice versa
@@ -173,4 +174,8 @@ def find_nonfree_paths(graph: Graph, paths_idcs_dict: dict[int, list[Edge]]) -> 
                 )
             ):
                 conflicting_paths.append((path_ion_1, path_ion_2))
+<<<<<<< HEAD:src/mqt/ionshuttler/multi_shuttler/outside/paths.py
+=======
+    print(f"conflicting paths: {(conflicting_paths)}")
+>>>>>>> 2faf991 (path fixes):src/mqt/ionshuttler/multi_shuttler/Outside/paths.py
     return conflicting_paths

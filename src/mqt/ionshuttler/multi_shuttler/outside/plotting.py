@@ -28,7 +28,7 @@ def plot_state(
     if filename is None:
         filename = Path("graph.pdf")
 
-    plot_paper = True
+    plot_paper = False
     idc_dict = graph.idc_dict
     pos = {(x, y): (y, -x) for i, (x, y) in enumerate(list(graph.nodes()))}
     if plot_ions is True:
@@ -72,8 +72,7 @@ def plot_state(
                     color=colors[ion_holder[edge][0]],
                 )
 
-    if plot_cycle is not False:
-        assert isinstance(plot_cycle, list)
+    if plot_cycle is True:
         for edge_idx in plot_cycle:
             edge = get_idc_from_idx(graph.idc_dict, edge_idx)
             graph.add_edge(edge[0], edge[1], color="r")
