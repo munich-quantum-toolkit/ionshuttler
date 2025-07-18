@@ -23,7 +23,7 @@ failing_junctions = 0
 archs = [
     # [5, 5, 5, 5],
     #[3, 3, 1, 1],
-     [3, 3, 2, 2],
+     [4, 4, 1, 1],
     #[3, 3, 3, 3],   # TODO hier langsamer als ohne compilation - nutzt pz4 erst zum Schluss - partitioning praktisch max schlecht? - eval für mehr seeds und vergleiche - gate selection anpassen, dass es so kommutiert, dass alle pzs beladen? - sollte das nicht eig. schon so sein?
     #[4, 4, 1, 1],
     # [4, 4, 2, 2],
@@ -37,7 +37,7 @@ archs = [
 # run all seeds
 seeds = [1]#, 2, 3, 4, 5]#, 6, 7, 8, 9, 10]
 time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-number_of_pzs = [1, 2, 3, 4]
+number_of_pzs = [1]#, 2, 3, 4]
 
 for m, n, v, h in archs:
     timesteps_average = {}
@@ -116,9 +116,9 @@ for m, n, v, h in archs:
 
             print(f"Number of chains: {number_of_chains}")
             
-            algorithm = "qv_test_transpiled"
+            #algorithm = "qv_test_transpiled"
             #algorithm = "random_500_gates_no_swaps_nativegates_quantinuum_tket"
-            #algorithm = "qft_no_swaps_nativegates_quantinuum_tket"
+            algorithm = "qft_no_swaps_nativegates_quantinuum_tket"
             #algorithm = "full_register_access"
             qasm_file_path = (
                 #f"../../../QASM_files/{algorithm}/{algorithm}_{number_of_chains}.qasm"
