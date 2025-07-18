@@ -27,7 +27,7 @@ def is_qasm_file(file_path: Path) -> bool:
         for _ in range(7):
             first_line = file.readline()
         # Check if the first line contains the OPENQASM identifier
-        return "OPENQASM" in first_line
+        return "OPENQASM" in first_line or "OPENQASM" in prev_line
 
 
 def extract_qubits_from_gate(gate_line: str) -> list[int]:

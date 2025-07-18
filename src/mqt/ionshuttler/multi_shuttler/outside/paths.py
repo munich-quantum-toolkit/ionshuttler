@@ -152,5 +152,26 @@ def find_nonfree_paths(graph: Graph, paths_idcs_dict: dict[int, list[Edge]]) -> 
             len(nodes1.intersection(nodes2).intersection(junction_nodes)) > 0
             # and graph.pzgraph_creator.processing_zone not in nodes1.intersection(nodes2)
         ):
-            conflicting_paths.append((path_ion_1, path_ion_2))
+            # new from CYCLES: also exclude cases in which a stop move would block a junction (should only block moves into stop move, but not the whole junction)
+            # -> do not append if path_ion_1 is stop move and path_ion_2 does not move into stop move and vice versa
+            if not (
+                (
+                    get_idx_from_idc(graph.idc_dict, paths_idcs_dict[path_ion_1][0])
+                    == get_idx_from_idc(graph.idc_dict, paths_idcs_dict[path_ion_1][1])
+                    and (
+                        get_idx_from_idc(graph.idc_dict, paths_idcs_dict[path_ion_2][1])
+                        != get_idx_from_idc(graph.idc_dict, paths_idcs_dict[path_ion_1][0])
+                    )
+                )
+                or (
+                    get_idx_from_idc(graph.idc_dict, paths_idcs_dict[path_ion_2][0])
+                    == get_idx_from_idc(graph.idc_dict, paths_idcs_dict[path_ion_2][1])
+                    and (
+                        get_idx_from_idc(graph.idc_dict, paths_idcs_dict[path_ion_1][1])
+                        != get_idx_from_idc(graph.idc_dict, paths_idcs_dict[path_ion_2][0])
+                    )
+                )
+            ):
+                conflicting_paths.append((path_ion_1, path_ion_2))
+    print(f"conflicting paths: {(conflicting_paths)}")
     return conflicting_paths

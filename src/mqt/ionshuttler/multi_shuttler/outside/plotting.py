@@ -32,8 +32,7 @@ def plot_state(
     idc_dict = graph.idc_dict
     pos = {(x, y): (y, -x) for i, (x, y) in enumerate(list(graph.nodes()))}
     if plot_ions is True:
-        pass
-        # edge_labels = nx.get_edge_attributes(graph,'ions')
+        edge_labels = nx.get_edge_attributes(graph,'ions')
     else:
         edge_labels = {}
         for idc in graph.edges():
@@ -82,7 +81,7 @@ def plot_state(
                 if nx.get_node_attributes(graph, "node_type")[node] != "junction_node":
                     graph.add_node(node, color="r")
 
-    if plot_pzs is not False:
+    if plot_pzs is True:
         for pz in graph.pzs:
             graph.add_edge(pz.parking_edge[0], pz.parking_edge[1], color="r")
 
@@ -104,7 +103,8 @@ def plot_state(
         node_color=node_color,
         width=8,
         edge_color=edge_color,
-        font_size=16,
+        font_size=8,
+        font_color="white",
     )
     if plot_paper is False:
         nx.draw_networkx_edge_labels(graph, pos, edge_labels)
@@ -117,7 +117,7 @@ def plot_state(
     labels0, labels1 = labels
     plt.plot([], [], label=labels0)
     plt.plot([], [], label=labels1)
-    # plt.legend()
+    plt.legend()
 
     if show_plot is True:
         plt.show()
