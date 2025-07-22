@@ -173,5 +173,4 @@ def find_nonfree_paths(graph: Graph, paths_idcs_dict: dict[int, list[Edge]]) -> 
                 )
             ):
                 conflicting_paths.append((path_ion_1, path_ion_2))
-    print(f"conflicting paths: {(conflicting_paths)}")
     return conflicting_paths

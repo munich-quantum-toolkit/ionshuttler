@@ -23,7 +23,11 @@ failing_junctions = 0
 archs = [
     # [5, 5, 5, 5],
     #[3, 3, 1, 1],
+     [2, 4, 1, 1],
+     [2, 6, 1, 1],
+     [3, 3, 1, 1],
      [4, 4, 1, 1],
+     [5, 5, 1, 1]
     #[3, 3, 3, 3],   # TODO hier langsamer als ohne compilation - nutzt pz4 erst zum Schluss - partitioning praktisch max schlecht? - eval für mehr seeds und vergleiche - gate selection anpassen, dass es so kommutiert, dass alle pzs beladen? - sollte das nicht eig. schon so sein?
     #[4, 4, 1, 1],
     # [4, 4, 2, 2],
@@ -35,7 +39,7 @@ archs = [
     # [8, 8, 1, 1]
 ]
 # run all seeds
-seeds = [1]#, 2, 3, 4, 5]#, 6, 7, 8, 9, 10]
+seeds = [0]#, 2, 3, 4, 5]#, 6, 7, 8, 9, 10]
 time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 number_of_pzs = [1]#, 2, 3, 4]
 

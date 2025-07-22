@@ -95,9 +95,7 @@ def shuttle(
         cycles, in_and_into_exit_moves = create_cycles_for_moves(graph, move_list, cycle_or_paths, pz)
         # add cycles to all_cycles
         all_cycles = {**all_cycles, **cycles}
-    print(f"all_cycles: {[(key, value) for key, value in all_cycles.items()]}")
     out_of_entry_moves = find_out_of_entry_moves(graph, other_next_edges=[])
-    print(f"out_of_entry_moves: {[(key.name, value) for key, value in out_of_entry_moves.items()]}")
 
     for pz in graph.pzs:
         prio_queue = part_prio_queues[pz.name]
@@ -110,7 +108,6 @@ def shuttle(
 
     # now general priority queue picks cycles to rotate
     chains_to_rotate = find_movable_cycles(graph, all_cycles, priority_queue, cycle_or_paths)
-    print(f"chains_to_rotate: {chains_to_rotate}")
     rotate_free_cycles(graph, all_cycles, chains_to_rotate)
 
     # Update ions after rotate
@@ -166,7 +163,6 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool) -
 
     locked_gates: dict[tuple[int, ...], str] = {}
     while timestep < max_timesteps:
-        print('starting timestep', timestep)
         for pz in graph.pzs:
             pz.rotate_entry = False
             pz.out_of_parking_cycle = None
@@ -189,7 +185,6 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool) -
         # priority queue is dict with ions as keys and pz as values
         # (for 2-qubit gates pz may not match the pz of the individual ion)
         priority_queue, next_gate_at_pz_dict = create_priority_queue(graph, pz_executing_gate_order)
-        print(f"priority_queue: {priority_queue}")
 
         # check if ions are already in processing zone
         # -> important for 2-qubit gates
