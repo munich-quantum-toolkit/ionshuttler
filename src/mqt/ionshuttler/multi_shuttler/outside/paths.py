@@ -174,8 +174,4 @@ def find_nonfree_paths(graph: Graph, paths_idcs_dict: dict[int, list[Edge]]) -> 
                 )
             ):
                 conflicting_paths.append((path_ion_1, path_ion_2))
-<<<<<<< HEAD:src/mqt/ionshuttler/multi_shuttler/outside/paths.py
-=======
-    print(f"conflicting paths: {(conflicting_paths)}")
->>>>>>> 2faf991 (path fixes):src/mqt/ionshuttler/multi_shuttler/Outside/paths.py
-    return conflicting_paths
+
