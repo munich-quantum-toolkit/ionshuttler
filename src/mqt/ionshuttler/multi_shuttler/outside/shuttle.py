@@ -121,7 +121,7 @@ def shuttle(
         "Sequence: %s" % [graph.sequence if len(graph.sequence) < 8 else graph.sequence[:8]],
     )
 
-    if (graph.plot is True or graph.save is True) and timestep >= 70:
+    if (graph.plot is True or graph.save is True):
         plot_state(
             graph,
             labels,
