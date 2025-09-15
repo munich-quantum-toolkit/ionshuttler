@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
+
 from .graph_utils import create_idc_dictionary, get_idc_from_idx, get_idx_from_idc
 
 
@@ -15,7 +16,7 @@ def plot_state(graph, ion_moves, labels, plot_ions=True, show_plot=False, save_p
         edge_labels = {}
         for idc in graph.edges():
             # pass
-            edge_labels[idc] = "$e_{%s}$" % get_idx_from_idc(idc_dict, idc)
+            edge_labels[idc] = f"$e_{{{get_idx_from_idc(idc_dict, idc)}}}$"
 
     for edge_idc in graph.edges():
         # color all edges black

@@ -33,7 +33,7 @@ def run_simulation_for_architecture(
         graph = GraphCreator(m, n, v, h, pz).get_graph()
         try:
             ion_chains, number_of_registers = create_starting_config(num_ion_chains, graph, seed=seed)
-        except:
+        except:  # noqa: E722
             continue
         print(f"ion chains: {ion_chains}, number of registers: {number_of_registers}")
         print(f"arch: {arch}, seed: {seed}, registers: {number_of_registers}\n")
@@ -69,7 +69,7 @@ if __name__ == "__main__":
     # parser.add_argument("--plot", action="store_true", help="plot grid")
     args = parser.parse_args()
 
-    with pathlib.Path(args.config_file).open("r") as f:
+    with pathlib.Path(args.config_file).open("r", encoding="utf-8") as f:
         config = json.load(f)
     arch = config["arch"]
     max_timesteps = config["max_timesteps"]

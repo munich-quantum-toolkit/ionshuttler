@@ -11,7 +11,7 @@ def create_idc_dictionary(graph):
     for edge_idx, edge_idc in enumerate(graph.edges()):
         sorted_edge_idc = tuple(sorted(edge_idc, key=sum))
         edge_dict[sorted_edge_idc] = edge_idx
-        edge_dict[(sorted_edge_idc[1], sorted_edge_idc[0])] = edge_idx
+        edge_dict[sorted_edge_idc[1], sorted_edge_idc[0]] = edge_idx
     return edge_dict
 
 
@@ -26,7 +26,7 @@ def get_idc_from_idx(edge_dictionary, idx):
 
 def create_dist_dict(graph):
     # create dictionary of dictionary with all distances to entry of each edge for each pz
-    from .cycles import find_path_edge_to_edge
+    from .cycles import find_path_edge_to_edge  # noqa: PLC0415
 
     dist_dict = {}
     for pz in graph.pzs:
@@ -156,7 +156,7 @@ class GraphCreator:
         nodes_to_remove = [
             node
             for node, data in networkx_graph.nodes(data=True)
-            if data.get("node_type") not in ["exit_node", "entry_node", "exit_connection_node", "entry_connection_node"]
+            if data.get("node_type") not in {"exit_node", "entry_node", "exit_connection_node", "entry_connection_node"}
         ]
 
         # Shuffle the list of nodes to remove
@@ -225,14 +225,14 @@ class PZCreator(GraphCreator):
         if x1 == x2:
             if x1 == 0:
                 return "top"
-            elif x1 == self.m_extended - 1:
+            if x1 == self.m_extended - 1:
                 return "bottom"
 
         # Check for shared column (Left or Right border)
         if y1 == y2:
             if y1 == 0:
                 return "left"
-            elif y1 == self.n_extended - 1:
+            if y1 == self.n_extended - 1:
                 return "right"
 
         return None
@@ -252,11 +252,11 @@ class PZCreator(GraphCreator):
         pz.parking_edge = (pz.processing_zone, pz.parking_node)
 
         # Number of edges between exit/entry and processing zone (size of one-way connection)
-        if border == "top" or border == "bottom":
+        if border in {"top", "bottom"}:
             pz.num_edges = math.ceil(
                 math.ceil(abs(pz.entry_node[1] - pz.exit_node[1]) / self.ion_chain_size_horizontal) / 2
             )  # Number of edges between exit/entry and processing zone
-        elif border == "left" or border == "right":
+        elif border in {"left", "right"}:
             pz.num_edges = math.ceil(
                 math.ceil(abs(pz.entry_node[0] - pz.exit_node[0]) / self.ion_chain_size_vertical) / 2
             )  # Number of edges between exit/entry and processing zone
@@ -331,7 +331,7 @@ class PZCreator(GraphCreator):
 
         return networkx_graph
 
-    def order_edges(_self, edge1, edge2):
+    def order_edges(self, edge1, edge2):
         # Find the common node shared between the two edges
         common_node = set(edge1).intersection(set(edge2))
 
@@ -368,6 +368,4 @@ class PZCreator(GraphCreator):
             self.order_edges(edge_pair[1], edge_pair[0]) for edge_pair in connected_edge_pairs
         ]
         # Convert set of tuples to a list of lists
-        connected_edge_pairs = [list(pair) for pair in connected_edge_pairs]
-
-        return connected_edge_pairs
+        return [list(pair) for pair in connected_edge_pairs]

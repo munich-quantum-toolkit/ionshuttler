@@ -109,17 +109,24 @@ select = [
     "RSE",          # flake8-raise
     "RUF",          # Ruff-specific
     "SIM",          # flake8-simplify
-    "TCH",          # flake8-type-checking
+    "TC",           # flake8-type-checking
     "TID",          # flake8-tidy-imports
     "TRY",          # tryceratops
     "UP",           # pyupgrade
     "YTT"           # flake8-2020
 ]
 ignore = [
+    "ARG001",   # Unused function argument
     "E501",     # Line too long (Black is enough)
     "PLR2004",  # Magic values
     "PLR0913",  # Too many arguments
     "PLR0912",  # Too many branches
+    "PLR0914",  # Too many local variables
+    "PLR0915",  # Too many statements
+    "PLR0916",  # Too many Boolean expressions
+    "PLR0917",  # Too many positional arguments
+    "PLR1702",  # Too many nested blocks
+    "PLR6301",  # Method [...] could be a function, class method, or static method
     "SIM105",   # Use `contextlib.suppress(ValueError)` instead of try-except-pass
 ]
 future-annotations = true

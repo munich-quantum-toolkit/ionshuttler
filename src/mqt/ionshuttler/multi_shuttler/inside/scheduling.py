@@ -36,7 +36,7 @@ def preprocess(graph, priority_queue):
     while sum(need_rotate) < len(priority_queue):
         for i, rotate_chain in enumerate(priority_queue):
             pz_name = priority_queue[rotate_chain]
-            pz_edge_idc = [pz.edge_idc for pz in graph.pzs if pz.name == pz_name][0]
+            pz_edge_idc = next(pz.edge_idc for pz in graph.pzs if pz.name == pz_name)
             edge_idc = graph.state[rotate_chain]
             next_edge = find_next_edge(graph, edge_idc, pz_edge_idc)
             next_edge = tuple(sorted((next_edge[0], next_edge[1]), key=sum))
@@ -74,7 +74,8 @@ def get_edge_idc_by_pz_name(graph, pz_name):
     for pz in graph.pzs:
         if pz.name == pz_name:
             return pz.edge_idc
-    raise ValueError(f"Processing zone with name {pz_name} not found.")
+    msg = f"Processing zone with name {pz_name} not found."
+    raise ValueError(msg)
 
 
 def pick_pz_for_2_q_gate(graph, ion0, ion1):
@@ -125,7 +126,7 @@ def create_priority_queue(graph, sequence, max_length=10):
                 next_gate_at_pz[graph.map_to_pz[elem]] = seq_elem
 
             # add ion to unique_sequence
-            if elem not in unique_sequence.keys():
+            if elem not in unique_sequence:
                 unique_sequence[elem] = graph.map_to_pz[elem]
                 if len(unique_sequence) == max_length:
                     break
@@ -151,12 +152,13 @@ def create_priority_queue(graph, sequence, max_length=10):
 
             # add ions to unique_sequence
             for elem in seq_elem:
-                if elem not in unique_sequence.keys():
+                if elem not in unique_sequence:
                     unique_sequence[elem] = pz_for_2_q_gate
                     if len(unique_sequence) == max_length:
                         break
         else:
-            raise ValueError("len gate 0 or > 2? - can only process 1 or 2-qubit gates")
+            msg = "len gate 0 or > 2? - can only process 1 or 2-qubit gates"
+            raise ValueError(msg)
 
         # at the end fill all empty pzs with []
         for pz in graph.pzs:
@@ -252,13 +254,12 @@ def create_cycles_for_moves(graph, move_list, cycle_or_paths, pz):
         edge_idc, next_edge = find_ordered_edges(graph, edge_idc, next_edge)
         if not check_if_edge_is_filled(graph, next_edge) or edge_idc == next_edge:
             all_cycles[rotate_chain] = [edge_idc, next_edge]
+        elif cycle_or_paths == "Cycles":
+            all_cycles[rotate_chain] = create_cycle(graph, edge_idc, next_edge)
         else:
-            if cycle_or_paths == "Cycles":
-                all_cycles[rotate_chain] = create_cycle(graph, edge_idc, next_edge)
-            else:
-                all_cycles[rotate_chain] = create_path_via_bfs_directional(
-                    graph, edge_idc, next_edge, other_next_edges=None
-                )  # TODO other next edges for pz
+            all_cycles[rotate_chain] = create_path_via_bfs_directional(
+                graph, edge_idc, next_edge, other_next_edges=None
+            )  # TODO other next edges for pz
     return all_cycles
 
 
@@ -271,9 +272,9 @@ def find_conflict_cycle_idxs(graph, cycles_dict):
             # if not a stop move
             if cycles_dict[cycle][0] != cycles_dict[cycle][1]:
                 cycle_or_path = [(cycles_dict[cycle][0][1], cycles_dict[cycle][1][0])]
-                assert (
-                    cycles_dict[cycle][0][1] == cycles_dict[cycle][1][0]
-                ), "cycle is not two edges? Middle node should be the same"
+                assert cycles_dict[cycle][0][1] == cycles_dict[cycle][1][0], (
+                    "cycle is not two edges? Middle node should be the same"
+                )
             # if a stop move and in stop moves (in pz for 2-qubit gate)
             elif cycle in graph.stop_moves:
                 cycle_or_path = cycles_dict[cycle]
@@ -314,13 +315,13 @@ def find_movable_cycles(graph, all_cycles, priority_queue, cycle_or_paths):
         nonfree_cycles = find_nonfree_paths(graph, all_cycles)
 
     # start with first ion in priority queue
-    free_cycle_seq_idxs = [list(priority_queue.keys())[0]]
+    free_cycle_seq_idxs = [next(iter(priority_queue.keys()))]
 
     # check if ion can move while first ion is moving and so on
     for seq_cyc in list(priority_queue.keys())[1:]:
         # skip ion of priority_queue if it is not in all_cycles
         # -> was removed before in individual move_list
-        if seq_cyc not in all_cycles.keys():
+        if seq_cyc not in all_cycles:
             continue
         nonfree = False
         for mov_cyc in free_cycle_seq_idxs:
@@ -336,14 +337,14 @@ def find_movable_cycles(graph, all_cycles, priority_queue, cycle_or_paths):
 
 
 def rotate(graph, ion, cycle_idcs):
-    ##print(f"Rotating ion {ion} along cycle {cycle_idcs}", graph.in_process)
+    # print(f"Rotating ion {ion} along cycle {cycle_idcs}", graph.in_process)
     state_dict = get_edge_state(graph)
     first = True
     last_ion = -1
     for current_edge, new_edge in pairwise(cycle_idcs):
-        current_edge = tuple(sorted(current_edge, key=sum))
-        new_edge = tuple(sorted(new_edge, key=sum))
-        current_ion = state_dict.get(current_edge)
+        current_edge_ = tuple(sorted(current_edge, key=sum))
+        new_edge_ = tuple(sorted(new_edge, key=sum))
+        current_ion = state_dict.get(current_edge_)
 
         # take first ion in list to rotate
         # if len(current_ion) <= 1:
@@ -354,19 +355,19 @@ def rotate(graph, ion, cycle_idcs):
 
         # if ion already rotated via previous cycle
         # (now checks directly in state_dict, in case two ions on one edge)
-        if first and ion not in state_dict[current_edge]:  # current_ion != ion:
-            ##print(f"Ion {ion} already rotated via previous cycle")
+        if first and ion not in state_dict[current_edge_]:  # current_ion != ion:
+            # print(f"Ion {ion} already rotated via previous cycle")
             return
         first = False
         if current_ion in graph.in_process:
-            ##print("didn't rotate %s" % current_ion)
+            # print(f"didn't rotate {current_ion}")
             pass
         if (
-            current_ion != [] and current_ion != last_ion and current_ion not in graph.in_process
+            current_ion not in ([], last_ion) and current_ion not in graph.in_process
         ):  # and not ion in pz and needed in 2-qubit gate
-            graph.edges[current_edge]["ions"].remove(current_ion)
-            graph.edges[new_edge]["ions"].append(current_ion)
-            ##print(f"Rotated ion {current_ion} from {current_edge} to {new_edge}")
+            graph.edges[current_edge_]["ions"].remove(current_ion)
+            graph.edges[new_edge_]["ions"].append(current_ion)
+            # print(f"Rotated ion {current_ion} from {current_edge} to {new_edge}")
 
         # save last ion so each ion only rotates once
         last_ion = current_ion

@@ -5,7 +5,7 @@ import random
 import sys
 import time
 
-from src.mqt.ionshuttler.single_shuttler.SAT import MemorySAT, create_graph
+from mqt.ionshuttler.single_shuttler.memory_sat import MemorySAT, create_graph
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -13,7 +13,7 @@ if __name__ == "__main__":
     parser.add_argument("--plot", action="store_true", help="plot grid")
     args = parser.parse_args()
 
-    with pathlib.Path(args.config_file).open("r") as f:
+    with pathlib.Path(args.config_file).open("r", encoding="utf-8") as f:
         config = json.load(f)
     arch = config["arch"]
     max_timesteps = config["max_timesteps"]
@@ -21,14 +21,14 @@ if __name__ == "__main__":
 
     qu_alg = [(q[0] if len(q) == 1 else tuple(q)) for q in config["qu_alg"]]
 
-    ### create graph
+    # create graph
     m, n = arch[0], arch[1]
     ion_chain_size_vertical = arch[2]
     ion_chain_size_horizontal = arch[3]
     graph = create_graph(m, n, ion_chain_size_vertical, ion_chain_size_horizontal)
     n_of_traps = len([trap for trap in graph.edges() if graph.get_edge_data(trap[0], trap[1])["edge_type"] == "trap"])
 
-    ### starting edges / ions
+    # starting edges / ions
     rand = False
     if rand is True:
         random.seed(0)
@@ -54,15 +54,15 @@ if __name__ == "__main__":
     start = time.time()
     for timesteps in range(2, max_timesteps + 1):
         print(f"{time.time() - start:.1f}s Checking for {timesteps} timesteps... ", end="")
-        SAT = MemorySAT(graph, ion_chain_size_horizontal, ion_chain_size_vertical, ions, timesteps)
+        sat = MemorySAT(graph, ion_chain_size_horizontal, ion_chain_size_vertical, ions, timesteps)
 
-        MemorySAT.create_constraints(SAT, starting_traps)
-        is_satisfied = MemorySAT.evaluate(SAT, qu_alg, number_of_registers)
+        MemorySAT.create_constraints(sat, starting_traps)
+        is_satisfied = MemorySAT.evaluate(sat, qu_alg, number_of_registers)
 
         if is_satisfied:
             print(f"{time.time() - start:.1f}s Found satisfying solution with {timesteps} time steps.")
             if args.plot:
-                MemorySAT.plot(SAT, show_ions=True)
+                MemorySAT.plot(sat, show_ions=True)
             break
     else:
         print(f"{time.time() - start:.1f}s Reached {max_timesteps} time steps without a satisfying solution.")

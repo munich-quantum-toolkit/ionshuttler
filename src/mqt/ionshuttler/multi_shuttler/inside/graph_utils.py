@@ -102,7 +102,7 @@ class GraphCreator:
         nodes_to_remove = [
             node
             for node, data in networkx_graph.nodes(data=True)
-            if data.get("node_type") not in ["exit_node", "entry_node"]
+            if data.get("node_type") not in {"exit_node", "entry_node"}
         ]
 
         # Shuffle the list of nodes to remove

@@ -9,7 +9,7 @@ from z3 import And, AtLeast, AtMost, Bool, Not, Or, Solver, sat
 # from more_itertools import pairwise
 
 
-### functions
+# functions
 def create_graph(m, n, ion_chain_size_vertical, ion_chain_size_horizontal):
     # m columns (vertical), n rows (horizontal)
     m_extended = m + (ion_chain_size_vertical - 1) * (m - 1)
@@ -68,14 +68,14 @@ def get_possible_moves_through_node(nx_g, idc_dict, node):
 
 # plotting
 def plot_state(nx_g, plot_ions=True):
-    idc_dict = create_idc_dicitonary(nx_g)
+    idc_dict = create_idc_dictionary(nx_g)
     pos = {(x, y): (y, -x) for i, (x, y) in enumerate(list(nx_g.nodes()))}
     if plot_ions is True:
         edge_labels = nx.get_edge_attributes(nx_g, "ion_chain")
     else:
         edge_labels = {}
         for idc in nx_g.edges():
-            edge_labels[idc] = "$e_{%s}$" % get_idx_from_idc(idc_dict, idc)
+            edge_labels[idc] = f"$e_{{{get_idx_from_idc(idc_dict, idc)}}}$"
     edge_color = nx.get_edge_attributes(nx_g, "color")
     edge_color = list(edge_color.values())
     node_color = list(nx.get_node_attributes(nx_g, "color").values())
@@ -93,7 +93,7 @@ def plot_state(nx_g, plot_ions=True):
 
 
 # create dictionary to swap from idx to idc and vice versa
-def create_idc_dicitonary(nx_g):
+def create_idc_dictionary(nx_g):
     edge_dict = {}
     for edge_idx, edge_idc in enumerate(nx_g.edges()):
         edge_dict[edge_idx] = tuple(sorted(edge_idc, key=sum))
@@ -175,7 +175,9 @@ def get_junctions(nx_g, node, other_node, ion_chain_size_horizontal, ion_chain_s
                 if nx_g.nodes[node_down]["node_type"] == "junction_node":
                     junction.append(node_down)
                     break
-    assert junction != [], "no junction found for node (%s, %s) - used exit, entry or processing_zone node?" % node
+    assert junction != [], "no junction found for node ({}, {}) - used exit, entry or processing_zone node?".format(
+        *node
+    )
     return junction
 
 
@@ -256,9 +258,9 @@ def get_possible_previous_edges_from_junction_move(nx_g, edge, ion_chain_size_ho
     assert len(edge[0]) == 2, "use edge"
     node1 = edge[0]
     node2 = edge[1]
-    assert (
-        nx_g.nodes[node1]["node_type"] == "junction_node" or nx_g.nodes[node2]["node_type"] == "junction_node"
-    ), "only works for junction edges"
+    assert nx_g.nodes[node1]["node_type"] == "junction_node" or nx_g.nodes[node2]["node_type"] == "junction_node", (
+        "only works for junction edges"
+    )
     if nx_g.nodes[node1]["node_type"] == "junction_node":
         # find all other "big" edges around junction
         around_jct = list(nx_g.edges(node1))
@@ -336,7 +338,7 @@ class MemorySAT:
         self.ion_chain_size_horizontal = ion_chain_size_horizontal
         self.ion_chain_size_vertical = ion_chain_size_vertical
 
-        self.idc_dict = create_idc_dicitonary(self.graph)
+        self.idc_dict = create_idc_dictionary(self.graph)
 
         # find entry and exit of graph
         for edge_idc in graph.edges():
@@ -352,18 +354,16 @@ class MemorySAT:
         self.ions = ions
         self.timesteps = timesteps
         assert (
-            len(
-                [
-                    node
-                    for node in graph.nodes()
-                    if nx.get_node_attributes(graph, "node_type")[node] == "processing_zone_node"
-                ]
-            )
+            len([
+                node
+                for node in graph.nodes()
+                if nx.get_node_attributes(graph, "node_type")[node] == "processing_zone_node"
+            ])
             == 1
         ), "exactly one processing zone node needed -> so get_junctions() works as intended"
         # set_param(proof=True)
 
-        ### Z3
+        # Z3
         self.s = Solver()
         # Create Z3 bool variables for self.states
         self.states = [
@@ -403,7 +403,7 @@ class MemorySAT:
             edges=junction_edges,
         )
 
-        ### starting configuration:
+        # starting configuration:
         for idc in self.graph.edges():
             for ion in self.ions:
                 if idc not in self.starting_traps:
@@ -419,7 +419,7 @@ class MemorySAT:
                 if other_ion != ion:
                     self.s.add(Not(self.states[0][get_idx_from_idc(self.idc_dict, idc)][other_ion]))
 
-        ### move constraints
+        # move constraints
         # MV_CONSTR_1: per time, per ion exactly 1 instance can be True of all traps -> amount of ions stays constant
         for t in range(1, self.timesteps):
             for ion in self.ions:
@@ -459,28 +459,26 @@ class MemorySAT:
                             Not(self.states[t][get_idx_from_idc(self.idc_dict, edge_idc)][ion]),
                             And(
                                 self.states[t][get_idx_from_idc(self.idc_dict, edge_idc)][ion],
-                                Or(
-                                    *[
-                                        And(
-                                            self.states[t + 1][get_idx_from_idc(self.idc_dict, poss_edge)][ion],
-                                            *[
-                                                Not(
-                                                    self.states[t][
-                                                        get_idx_from_idc(
-                                                            self.idc_dict,
-                                                            path_to_poss_edge,
-                                                        )
-                                                    ][other_ions]
-                                                )
-                                                for path_to_poss_edge in get_path_between_edges(
-                                                    self.graph, edge_idc, poss_edge
-                                                )
-                                                for other_ions in self.ions
-                                            ],
-                                        )
-                                        for poss_edge in possible_edges
-                                    ]
-                                ),
+                                Or(*[
+                                    And(
+                                        self.states[t + 1][get_idx_from_idc(self.idc_dict, poss_edge)][ion],
+                                        *[
+                                            Not(
+                                                self.states[t][
+                                                    get_idx_from_idc(
+                                                        self.idc_dict,
+                                                        path_to_poss_edge,
+                                                    )
+                                                ][other_ions]
+                                            )
+                                            for path_to_poss_edge in get_path_between_edges(
+                                                self.graph, edge_idc, poss_edge
+                                            )
+                                            for other_ions in self.ions
+                                        ],
+                                    )
+                                    for poss_edge in possible_edges
+                                ]),
                             ),
                         )
                     )
@@ -492,12 +490,10 @@ class MemorySAT:
                         *[
                             And(
                                 self.states[t][get_idx_from_idc(self.idc_dict, junction_edge)][ion],
-                                Or(
-                                    *[
-                                        self.states[t - 1][get_idx_from_idc(self.idc_dict, poss_prev_edge)][ion]
-                                        for poss_prev_edge in previous_junction_move_dict[junction_edge]
-                                    ]
-                                ),
+                                Or(*[
+                                    self.states[t - 1][get_idx_from_idc(self.idc_dict, poss_prev_edge)][ion]
+                                    for poss_prev_edge in previous_junction_move_dict[junction_edge]
+                                ]),
                             )
                             for junction_edge in self.graph.edges(node)
                             for ion in self.ions
@@ -538,7 +534,7 @@ class MemorySAT:
                         )
                     )
 
-        ### New exit constraints
+        # New exit constraints
         # if in exit -> was in connected edge in graph at t-1 and has to move to entry at t+1
         for t in range(1, self.timesteps - 1):
             for ion in self.ions:
@@ -548,17 +544,15 @@ class MemorySAT:
                         And(
                             self.states[t + 1][get_idx_from_idc(self.idc_dict, self.entry)][ion],
                             self.states[t][get_idx_from_idc(self.idc_dict, self.exit)][ion],
-                            Or(
-                                *[
-                                    self.states[t - 1][get_idx_from_idc(self.idc_dict, connected_to_exit)][ion]
-                                    for connected_to_exit in self.graph.edges(self.exit_node)
-                                ]
-                            ),
+                            Or(*[
+                                self.states[t - 1][get_idx_from_idc(self.idc_dict, connected_to_exit)][ion]
+                                for connected_to_exit in self.graph.edges(self.exit_node)
+                            ]),
                         ),
                     )
                 )
 
-        ### exit constraints
+        # exit constraints
         # if in entry -> was in exit at t-1 (or in entry -> stayed longer in entry)
         for t in range(1, self.timesteps):
             for ion in self.ions:
@@ -610,14 +604,13 @@ class MemorySAT:
             elif isinstance(sublist, int):
                 flat_sequence.append(sublist)
 
-        assert num_of_registers > max(flat_sequence), "numb of registers: {}, max flat sequence: {}".format(
-            num_of_registers,
-            max(flat_sequence),
+        assert num_of_registers > max(flat_sequence), (
+            f"numb of registers: {num_of_registers}, max flat sequence: {max(flat_sequence)}"
         )
         assert len(sequence) > 1
 
         for elem in sequence:
-            assert type(elem) == tuple or type(elem) == int, "Element %s is not a tuple or int" % elem
+            assert isinstance(elem, tuple | int), f"Element {elem} is not a tuple or int"
 
         # create sequence states:
         self.seq_index = [
@@ -678,31 +671,23 @@ class MemorySAT:
 
             # sequence constraint: ion(s) of gate1 are in PZ at t -> ion(s) of gate2 are in PZ at some t' later + no other ions in PZ in time between the two gates
             self.s.add(
-                Or(
-                    *[
-                        And(
-                            self.seq_index[t][i],
-                            Or(
+                Or(*[
+                    And(
+                        self.seq_index[t][i],
+                        Or(*[
+                            And(
                                 *[
-                                    And(
-                                        *[
-                                            Not(
-                                                self.states[t_inter][get_idx_from_idc(self.idc_dict, self.entry)][
-                                                    other_ion
-                                                ]
-                                            )
-                                            for other_ion in other_ions
-                                            for t_inter in range(t, t_next)
-                                        ],
-                                        self.seq_index[t_next][j],
-                                    )
-                                    for t_next in range(t + 1, self.timesteps)
-                                ]
-                            ),
-                        )
-                        for t in range(self.timesteps)
-                    ]
-                )
+                                    Not(self.states[t_inter][get_idx_from_idc(self.idc_dict, self.entry)][other_ion])
+                                    for other_ion in other_ions
+                                    for t_inter in range(t, t_next)
+                                ],
+                                self.seq_index[t_next][j],
+                            )
+                            for t_next in range(t + 1, self.timesteps)
+                        ]),
+                    )
+                    for t in range(self.timesteps)
+                ])
             )
 
         # every sequence ion is True once
@@ -741,7 +726,10 @@ class MemorySAT:
                     np.random.seed()
 
                     for i, ion in enumerate(self.ions):
-                        if bool(self.model.evaluate(self.states[t][get_idx_from_idc(self.idc_dict, edge_idc)][ion])) is True:
+                        if (
+                            bool(self.model.evaluate(self.states[t][get_idx_from_idc(self.idc_dict, edge_idc)][ion]))
+                            is True
+                        ):
                             ion_trap.append(edge_idc)
                             ion_holder.append(ion)
                             self.graph.add_edge(

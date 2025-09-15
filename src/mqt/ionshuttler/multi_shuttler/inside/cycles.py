@@ -43,7 +43,8 @@ def get_ion_chains(graph):
             edge_idc = tuple(sorted((u, v), key=sum))
 
             if len(data["ions"]) > 2:
-                raise ValueError(f"Edge ({u}, {v}) has more than two ions: {data['ions']}")
+                msg = f"Edge ({u}, {v}) has more than two ions: {data['ions']}"
+                raise ValueError(msg)
             for chain in chains:
                 ion_chains[chain] = edge_idc
 
@@ -110,8 +111,7 @@ def find_path_node_to_edge(graph, node, goal_edge):
     # return min path
     if len(path1) < len(path0):
         return path1
-    else:
-        return path0
+    return path0
 
 
 def find_path_edge_to_edge(graph, edge_idc, goal_edge):
@@ -122,8 +122,7 @@ def find_path_edge_to_edge(graph, edge_idc, goal_edge):
     # return min path
     if len(path1) < len(path0):
         return path1
-    else:
-        return path0
+    return path0
 
 
 def find_next_edge(graph, edge_idc, goal_edge):

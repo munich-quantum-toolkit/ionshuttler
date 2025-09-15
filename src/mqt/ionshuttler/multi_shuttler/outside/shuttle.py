@@ -1,4 +1,4 @@
-import os
+import pathlib
 from collections import Counter
 from datetime import datetime
 
@@ -60,7 +60,7 @@ def find_pz_order(graph, gate_info_list):
     return pz_order
 
 
-def shuttle(graph, priority_queue, timestep, cycle_or_paths, unique_folder):
+def shuttle(graph, priority_queue, timestep, cycle_or_paths, unique_folder: pathlib.Path):
     # stop moves (ions that are already in the correct processing zone for a two-qubit gate)
     graph.stop_moves = []
 
@@ -90,7 +90,7 @@ def shuttle(graph, priority_queue, timestep, cycle_or_paths, unique_folder):
 
     for pz in graph.pzs:
         prio_queue = part_prio_queues[pz.name]
-        out_of_entry_moves_of_pz = out_of_entry_moves[pz] if pz in out_of_entry_moves else None
+        out_of_entry_moves_of_pz = out_of_entry_moves.get(pz, None)
         if pz.name in in_and_into_exit_moves:
             in_and_into_exit_moves_of_pz = in_and_into_exit_moves[pz.name]
         update_entry_and_exit_cycles(
@@ -118,7 +118,7 @@ def shuttle(graph, priority_queue, timestep, cycle_or_paths, unique_folder):
             save_plot=graph.save,
             plot_cycle=False,
             plot_pzs=False,
-            filename=os.path.join(unique_folder, f"{graph.arch}_timestep_{timestep}.png"),
+            filename=unique_folder / f"{graph.arch}_timestep_{timestep}.png",
         )
 
 
@@ -127,9 +127,9 @@ def main(graph, partition, dag, cycle_or_paths, use_dag):
     max_timesteps = 1e6
     graph.state = get_ions(graph)
 
-    unique_folder = os.path.join("runs", datetime.now().strftime("%Y%m%d_%H%M%S"))
+    unique_folder = pathlib.Path("runs") / datetime.now().strftime("%Y%m%d_%H%M%S")
     if graph.save is True:
-        os.makedirs(unique_folder, exist_ok=True)
+        unique_folder.mkdir(exist_ok=True, parents=True)
 
     if any([graph.plot, graph.save]):
         plot_state(
@@ -140,7 +140,7 @@ def main(graph, partition, dag, cycle_or_paths, use_dag):
             save_plot=graph.save,
             plot_cycle=False,
             plot_pzs=True,
-            filename=os.path.join(unique_folder, f"{graph.arch}_timestep_{timestep}.pdf"),
+            filename=unique_folder / f"{graph.arch}_timestep_{timestep}.pdf",
         )
 
     for pz in graph.pzs:
@@ -270,7 +270,8 @@ def main(graph, partition, dag, cycle_or_paths, use_dag):
                             pz.getting_processed.remove(gate_node)
                             # break
                 else:
-                    raise ValueError("Invalid gate format")
+                    msg = "Invalid gate format"
+                    raise ValueError(msg)
 
         else:
             processed_ions = []
@@ -331,7 +332,7 @@ def main(graph, partition, dag, cycle_or_paths, use_dag):
                                 ion_processed = True
                                 # remove the processing zone from the list
                                 # (it can only process one gate)
-                                pzs.remove(pz)
+                                pzs.remove(pz)  # noqa: B909
 
                                 # remove the locked pz of the processed two-qubit gate
                                 if gate in graph.locked_gates and graph.locked_gates[gate] == pz.name:
@@ -340,7 +341,8 @@ def main(graph, partition, dag, cycle_or_paths, use_dag):
                                 pz.gate_execution_finished = True
                                 break
                     else:
-                        raise ValueError("Invalid gate format")
+                        msg = "Invalid gate format"
+                        raise ValueError(msg)
                 previous_ion_processed = ion_processed
 
         # Remove processed ions from the sequence (and dag if use_dag)

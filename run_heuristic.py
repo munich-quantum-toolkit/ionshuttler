@@ -4,28 +4,27 @@ import pathlib
 import sys
 from datetime import datetime
 
-from src.mqt.ionshuttler.multi_shuttler.Outside.compilation import (
+from src.mqt.ionshuttler.multi_shuttler.outside.compilation import (
     create_dag,
     create_dist_dict,
     create_initial_sequence,
     create_updated_sequence_destructive,
     update_distance_map,
 )
-from src.mqt.ionshuttler.multi_shuttler.Outside.cycles import (
+from src.mqt.ionshuttler.multi_shuttler.outside.cycles import (
     create_starting_config,
     get_ions,
     get_state_idxs,
 )
-
-from src.mqt.ionshuttler.multi_shuttler.Outside.graph_utils import (
+from src.mqt.ionshuttler.multi_shuttler.outside.graph_utils import (
     GraphCreator,
     ProcessingZone,
     PZCreator,
     create_idc_dictionary,
     get_idx_from_idc,
 )
-from src.mqt.ionshuttler.multi_shuttler.Outside.partition import get_partition
-from src.mqt.ionshuttler.multi_shuttler.Outside.shuttle import main as run_shuttle_main
+from src.mqt.ionshuttler.multi_shuttler.outside.partition import get_partition
+from src.mqt.ionshuttler.multi_shuttler.outside.shuttle import main as run_shuttle_main
 
 # --- Argument Parsing ---
 parser = argparse.ArgumentParser(description="Run MQT IonShuttler")
@@ -36,7 +35,7 @@ args = parser.parse_args()
 
 # --- Load Configuration ---
 try:
-    with pathlib.Path(args.config_file).open("r") as f:
+    with pathlib.Path(args.config_file).open("r", encoding="utf-8") as f:
         config = json.load(f)
 except FileNotFoundError:
     print(f"Error: Configuration file not found at {args.config_file}")

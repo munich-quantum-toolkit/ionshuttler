@@ -1,4 +1,6 @@
 import networkx as nx
+from more_itertools import distinct_combinations, pairwise
+
 from .graph_utils import (
     GraphCreator,
     MZGraphCreator,
@@ -8,7 +10,6 @@ from .graph_utils import (
     get_path_to_node,
     order_edges,
 )
-from more_itertools import distinct_combinations, pairwise
 
 
 class MemoryZone:
@@ -55,7 +56,7 @@ class MemoryZone:
             for node in self.graph.nodes()
             if (
                 nx.get_node_attributes(self.graph, "node_type")[node]
-                in ("junction_node", "exit_node", "exit_connection_node", "entry_node", "entry_connection_node")
+                in {"junction_node", "exit_node", "exit_connection_node", "entry_node", "entry_connection_node"}
             )
         ]
 
@@ -74,7 +75,7 @@ class MemoryZone:
                 self.graph,
                 next_edge[1],
                 edge_idc[0],
-                lambda node0, node1, _: [
+                lambda node0, node1, _, edge_idc=edge_idc, next_edge=next_edge: [
                     1e8
                     if (
                         get_idx_from_idc(self.idc_dict, (node0, node1)) == get_idx_from_idc(self.idc_dict, edge_idc)
@@ -105,18 +106,16 @@ class MemoryZone:
         return len([chain_idx for chain_idx in self.get_state_idxs() if chain_idx in self.graph_creator.pz_edges_idx])
 
     def count_chains_in_exit(self):
-        return len(
-            [chain_idx for chain_idx in self.get_state_idxs() if chain_idx in self.graph_creator.path_to_pz_idxs]
-        )
+        return len([
+            chain_idx for chain_idx in self.get_state_idxs() if chain_idx in self.graph_creator.path_to_pz_idxs
+        ])
 
     def count_chains_in_parking(self):
-        return len(
-            [
-                chain_idx
-                for chain_idx in self.get_state_idxs()
-                if chain_idx == get_idx_from_idc(self.idc_dict, self.graph_creator.parking_edge)
-            ]
-        )
+        return len([
+            chain_idx
+            for chain_idx in self.get_state_idxs()
+            if chain_idx == get_idx_from_idc(self.idc_dict, self.graph_creator.parking_edge)
+        ])
 
     def find_chain_in_edge(self, edge_idc):
         chains = [
@@ -124,9 +123,9 @@ class MemoryZone:
             for ion, chain_idx in enumerate(self.get_state_idxs())
             if chain_idx == get_idx_from_idc(self.idc_dict, edge_idc)
         ]
-        assert (
-            len(chains) <= 1
-        ), f"more than one chain ({chains}) in edge {edge_idc}, if parking edge -> use find_chains_in_parking()"
+        assert len(chains) <= 1, (
+            f"more than one chain ({chains}) in edge {edge_idc}, if parking edge -> use find_chains_in_parking()"
+        )
         if len(chains) == 0:
             return None
         return chains[0]
@@ -139,7 +138,7 @@ class MemoryZone:
         ]
 
     def find_next_edge(self, edge_idc, towards=(0, 0)):
-        ### find next edge given edge_idc of ion chain
+        # find next edge given edge_idc of ion chain
 
         # if in entry connection -> move to next edge
         for i, edge_idx in enumerate(self.graph_creator.path_from_pz_idxs[:-1]):
@@ -151,7 +150,7 @@ class MemoryZone:
                 next_edge = next(
                     edge
                     for edge in self.graph.edges(self.graph_creator.entry)
-                    if edge not in (self.graph_creator.entry_edge, self.path_entry_to_exit[0])
+                    if edge not in {self.graph_creator.entry_edge, self.path_entry_to_exit[0]}
                 )
             elif towards == "exit":
                 next_edge = self.path_entry_to_exit[0]
@@ -231,7 +230,7 @@ class MemoryZone:
     def create_outer_circle(self, edge_idc, next_edge, other_next_edges, towards=(0, 0)):
         if towards == (0, 0):
             # towards is first edge in graph (can't be (0,0) because it may be deleted)
-            towards = list(self.graph.edges())[0][0]
+            towards = next(iter(self.graph.edges()))[0]
 
         # move from entry to memory zone
         if get_idx_from_idc(self.idc_dict, edge_idc) == get_idx_from_idc(
@@ -295,9 +294,9 @@ class MemoryZone:
             if len(circles_dict[circle]) == 2:
                 if circles_dict[circle][0] != circles_dict[circle][1]:
                     circle_or_path = [(circles_dict[circle][0][1], circles_dict[circle][1][0])]
-                    assert (
-                        circles_dict[circle][0][1] == circles_dict[circle][1][0]
-                    ), "circle is not two edges? Middle node should be the same"
+                    assert circles_dict[circle][0][1] == circles_dict[circle][1][0], (
+                        "circle is not two edges? Middle node should be the same"
+                    )
                     # if middle node is exit or exit connection -> skip also middle node -> can always push through to parking edge
                     # TODO unskip
                     # if (

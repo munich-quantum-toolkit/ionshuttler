@@ -2,14 +2,13 @@ import re
 from pathlib import Path
 
 
-def is_qasm_file(filename):
+def is_qasm_file(filename: Path) -> bool:
     # Check if the file has a .qasm extension
-    if not filename.endswith(".qasm"):
+    if filename.suffix != ".qasm":
         return False
 
     try:
-        file_path = Path(filename)
-        with Path.open(file_path) as file:
+        with filename.open(encoding="utf-8") as file:
             # Read the first line of the file (7th line, specific to MQT Bench)
             for _f in range(7):
                 first_line = file.readline()
@@ -20,7 +19,7 @@ def is_qasm_file(filename):
         return False
 
 
-def extract_qubits_from_gate(gate_line):
+def extract_qubits_from_gate(gate_line: str) -> list[int]:
     """Extract qubit numbers from a gate operation line."""
     # Regular expression to match qubits (assuming they are in the format q[<number>])
     pattern = re.compile(r"q\[(\d+)\]")
@@ -30,14 +29,10 @@ def extract_qubits_from_gate(gate_line):
     return [int(match) for match in matches]
 
 
-def parse_qasm(filename):
-    """Parse a QASM file and return qubits used for each gate
-    preserving their order."""
+def parse_qasm(filename: Path) -> list[tuple[int, ...]]:
+    """Parse a QASM file and return qubits used for each gate preserving their order."""
     gates_and_qubits = []
-    # if filename is str
-    if not isinstance(filename, Path):
-        filename = Path(filename)
-    with Path.open(filename) as file:
+    with filename.open(encoding="utf-8") as file:
         for _line in file:
             line = _line.strip()
 
@@ -49,15 +44,17 @@ def parse_qasm(filename):
     return gates_and_qubits
 
 
-def compile(filename):
+def compile(filename: Path | str) -> list:  # noqa: A001
     """Compile a QASM file and return the compiled sequence of qubits."""
+    filename = Path(filename)
+
     # Check if the file is a valid QASM file
     if not is_qasm_file(filename):
-        raise ValueError("Invalid QASM file format")
+        msg = "Invalid QASM file format"
+        raise ValueError(msg)
 
     # Parse the QASM file to extract the qubits used for each gate
-    parse_qasm(filename)
-    sequence = parse_qasm(filename)
+    return parse_qasm(filename)
 
     # print(gates_and_qubits)
     # # Compile the sequence of qubits
@@ -65,8 +62,6 @@ def compile(filename):
     # for qubits in gates_and_qubits:
     #     for qubit in qubits:
     #         sequence.append(qubit)
-
-    return sequence
 
 
 # def get_front_layer(dag):
@@ -126,10 +121,10 @@ def compile(filename):
 #         first_gates = get_front_layer(working_dag)
 #         if not first_gates:
 #             break
-#         first_gate_to_excute = find_best_gate(first_gates, dist_map)
+#         first_gate_to_execute = find_best_gate(first_gates, dist_map)
 #         if i == 0:
-#             first_node = first_gate_to_excute
+#             first_node = first_gate_to_execute
 #         i = 1
-#         remove_node(working_dag, first_gate_to_excute)
-#         sequence.append(first_gate_to_excute.qindices)
+#         remove_node(working_dag, first_gate_to_execute)
+#         sequence.append(first_gate_to_execute.qindices)
 #     return sequence, first_node

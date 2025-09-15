@@ -9,8 +9,7 @@ def read_qasm_file(file_path):
     # Remove barriers
     circuit = RemoveBarriers()(circuit)
     # Remove measurement operations
-    circuit = RemoveFinalMeasurements()(circuit)
-    return circuit
+    return RemoveFinalMeasurements()(circuit)
 
 
 def construct_interaction_graph(circuit):
@@ -28,7 +27,8 @@ def construct_interaction_graph(circuit):
             else:
                 graph.add_edge(q0, q1, weight=1)
         elif len(gate[1]) > 2:
-            raise ValueError("Circuit contains gates with more than 2 qubits")
+            msg = "Circuit contains gates with more than 2 qubits"
+            raise ValueError(msg)
 
     # # plot graph
     # nx.draw(graph, with_labels=True)

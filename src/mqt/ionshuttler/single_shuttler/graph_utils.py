@@ -57,7 +57,7 @@ def get_path_to_node(nx_g, src, tar, exclude_exit=False, exclude_first_entry_con
                 nx_g,
                 src,
                 tar,
-                lambda _, __, edge_attr_dict: (edge_attr_dict["edge_type"] in ("first_entry_connection", "exit")) * 1e8
+                lambda _, __, edge_attr_dict: (edge_attr_dict["edge_type"] in {"first_entry_connection", "exit"}) * 1e8
                 + 1,
             )
 
@@ -332,12 +332,10 @@ class GraphCreator:
                     color="k",
                 )
 
-                self.path_from_pz.append(
-                    (
-                        (self.m_extended // 2, self.n_extended // 2 - i + 1),
-                        (self.m_extended // 2, self.n_extended // 2 - i),
-                    )
-                )
+                self.path_from_pz.append((
+                    (self.m_extended // 2, self.n_extended // 2 - i + 1),
+                    (self.m_extended // 2, self.n_extended // 2 - i),
+                ))
 
         elif self.pz == "outer":
             # Define the key nodes
@@ -403,7 +401,8 @@ class GraphCreator:
             networkx_graph.add_edge(self.parking_edge[0], self.parking_edge[1], edge_type="parking_edge", color="g")
 
         else:
-            raise ValueError("pz must be 'mid' or 'outer'")
+            msg = "pz must be 'mid' or 'outer'"
+            raise ValueError(msg)
 
     def _delete_junction(self, networkx_graph, junction_node):
         # Remove the junction node
@@ -431,6 +430,4 @@ class GraphCreator:
             order_edges(edge_pair[1], edge_pair[0]) for edge_pair in connected_edge_pairs
         ]
         # Convert set of tuples to a list of lists
-        connected_edge_pairs = [list(pair) for pair in connected_edge_pairs]
-
-        return connected_edge_pairs
+        return [list(pair) for pair in connected_edge_pairs]

@@ -27,14 +27,14 @@ def run_simulation_for_architecture(arch, seeds, pz, max_timesteps, compilation=
     for seed in seeds:
         m, n, v, h = arch
         graph = GraphCreator(m, n, v, h, pz).get_graph()
-        n_of_traps = len(
-            [trap for trap in graph.edges() if graph.get_edge_data(trap[0], trap[1])["edge_type"] == "trap"]
-        )
+        n_of_traps = len([
+            trap for trap in graph.edges() if graph.get_edge_data(trap[0], trap[1])["edge_type"] == "trap"
+        ])
         num_ion_chains = math.ceil(n_of_traps / 2)
 
         try:
             ion_chains, number_of_registers = create_starting_config(num_ion_chains, graph, seed=seed)
-        except:
+        except:  # noqa: E722
             continue
         print(f"ion chains: {ion_chains}, number of registers: {number_of_registers}")
         # filename = f"../../QASM_files/full_register_access/full_register_access_{num_ion_chains}.qasm"

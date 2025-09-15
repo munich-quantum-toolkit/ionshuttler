@@ -87,7 +87,7 @@ def find_best_gate(graph, front_layer, dist_map, gate_info_map):
         pz = graph.pzs_name_map[pz_of_node]
         if gate_node in pz.getting_processed:
             return gate_node
-        gate_cost = max([dist_map[qs][pz_of_node] for qs in qubit_indices])
+        gate_cost = max(dist_map[qs][pz_of_node] for qs in qubit_indices)
         # if both ions of 2-qubit gate are in pz execute 2-qubit gate
         if len(qubit_indices) == 2 and gate_cost == 0:
             return gate_node
@@ -152,12 +152,12 @@ def create_updated_sequence_destructive(graph, filename, dag_dep, use_dag):
             for pz_name in pz_info_map:
                 # only include pzs that can process a gate of front layer
                 if pz_info_map[pz_name]:
-                    first_gate_to_excute = find_best_gate(graph, pz_info_map[pz_name], dist_map, gate_info_map)
+                    first_gate_to_execute = find_best_gate(graph, pz_info_map[pz_name], dist_map, gate_info_map)
                     # if first_flag == True:
-                    #     next_node = first_gate_to_excute
+                    #     next_node = first_gate_to_execute
                     # first_flag = False
-                    remove_node(working_dag, first_gate_to_excute)
-                    seq.append(tuple(first_gate_to_excute.qindices))
+                    remove_node(working_dag, first_gate_to_execute)
+                    seq.append(tuple(first_gate_to_execute.qindices))
 
     flat_seq = [item for sublist in seq for item in sublist]
 

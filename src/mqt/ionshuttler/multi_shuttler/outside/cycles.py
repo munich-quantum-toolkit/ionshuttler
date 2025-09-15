@@ -7,33 +7,27 @@ from .graph_utils import get_idx_from_idc
 
 
 def get_ions_in_pz_and_connections(graph, pz):
-    return len(
-        [
-            ion_idx
-            for ion_idx, edge_idc in get_ions(graph).items()
-            if get_idx_from_idc(graph.idc_dict, edge_idc) in pz.pz_edges_idx
-        ]
-    )
+    return len([
+        ion_idx
+        for ion_idx, edge_idc in get_ions(graph).items()
+        if get_idx_from_idc(graph.idc_dict, edge_idc) in pz.pz_edges_idx
+    ])
 
 
 def get_ions_in_exit_connections(graph, pz):
-    return len(
-        [
-            ion_idx
-            for ion_idx, edge_idc in get_ions(graph).items()
-            if get_idx_from_idc(graph.idc_dict, edge_idc) in pz.path_to_pz_idxs
-        ]
-    )
+    return len([
+        ion_idx
+        for ion_idx, edge_idc in get_ions(graph).items()
+        if get_idx_from_idc(graph.idc_dict, edge_idc) in pz.path_to_pz_idxs
+    ])
 
 
 def get_ions_in_parking(graph, pz):
-    return len(
-        [
-            ion_idx
-            for ion_idx, edge_idc in get_ions(graph).items()
-            if get_idx_from_idc(graph.idc_dict, edge_idc) == get_idx_from_idc(graph.idc_dict, pz.parking_edge)
-        ]
-    )
+    return len([
+        ion_idx
+        for ion_idx, edge_idc in get_ions(graph).items()
+        if get_idx_from_idc(graph.idc_dict, edge_idc) == get_idx_from_idc(graph.idc_dict, pz.parking_edge)
+    ])
 
 
 def find_ion_in_edge(graph, edge_idc):
@@ -157,7 +151,7 @@ def shortest_path_to_node(nx_g, src, tar, exclude_exit=False, exclude_first_entr
                 nx_g,
                 src,
                 tar,
-                lambda _, __, edge_attr_dict: (edge_attr_dict["edge_type"] in ("first_entry_connection", "exit")) * 1e8
+                lambda _, __, edge_attr_dict: (edge_attr_dict["edge_type"] in {"first_entry_connection", "exit"}) * 1e8
                 + 1,
             )
         return nx.shortest_path(
@@ -230,15 +224,13 @@ def find_path_edge_to_edge(graph, edge_idc, goal_edge, exclude_exit=False, exclu
     # if in entry and entry==first_entry_connection -> can't use exclude_first_entry_connection
     if graph.get_edge_data(edge_idc[0], edge_idc[1])["edge_type"] == "first_entry_connection":
         if graph.nodes(data=True)[edge_idc[0]]["node_type"] == "processing_zone_node":
-            node_path = find_path_node_to_edge(
+            return find_path_node_to_edge(
                 graph, edge_idc[1], goal_edge, exclude_exit=False, exclude_first_entry_connection=True
             )
-            return node_path
         if graph.nodes(data=True)[edge_idc[1]]["node_type"] == "processing_zone_node":
-            node_path = find_path_node_to_edge(
+            return find_path_node_to_edge(
                 graph, edge_idc[0], goal_edge, exclude_exit=False, exclude_first_entry_connection=True
             )
-            return node_path
         msg = "Edge is not an entry edge"
         raise ValueError(msg)
 
@@ -272,12 +264,11 @@ def find_next_edge(graph, edge_idc, goal_edge, exclude_exit=False, exclude_first
     if graph.get_edge_data(edge_idc[0], edge_idc[1])["edge_type"] == "parking_edge":
         for node in edge_idc:
             if nx.get_node_attributes(graph, "node_type")[node] == "processing_zone_node":
-                next_edge = [
+                return next(
                     edge
                     for edge in graph.edges(node)
                     if graph.get_edge_data(edge[0], edge[1])["edge_type"] == "first_entry_connection"
-                ][0]
-                return next_edge
+                )
 
     # if goal edge is next edge, return goal edge (now also entry is excluded)
     if (
@@ -358,13 +349,13 @@ def find_conflict_cycle_idxs(graph, cycles_dict):
         if len(cycles_dict[cycle]) == 2:
             if cycles_dict[cycle][0] != cycles_dict[cycle][1]:
                 cycle_or_path = [(cycles_dict[cycle][0][1], cycles_dict[cycle][1][0])]
-                assert (
-                    cycles_dict[cycle][0][1] == cycles_dict[cycle][1][0]
-                ), f"cycle is not two edges? Middle node should be the same ({cycles_dict[cycle]})"
-                if nx.get_node_attributes(graph, "node_type")[cycles_dict[cycle][0][1]] in (
+                assert cycles_dict[cycle][0][1] == cycles_dict[cycle][1][0], (
+                    f"cycle is not two edges? Middle node should be the same ({cycles_dict[cycle]})"
+                )
+                if nx.get_node_attributes(graph, "node_type")[cycles_dict[cycle][0][1]] in {
                     "exit_node",
                     "exit_connection_node",
-                ):
+                }:
                     cycle_or_path = []
 
             # new if same edge twice is parking edge -> skip completely
