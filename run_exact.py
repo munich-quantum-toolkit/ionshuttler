@@ -55,14 +55,13 @@ if __name__ == "__main__":
     for timesteps in range(2, max_timesteps + 1):
         print(f"{time.time() - start:.1f}s Checking for {timesteps} timesteps... ", end="")
         sat = MemorySAT(graph, ion_chain_size_horizontal, ion_chain_size_vertical, ions, timesteps)
-
-        MemorySAT.create_constraints(sat, starting_traps)
-        is_satisfied = MemorySAT.evaluate(sat, qu_alg, number_of_registers)
+        sat.create_constraints(starting_traps)
+        is_satisfied = sat.evaluate(qu_alg, number_of_registers)
 
         if is_satisfied:
             print(f"{time.time() - start:.1f}s Found satisfying solution with {timesteps} time steps.")
             if args.plot:
-                MemorySAT.plot(sat, show_ions=True)
+                sat.plot(show_ions=True)
             break
     else:
         print(f"{time.time() - start:.1f}s Reached {max_timesteps} time steps without a satisfying solution.")

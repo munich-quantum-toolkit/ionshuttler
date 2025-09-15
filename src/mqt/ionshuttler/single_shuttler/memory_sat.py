@@ -1,21 +1,32 @@
+from __future__ import annotations
+
 import itertools
 from itertools import pairwise
+from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 from z3 import And, AtLeast, AtMost, Bool, Not, Or, Solver, sat
 
-# from more_itertools import pairwise
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from .types import Edge, Graph, Node
 
 
 # functions
-def create_graph(m, n, ion_chain_size_vertical, ion_chain_size_horizontal):
+def create_graph(
+    m: int,
+    n: int,
+    ion_chain_size_vertical: int,
+    ion_chain_size_horizontal: int,
+) -> Graph:
     # m columns (vertical), n rows (horizontal)
     m_extended = m + (ion_chain_size_vertical - 1) * (m - 1)
     n_extended = n + (ion_chain_size_horizontal - 1) * (n - 1)
 
-    networkx_graph = nx.grid_2d_graph(m_extended, n_extended)
+    networkx_graph: Graph = nx.grid_2d_graph(m_extended, n_extended)
     for node in networkx_graph.nodes():
         networkx_graph.add_node(node, node_type="trap_node", color="b")
 
@@ -38,7 +49,7 @@ def create_graph(m, n, ion_chain_size_vertical, ion_chain_size_horizontal):
                 for p in range(1, ion_chain_size_horizontal):
                     networkx_graph.remove_node((i + k, j + p))
 
-    nx.set_edge_attributes(networkx_graph, "trap", "edge_type")
+    nx.set_edge_attributes(networkx_graph, values=dict.fromkeys(networkx_graph.edges(), "trap"), name="edge_type")
 
     # add junction nodes
     for i in range(0, m_extended, ion_chain_size_vertical):
@@ -57,7 +68,7 @@ def create_graph(m, n, ion_chain_size_vertical, ion_chain_size_horizontal):
     return networkx_graph
 
 
-def get_possible_moves_through_node(nx_g, idc_dict, node):
+def get_possible_moves_through_node(nx_g: Graph, idc_dict: dict[int, Edge], node: Node) -> list[tuple[int, int]]:
     connected_edges = [get_idx_from_idc(idc_dict, edge_idc) for edge_idc in nx_g.edges(node)]
 
     possible_moves_through_node = []
@@ -67,7 +78,7 @@ def get_possible_moves_through_node(nx_g, idc_dict, node):
 
 
 # plotting
-def plot_state(nx_g, plot_ions=True):
+def plot_state(nx_g: Graph, plot_ions: bool = True) -> None:
     idc_dict = create_idc_dictionary(nx_g)
     pos = {(x, y): (y, -x) for i, (x, y) in enumerate(list(nx_g.nodes()))}
     if plot_ions is True:
@@ -76,8 +87,7 @@ def plot_state(nx_g, plot_ions=True):
         edge_labels = {}
         for idc in nx_g.edges():
             edge_labels[idc] = f"$e_{{{get_idx_from_idc(idc_dict, idc)}}}$"
-    edge_color = nx.get_edge_attributes(nx_g, "color")
-    edge_color = list(edge_color.values())
+    edge_color = list(nx.get_edge_attributes(nx_g, "color").values())
     node_color = list(nx.get_node_attributes(nx_g, "color").values())
     nx.draw(
         nx_g,
@@ -93,23 +103,23 @@ def plot_state(nx_g, plot_ions=True):
 
 
 # create dictionary to swap from idx to idc and vice versa
-def create_idc_dictionary(nx_g):
+def create_idc_dictionary(nx_g: Graph) -> dict[int, Edge]:
     edge_dict = {}
     for edge_idx, edge_idc in enumerate(nx_g.edges()):
         edge_dict[edge_idx] = tuple(sorted(edge_idc, key=sum))
     return edge_dict
 
 
-def get_idx_from_idc(edge_dictionary, idc):
-    idc = tuple(sorted(idc, key=sum))
-    return list(edge_dictionary.values()).index(idc)
+def get_idx_from_idc(edge_dictionary: dict[int, Edge], idc: Edge) -> int:
+    node1, node2 = tuple(sorted(idc, key=sum))
+    return list(edge_dictionary.values()).index((node1, node2))
 
 
-def get_idc_from_idx(edge_dictionary, idx):
+def get_idc_from_idx(edge_dictionary: dict[int, Edge], idx: int) -> Edge:
     return edge_dictionary[idx]
 
 
-def get_path_to_node(nx_g, src, tar):
+def get_path_to_node(nx_g: Graph, src: Node, tar: Node) -> list[Edge]:
     edge_path = []
     # lambda function to give path over processing zone huge weight -> doesn't take that path if not necessary
     node_path = nx.shortest_path(
@@ -124,7 +134,9 @@ def get_path_to_node(nx_g, src, tar):
     return edge_path
 
 
-def get_junctions(nx_g, node, other_node, ion_chain_size_horizontal, ion_chain_size_vertical):
+def get_junctions(
+    nx_g: Graph, node: Node, other_node: Node, ion_chain_size_horizontal: int, ion_chain_size_vertical: int
+) -> list[Node]:
     assert node in nx_g.nodes, "node not in graph"
     # assert nx_G.nodes[node]['node_type'] != 'junction_node', 'no support for junction nodes yet'
 
@@ -181,7 +193,9 @@ def get_junctions(nx_g, node, other_node, ion_chain_size_horizontal, ion_chain_s
     return junction
 
 
-def get_possible_moves_over_junction(nx_g, edge, ion_chain_size_horizontal, ion_chain_size_vertical):
+def get_possible_moves_over_junction(
+    nx_g: Graph, edge: Edge, ion_chain_size_horizontal: int, ion_chain_size_vertical: int
+) -> list[Edge]:
     assert len(edge[0]) == 2, "use edge"
     node1 = edge[0]
     node2 = edge[1]
@@ -201,29 +215,38 @@ def get_possible_moves_over_junction(nx_g, edge, ion_chain_size_horizontal, ion_
         for edge_betw in edges_between:
             if edge_betw in possible_edges:
                 possible_edges.remove(edge_betw)
-            elif tuple(reversed(edge_betw)) in possible_edges:
-                possible_edges.remove(tuple(reversed(edge_betw)))
+            node1, node2 = tuple(reversed(edge_betw))
+            if (node1, node2) in possible_edges:
+                possible_edges.remove((node1, node2))
             between_edges.append(edge_betw)
 
     return possible_edges
 
 
-def create_graph_dict(nx_g, func, ion_chain_size_horizontal, ion_chain_size_vertical, edges="all"):
+def create_graph_dict(
+    nx_g: Graph,
+    func: Callable[[Graph, Edge, int, int], list[Edge]],
+    ion_chain_size_horizontal: int,
+    ion_chain_size_vertical: int,
+    edges: list[Edge] | str = "all",
+) -> dict[Edge, list[Edge]]:
     return_dict = {}
     if edges == "all":
-        edges = nx_g.edges()
+        edges = list(nx_g.edges())
+    assert isinstance(edges, list), "edges need to be list of edges or 'all'"
     for edge in edges:
         return_dict[edge] = func(nx_g, edge, ion_chain_size_horizontal, ion_chain_size_vertical)
-        return_dict[tuple(reversed(edge))] = func(
+        node1, node2 = tuple(reversed(edge))
+        return_dict[node1, node2] = func(
             nx_g,
-            tuple(reversed(edge)),
+            (node2, node1),
             ion_chain_size_horizontal,
             ion_chain_size_vertical,
         )
     return return_dict
 
 
-def get_path_between_edges(nx_g, src_edge, tar_edge):
+def get_path_between_edges(nx_g: Graph, src_edge: Edge, tar_edge: Edge) -> list[Edge]:
     # care: only works if there is only one junction within path (except start or end node)
     # only edge case that would be a problem is if path is from jct to jct node -> could take wrong path if graph is quadratic
     node1 = src_edge[1] if nx.get_node_attributes(nx_g, "node_type")[src_edge[0]] == "junction_node" else src_edge[0]
@@ -333,7 +356,14 @@ def get_possible_previous_edges_from_junction_move(nx_g, edge, ion_chain_size_ho
 
 
 class MemorySAT:
-    def __init__(self, graph, ion_chain_size_horizontal, ion_chain_size_vertical, ions, timesteps):
+    def __init__(
+        self,
+        graph: Graph,
+        ion_chain_size_horizontal: int,
+        ion_chain_size_vertical: int,
+        ions: list[int],
+        timesteps: int,
+    ) -> None:
         self.graph = graph
         self.ion_chain_size_horizontal = ion_chain_size_horizontal
         self.ion_chain_size_vertical = ion_chain_size_vertical
@@ -372,7 +402,7 @@ class MemorySAT:
         ]
         # time, trap, ion
 
-    def create_constraints(self, starting_traps):
+    def create_constraints(self, starting_traps: list[Edge]) -> None:
         self.starting_traps = starting_traps
 
         junction_nodes = [
@@ -381,9 +411,10 @@ class MemorySAT:
             if nx.get_node_attributes(self.graph, "node_type")[node] == "junction_node"
         ]
         junction_edges = [list(self.graph.edges(node)) for node in junction_nodes]
-        junction_edges = [
-            tuple(sorted(item)) for sublist in junction_edges for item in sublist
-        ]  # flatten list junction edges: [[1, 3], [4, 2, 5]] -> [1, 3, 4, 2, 5]
+        # flatten list junction edges: [[1, 3], [4, 2, 5]] -> [1, 3, 4, 2, 5]
+        junction_edges_flattened = [
+            (sorted(item)[0], sorted(item)[1]) for sublist in junction_edges for item in sublist
+        ]
         # junction edges are now edges connected to a junction, but not special edges anymore
 
         # create lookup dictionary for move constraints
@@ -400,7 +431,7 @@ class MemorySAT:
             get_possible_previous_edges_from_junction_move,
             self.ion_chain_size_horizontal,
             self.ion_chain_size_vertical,
-            edges=junction_edges,
+            edges=junction_edges_flattened,
         )
 
         # starting configuration:
@@ -521,7 +552,8 @@ class MemorySAT:
         # MV_CONSTR_3: can't move to occupied trap (changed: exclude processing zone -> 2 register are allowed)
         for t in range(1, self.timesteps):
             for edge_idc in self.graph.edges():
-                if nx.get_edge_attributes(self.graph, "edge_type")[tuple(sorted(edge_idc))] == "entry":
+                node1, node2 = tuple(sorted(edge_idc))
+                if nx.get_edge_attributes(self.graph, "edge_type")[node1, node2] == "entry":
                     self.s.add(
                         AtMost(
                             *[self.states[t][get_idx_from_idc(self.idc_dict, edge_idc)][ion] for ion in self.ions], 2
@@ -593,7 +625,7 @@ class MemorySAT:
             self.s.add(Not(self.states[-1][get_idx_from_idc(self.idc_dict, self.exit)][ion]))
             self.s.add(Not(self.states[-1][get_idx_from_idc(self.idc_dict, self.entry)][ion]))
 
-    def evaluate(self, sequence, num_of_registers):
+    def evaluate(self, sequence: list[int | tuple[int, ...]], num_of_registers: int) -> bool:
         # check that maximum ion index in sequence is also in graph
         # flatten (remove tuples)
         flat_sequence = []
@@ -704,9 +736,9 @@ class MemorySAT:
         #    print(self.s.proof())
         print(self.check)
 
-        return self.check == sat
+        return bool(self.check == sat)
 
-    def plot(self, show_ions=False):
+    def plot(self, show_ions: bool = False) -> None:
         if self.check == sat:
             for t in range(self.timesteps):
                 ion_trap = []
