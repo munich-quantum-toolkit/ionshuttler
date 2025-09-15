@@ -61,6 +61,7 @@ pip install mqt.ionshuttler
 This will install the library components from [PyPI](https://pypi.org/project/mqt.ionshuttler/), making them importable in your Python projects.
 
 ## Getting Started with Example Scripts
+
 The run_exact.py and run_heuristic.py scripts provide examples of how to use MQT IonShuttler. To run these scripts and access the example configuration files, it's best to clone the repository:
 
 ```bash
@@ -76,6 +77,7 @@ python3 -m venv .venv
 pip install .        # Installs the package and its dependencies
 # For development, you might prefer: pip install -e . (editable install)
 ```
+
 Once this is done, you can run the example scripts as shown below. These scripts currently import modules using `from src...` and are designed to be run from the root of the cloned repository after the local installation.
 
 ### Exact Solution (single PZ)
