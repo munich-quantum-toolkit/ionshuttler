@@ -72,6 +72,13 @@ To support this endeavor, please consider:
 (.venv) $ pip install mqt.ionshuttler
 ```
 
+To print information about the usage of the supported scripts, run:
+
+```console
+(.venv) $ mqt-ionshuttler-exact --help
+(.venv) $ mqt-ionshuttler-heuristic --help
+```
+
 **Detailed documentation and examples are available at [ReadTheDocs](https://mqt.readthedocs.io/projects/ionshuttler).**
 
 ## System Requirements
