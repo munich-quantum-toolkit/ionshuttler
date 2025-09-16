@@ -6,7 +6,7 @@ from typing import Any
 from .memory_sat import MemorySAT, create_graph
 
 
-def main(config: dict[str, Any], plot: bool) -> None:
+def main(config: dict[str, Any], plot: bool = False) -> None:
     arch = config["arch"]
     max_timesteps = config["max_timesteps"]
     num_ion_chains = config["num_ion_chains"]
