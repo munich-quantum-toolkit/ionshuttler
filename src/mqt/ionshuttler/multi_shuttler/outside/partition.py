@@ -23,14 +23,14 @@ def construct_interaction_graph(circuit: QuantumCircuit) -> nx.Graph[int]:
         graph.add_node(qubit._index)
 
     for gate in circuit.data:
-        if len(gate[1]) == 2:  # Check if it is a 2-qubit gate
-            q0 = gate[1][0]._index
-            q1 = gate[1][1]._index
+        if len(gate.qubits) == 2:  # Check if it is a 2-qubit gate
+            q0 = gate.qubits[0]._index
+            q1 = gate.qubits[1]._index
             if graph.has_edge(q0, q1):
                 graph[q0][q1]["weight"] += 1
             else:
                 graph.add_edge(q0, q1, weight=1)
-        elif len(gate[1]) > 2:
+        elif len(gate.qubits) > 2:
             msg = "Circuit contains gates with more than 2 qubits"
             raise ValueError(msg)
 
@@ -176,8 +176,8 @@ def get_partition(qasm_file_path: Path, n: int) -> list[list[int]]:
 if __name__ == "__main__":
     # Example usage
 
-    qasm_file_path = Path(__file__).absolute().parent.parent.parent.parent.parent / (
-        "inputs/qasm_files/qft_no_swaps_nativegates_quantinuum_tket/qft_no_swaps_nativegates_quantinuum_tket_36.qasm"
+    qasm_file_path = Path(__file__).absolute().parent.parent.parent.parent.parent.parent / (
+        "inputs/qasm_files/qft_no_swaps_nativegates_quantinuum_tket/qft_no_swaps_nativegates_quantinuum_tket_6.qasm"
     )
     n = 4
     print(get_partition(qasm_file_path, n))

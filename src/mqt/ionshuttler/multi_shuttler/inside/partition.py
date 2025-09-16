@@ -14,21 +14,21 @@ def read_qasm_file(file_path: Path) -> QuantumCircuit:
     return RemoveFinalMeasurements()(circuit)
 
 
-def construct_interaction_graph(circuit: QuantumCircuit) -> nx.Graph[int]:
+def construct_interaction_graph(circuit: QuantumCircuit) -> nx.Graph:  # type: ignore [type-arg]
     graph: nx.Graph[int] = nx.Graph()
     qubits = circuit.qubits
     for qubit in qubits:
         graph.add_node(qubit._index)
 
     for gate in circuit.data:
-        if len(gate[1]) == 2:  # Check if it is a 2-qubit gate
+        if len(gate.qubits) == 2:  # Check if it is a 2-qubit gate
             q0 = gate[1][0]._index
             q1 = gate[1][1]._index
             if graph.has_edge(q0, q1):
                 graph[q0][q1]["weight"] += 1
             else:
                 graph.add_edge(q0, q1, weight=1)
-        elif len(gate[1]) > 2:
+        elif len(gate.qubits) > 2:
             msg = "Circuit contains gates with more than 2 qubits"
             raise ValueError(msg)
 
@@ -82,7 +82,7 @@ def construct_interaction_graph(circuit: QuantumCircuit) -> nx.Graph[int]:
 #     return subgraphs#partitions
 
 
-def partition_graph(graph: nx.Graph[int], n: int) -> list[nx.Graph[int]]:
+def partition_graph(graph: nx.Graph, n: int) -> list[nx.Graph]:  # type: ignore [type-arg]
     if n == 1:
         return [graph]
 
@@ -90,7 +90,7 @@ def partition_graph(graph: nx.Graph[int], n: int) -> list[nx.Graph[int]]:
         f"Number of partitions must be less or equal to the number of nodes {len(graph.nodes), graph.nodes, n}"
     )
     partitions = [graph.copy()]
-    new_partitions: list[nx.Graph[int]] = []
+    new_partitions: list[nx.Graph] = []  # type: ignore [type-arg]
     while len(partitions) < n:
         len_partitions = len(partitions)
         for _, partition in enumerate(partitions):
@@ -124,8 +124,8 @@ def get_partition(qasm_file_path: Path, n: int) -> list[list[int]]:
 
 if __name__ == "__main__":
     # Example usage
-    qasm_file_path = Path(__file__).absolute().parent.parent.parent.parent.parent / (
-        "inputs/qasm_files/full_register_access/full_register_access_2.qasm"
+    qasm_file_path = Path(__file__).absolute().parent.parent.parent.parent.parent.parent / (
+        "inputs/qasm_files/full_register_access/full_register_access_6.qasm"
     )
     n = 5
     print(get_partition(qasm_file_path, n))

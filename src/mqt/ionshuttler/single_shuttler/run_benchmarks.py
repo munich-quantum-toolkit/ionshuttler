@@ -34,8 +34,8 @@ def run_simulation_for_architecture(
             continue
         print(f"ion chains: {ion_chains}, number of registers: {number_of_registers}")
         filename = (
-            Path(__file__).absolute().parent.parent.parent.parent
-            / f"inputs/qasm_files/development/qft_no_swaps_nativegates_quantinuum_tket/qft_no_swaps_nativegates_quantinuum_tket_{num_ion_chains}.qasm"
+            Path(__file__).absolute().parent.parent.parent.parent.parent
+            / f"inputs/qasm_files/qft_no_swaps_nativegates_quantinuum_tket/qft_no_swaps_nativegates_quantinuum_tket_{num_ion_chains}.qasm"
         )
         print(f"arch: {arch}, seed: {seed}, registers: {number_of_registers}\n")
         time_2qubit_gate = 3
