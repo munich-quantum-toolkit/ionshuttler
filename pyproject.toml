@@ -51,7 +51,7 @@ mqt-ionshuttler = { workspace = true }
 
 
 [tool.mypy]
-files = ["src/mqt", "run_exact.py"]
+files = ["src/mqt", "run_exact.py", "run_heuristic.py"]
 mypy_path = ["$MYPY_CONFIG_FILE_DIR/src"]
 python_version = "3.10"
 warn_unused_configs = true
@@ -135,7 +135,7 @@ ignore = [
 future-annotations = true
 
 [tool.ruff.lint.isort]
-known-first-party = ["mqt.yaqs"]
+known-first-party = ["mqt.ionshuttler"]
 
 [tool.ruff.lint.per-file-ignores]
 "docs/**" = ["T20", "INP001"]

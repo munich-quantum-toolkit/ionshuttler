@@ -1,14 +1,23 @@
 # from compilation import is_qasm_file, manual_copy_dag, parse_qasm, remove_node, update_sequence
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import networkx as nx
 from more_itertools import distinct_combinations
 
 from .cycles import check_if_edge_is_filled
 from .graph_utils import get_idc_from_idx, get_idx_from_idc
 
+if TYPE_CHECKING:
+    from .graph import Graph
+    from .types import Edge, Node
 # BFS with direction based on a starting edge and a next edge
 
 
-def create_path_via_bfs_directional(graph, current_edge, next_edge, other_next_edges, towards=(0, 0)):
+def create_path_via_bfs_directional(
+    graph: Graph, current_edge: Edge, next_edge: Edge, towards: Node = (0, 0)
+) -> list[Edge]:
     if towards == (0, 0):
         # towards is first edge in graph (can't be (0,0) because it may be deleted)
         towards = next(iter(graph.edges()))[0]
@@ -78,14 +87,16 @@ def create_path_via_bfs_directional(graph, current_edge, next_edge, other_next_e
             # Continue BFS
             if neighbor not in visited:
                 queue.append((neighbor, [*path, current_node]))
-    print("No path found for edge", current_edge, next_edge)
-    return None  # No valid path found
+
+    msg = "No path found"
+    raise RuntimeError(msg)
 
 
-def find_nonfree_paths(graph, paths_idcs_dict):  # TODO change pz (uncomment)
+def find_nonfree_paths(graph: Graph, paths_idcs_dict: dict[int, list[Edge]]) -> list[tuple[int, int]]:
+    # TODO change pz (uncomment)
     paths_idxs_dict = {}
-    for key in paths_idcs_dict:
-        paths_idxs_dict[key] = {get_idx_from_idc(graph.idc_dict, edge_idc) for edge_idc in paths_idcs_dict[key]}
+    for key, value in paths_idcs_dict.items():
+        paths_idxs_dict[key] = {get_idx_from_idc(graph.idc_dict, edge_idc) for edge_idc in value}
 
     common_edges = set()
     conflicting_paths = []

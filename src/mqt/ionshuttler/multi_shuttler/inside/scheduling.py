@@ -20,32 +20,21 @@ from .graph_utils import get_idx_from_idc
 from .paths import create_path_via_bfs_directional, find_nonfree_paths
 
 if TYPE_CHECKING:
-    from .types import Edge
-
-# Set up logging configuration
-# logging.basicConfig(
-#     level=logging.DEBUG,
-#     filename="debug.log",
-#     filemode="w",
-#     format="%(name)s - %(levelname)s - %(message)s",
-# )
+    from .graph import Graph
+    from .processing_zone import ProcessingZone
+    from .types import Edge, Node
 
 
-class ProcessingZone:
-    def __init__(self, name: str, edge_idc: Edge) -> None:
-        self.name = name
-        self.edge_idc = edge_idc
-
-
-def preprocess(graph, priority_queue):
+def preprocess(graph: Graph, priority_queue: dict[int, str]) -> None:
     need_rotate = [False] * len(priority_queue)
     while sum(need_rotate) < len(priority_queue):
         for i, rotate_chain in enumerate(priority_queue):
             pz_name = priority_queue[rotate_chain]
             pz_edge_idc = next(pz.edge_idc for pz in graph.pzs if pz.name == pz_name)
             edge_idc = graph.state[rotate_chain]
-            next_edge = find_next_edge(graph, edge_idc, pz_edge_idc)
-            next_edge = tuple(sorted((next_edge[0], next_edge[1]), key=sum))
+            next_edge_ = find_next_edge(graph, edge_idc, pz_edge_idc)
+            next_node1, next_node2 = tuple(sorted(next_edge_, key=sum))
+            next_edge = (next_node1, next_node2)
 
             state_edges_idc = get_edge_state(graph)
 
@@ -76,7 +65,7 @@ def preprocess(graph, priority_queue):
 #     return unique_sequence
 
 
-def get_edge_idc_by_pz_name(graph, pz_name):
+def get_edge_idc_by_pz_name(graph: Graph, pz_name: str) -> Edge:
     for pz in graph.pzs:
         if pz.name == pz_name:
             return pz.edge_idc
@@ -84,12 +73,7 @@ def get_edge_idc_by_pz_name(graph, pz_name):
     raise ValueError(msg)
 
 
-def pick_pz_for_2_q_gate(graph, ion0, ion1):
-    # TODO implement a better way to pick the processing zone for 2-qubit gates
-    return graph.map_to_pz[ion0]
-
-
-def pick_pz_for_2_q_gate_new(graph, ion0, ion1):
+def pick_pz_for_2_q_gate(graph: Graph, ion0: int, ion1: int) -> str:
     # TODO implement a better way to pick the processing zone for 2-qubit gates
     # pick the processing zone that both ions are closest to (so sum of distances is minimal)
     min_distance = float("inf")
@@ -104,24 +88,24 @@ def pick_pz_for_2_q_gate_new(graph, ion0, ion1):
     return closest_pz
 
 
-def create_priority_queue(graph, sequence, max_length=10):
+def create_priority_queue(
+    graph: Graph, sequence: list[tuple[int, ...]], max_length: int = 10
+) -> tuple[dict[int, str], dict[str, tuple[int, ...]]]:
     """
     Create a priority queue based on a given graph and sequence of gates.
     Also creates a dictionary of the next gate of each processing zone.
 
     Args:
-        graph (Graph): The graph representing the QCCD architecture.
-        sequence (list): The sequence of gates.
-        max_length (int, optional): The maximum length of the priority queue.
-        Defaults to 10.
+        graph: The graph representing the QCCD architecture.
+        sequence: The sequence of gates.
+        max_length: The maximum length of the priority queue. Defaults to 10.
 
     Returns:
-        tuple: A tuple containing the priority queue and
-        the next gate at each processing zone.
+        - The priority queue
+        - The next gate at each processing zone
     """
-
-    unique_sequence = OrderedDict()
-    next_gate_at_pz = {}
+    unique_sequence: dict[int, str] = OrderedDict()
+    next_gate_at_pz: dict[str, tuple[int, ...]] = {}
     for seq_elem in sequence:
         # 1-qubit gate
         if len(seq_elem) == 1:
@@ -141,7 +125,7 @@ def create_priority_queue(graph, sequence, max_length=10):
         elif len(seq_elem) == 2:
             if seq_elem not in graph.locked_gates:
                 # pick processing zone for 2-qubit gate
-                pz_for_2_q_gate = pick_pz_for_2_q_gate_new(graph, seq_elem[0], seq_elem[1])
+                pz_for_2_q_gate = pick_pz_for_2_q_gate(graph, seq_elem[0], seq_elem[1])
                 # new in multishuttler outside:
                 # graph.locked_gates[seq_elem] = pz_for_2_q_gate
             else:
@@ -166,14 +150,14 @@ def create_priority_queue(graph, sequence, max_length=10):
             msg = "len gate 0 or > 2? - can only process 1 or 2-qubit gates"
             raise ValueError(msg)
 
-        # at the end fill all empty pzs with []
+        # at the end fill all empty pzs with ()
         for pz in graph.pzs:
             if pz.name not in next_gate_at_pz:
-                next_gate_at_pz[pz.name] = []
+                next_gate_at_pz[pz.name] = ()
     return unique_sequence, next_gate_at_pz
 
 
-def get_partitioned_priority_queues(graph, priority_queue, partition):
+def get_partitioned_priority_queues(priority_queue: dict[int, str]) -> dict[str, list[int]]:
     # partitioned_priority_queue is a dictionary with pzs as keys and ions as values
     # represents priority queue for each processing zone individually
     # is just priority reversed (keys and values exchanged)
@@ -190,9 +174,9 @@ def get_partitioned_priority_queues(graph, priority_queue, partition):
     return partitioned_priority_queues
 
 
-def create_gate_info_list(graph):
+def create_gate_info_list(graph: Graph) -> dict[str, list[int]]:
     # create list of next gate at each processing zone
-    gate_info_list = {pz.name: [] for pz in graph.pzs}
+    gate_info_list: dict[str, list[int]] = {pz.name: [] for pz in graph.pzs}
     for seq_elem in graph.sequence:
         if len(seq_elem) == 1:
             elem = seq_elem[0]
@@ -202,7 +186,7 @@ def create_gate_info_list(graph):
         elif len(seq_elem) == 2:
             # only pick processing zone for 2-qubit gate if not already locked
             if seq_elem not in graph.locked_gates:
-                pz = pick_pz_for_2_q_gate_new(graph, seq_elem[0], seq_elem[1])
+                pz = pick_pz_for_2_q_gate(graph, seq_elem[0], seq_elem[1])
             else:
                 pz = graph.locked_gates[seq_elem]
             if gate_info_list[pz] == []:
@@ -223,10 +207,10 @@ def create_gate_info_list(graph):
 # gate at a pz is 2-qubit gate -> then move over pz?
 
 
-def create_move_list(graph, partitioned_priority_queue, pz):
+def create_move_list(graph: Graph, partitioned_priority_queue: list[int], pz: ProcessingZone) -> list[int]:
     ion_chains = get_ion_chains(graph)
     path_length_sequence = {}
-    move_list = []
+    move_list: list[int] = []
     for i, rotate_chain in enumerate(partitioned_priority_queue):
         edge_idc = ion_chains[rotate_chain]
         # shortest path is also 1 edge if already at pz -> set to 0
@@ -251,7 +235,12 @@ def create_move_list(graph, partitioned_priority_queue, pz):
     return move_list
 
 
-def create_cycles_for_moves(graph, move_list, cycle_or_paths, pz):
+def create_cycles_for_moves(
+    graph: Graph,
+    move_list: list[int],
+    cycle_or_paths: str,
+    pz: ProcessingZone,
+) -> dict[int, list[Edge]]:
     all_cycles = {}
     ion_chains = graph.state
     for rotate_chain in move_list:
@@ -264,15 +253,15 @@ def create_cycles_for_moves(graph, move_list, cycle_or_paths, pz):
             all_cycles[rotate_chain] = create_cycle(graph, edge_idc, next_edge)
         else:
             all_cycles[rotate_chain] = create_path_via_bfs_directional(
-                graph, edge_idc, next_edge, other_next_edges=None
+                graph, edge_idc, next_edge
             )  # TODO other next edges for pz
     return all_cycles
 
 
-def find_conflict_cycle_idxs(graph, cycles_dict):
+def find_conflict_cycle_idxs(graph: Graph, cycles_dict: dict[int, list[Edge]]) -> list[tuple[int, int]]:
     combinations_of_cycles = list(distinct_combinations(cycles_dict.keys(), 2))
 
-    def get_cycle_nodes(cycle):
+    def get_cycle_nodes(cycle: int) -> set[Node]:
         # if cycle is two edges
         if len(cycles_dict[cycle]) == 2:
             # if not a stop move
@@ -313,7 +302,9 @@ def find_conflict_cycle_idxs(graph, cycles_dict):
     return junction_shared_pairs
 
 
-def find_movable_cycles(graph, all_cycles, priority_queue, cycle_or_paths):
+def find_movable_cycles(
+    graph: Graph, all_cycles: dict[int, list[Edge]], priority_queue: dict[int, str], cycle_or_paths: str
+) -> list[int]:
     print("all_cycles", all_cycles)
     if cycle_or_paths == "Cycles":
         nonfree_cycles = find_conflict_cycle_idxs(graph, all_cycles)
@@ -342,22 +333,26 @@ def find_movable_cycles(graph, all_cycles, priority_queue, cycle_or_paths):
     return free_cycle_seq_idxs
 
 
-def rotate(graph, ion, cycle_idcs):
+def rotate(graph: Graph, ion: int, cycle_idcs: list[Edge]) -> None:
     # print(f"Rotating ion {ion} along cycle {cycle_idcs}", graph.in_process)
     state_dict = get_edge_state(graph)
     first = True
     last_ion = -1
     for current_edge, new_edge in pairwise(cycle_idcs):
-        current_edge_ = tuple(sorted(current_edge, key=sum))
-        new_edge_ = tuple(sorted(new_edge, key=sum))
-        current_ion = state_dict.get(current_edge_)
+        current_node1, current_node2 = tuple(sorted(current_edge, key=sum))
+        current_edge_ = (current_node1, current_node2)
+
+        new_node1, new_node2 = tuple(sorted(new_edge, key=sum))
+        new_edge_ = (new_node1, new_node2)
 
         # take first ion in list to rotate
         # if len(current_ion) <= 1:
-        try:
-            current_ion = current_ion[0]
-        except IndexError:
-            pass
+        current_ion_ = state_dict.get(current_edge_)
+        if current_ion_ is not None:
+            try:
+                current_ion = current_ion_[0]
+            except IndexError:
+                pass
 
         # if ion already rotated via previous cycle
         # (now checks directly in state_dict, in case two ions on one edge)
@@ -379,7 +374,7 @@ def rotate(graph, ion, cycle_idcs):
         last_ion = current_ion
 
 
-def rotate_free_cycles(graph, all_cycles, free_cycles_idxs):
+def rotate_free_cycles(graph: Graph, all_cycles: dict[int, list[Edge]], free_cycles_idxs: list[int]) -> None:
     rotate_cycles_idcs = {}
     for cycle_ion in free_cycles_idxs:
         try:

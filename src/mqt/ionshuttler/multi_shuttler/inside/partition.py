@@ -1,10 +1,12 @@
+from pathlib import Path
+
 import networkx as nx
 from networkx.algorithms.community import kernighan_lin_bisection
 from qiskit import QuantumCircuit
 from qiskit.transpiler.passes import RemoveBarriers, RemoveFinalMeasurements
 
 
-def read_qasm_file(file_path):
+def read_qasm_file(file_path: Path) -> QuantumCircuit:
     circuit = QuantumCircuit.from_qasm_file(file_path)
     # Remove barriers
     circuit = RemoveBarriers()(circuit)
@@ -12,8 +14,8 @@ def read_qasm_file(file_path):
     return RemoveFinalMeasurements()(circuit)
 
 
-def construct_interaction_graph(circuit):
-    graph = nx.Graph()
+def construct_interaction_graph(circuit: QuantumCircuit) -> nx.Graph[int]:
+    graph: nx.Graph[int] = nx.Graph()
     qubits = circuit.qubits
     for qubit in qubits:
         graph.add_node(qubit._index)
@@ -80,7 +82,7 @@ def construct_interaction_graph(circuit):
 #     return subgraphs#partitions
 
 
-def partition_graph_new(graph, n):
+def partition_graph(graph: nx.Graph[int], n: int) -> list[nx.Graph[int]]:
     if n == 1:
         return [graph]
 
@@ -88,10 +90,10 @@ def partition_graph_new(graph, n):
         f"Number of partitions must be less or equal to the number of nodes {len(graph.nodes), graph.nodes, n}"
     )
     partitions = [graph.copy()]
-    new_partitions = []
+    new_partitions: list[nx.Graph[int]] = []
     while len(partitions) < n:
         len_partitions = len(partitions)
-        for _i, partition in enumerate(partitions):
+        for _, partition in enumerate(partitions):
             if len_partitions + len(new_partitions) < n:
                 if len(partition) < 2:
                     new_partitions.append(partition)
@@ -108,10 +110,10 @@ def partition_graph_new(graph, n):
     return partitions
 
 
-def get_partition(qasm_file_path, n):
+def get_partition(qasm_file_path: Path, n: int) -> list[list[int]]:
     circuit = read_qasm_file(qasm_file_path)
     interaction_graph = construct_interaction_graph(circuit)
-    partition_graphs = partition_graph_new(interaction_graph, n)
+    partition_graphs = partition_graph(interaction_graph, n)
 
     partition = []
     for graph in partition_graphs:
@@ -122,7 +124,7 @@ def get_partition(qasm_file_path, n):
 
 if __name__ == "__main__":
     # Example usage
-    qasm_file_path = (
+    qasm_file_path = Path(__file__).absolute().parent.parent / (
         "QASM_files/full_register_access/full_register_access_2.qasm"
         # "QASM_files/QFT_no_swaps/qft_no_swaps_nativegates_quantinuum_tket_36.qasm"
     )

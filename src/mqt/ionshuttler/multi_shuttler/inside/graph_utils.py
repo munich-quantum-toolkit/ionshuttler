@@ -1,22 +1,23 @@
+from __future__ import annotations
+
 import random
+from typing import TYPE_CHECKING
 
 import networkx as nx
 
+from .graph import Graph
 
-# create dictionary to swap from idx to idc and vice versa
-def create_idc_dictionary(graph):
-    edge_dict = {}
-    for edge_idx, edge_idc in enumerate(graph.edges()):
-        edge_dict[edge_idx] = tuple(sorted(edge_idc, key=sum))
-    return edge_dict
+if TYPE_CHECKING:
+    from .processing_zone import ProcessingZone
+    from .types import Edge
 
 
-def get_idx_from_idc(edge_dictionary, idc):
-    idc = tuple(sorted(idc, key=sum))
-    return list(edge_dictionary.values()).index(idc)
+def get_idx_from_idc(edge_dictionary: dict[int, Edge], idc: Edge) -> int:
+    node1, node2 = tuple(sorted(idc, key=sum))
+    return list(edge_dictionary.values()).index((node1, node2))
 
 
-def get_idc_from_idx(edge_dictionary, idx):
+def get_idc_from_idx(edge_dictionary: dict[int, Edge], idx: int) -> Edge:
     return edge_dictionary[idx]
 
 
@@ -28,7 +29,7 @@ class GraphCreator:
         ion_chain_size_vertical: int,
         ion_chain_size_horizontal: int,
         failing_junctions: int,
-        pz_info: list,
+        pz_info: list[ProcessingZone],
     ):
         self.m = m
         self.n = n
@@ -40,10 +41,10 @@ class GraphCreator:
         self.n_extended = self.n + (self.ion_chain_size_horizontal - 1) * (self.n - 1)
         self.networkx_graph = self.create_graph()
 
-    def create_graph(self) -> nx.Graph:
-        networkx_graph = nx.grid_2d_graph(self.m_extended, self.n_extended)
+    def create_graph(self) -> Graph:
+        networkx_graph: Graph = nx.grid_2d_graph(self.m_extended, self.n_extended, create_using=Graph)
         # color all edges black
-        nx.set_edge_attributes(networkx_graph, "k", "color")
+        nx.set_edge_attributes(networkx_graph, values=dict.fromkeys(networkx_graph.edges(), "k"), name="color")
         # num_edges needed for outer pz (length of one-way connection - exit/entry)
         self._set_trap_nodes(networkx_graph)
         self._remove_edges(networkx_graph)
@@ -53,48 +54,48 @@ class GraphCreator:
         # if self.pz == 'mid':
         #     self._remove_mid_part(networkx_graph)
         self._remove_junctions(networkx_graph, self.failing_junctions)
-        nx.set_edge_attributes(networkx_graph, "trap", "edge_type")
-        nx.set_edge_attributes(networkx_graph, 1, "weight")
+        nx.set_edge_attributes(networkx_graph, values=dict.fromkeys(networkx_graph.edges(), "trap"), name="edge_type")
+        nx.set_node_attributes(networkx_graph, values=dict.fromkeys(networkx_graph.nodes(), 1), name="weight")
 
         return networkx_graph
 
-    def _set_trap_nodes(self, networkx_graph: nx.Graph):
+    def _set_trap_nodes(self, networkx_graph: Graph) -> None:
         for node in networkx_graph.nodes():
             networkx_graph.add_node(node, node_type="trap_node", color="b")
 
-    def _remove_edges(self, networkx_graph: nx.Graph):
+    def _remove_edges(self, networkx_graph: Graph) -> None:
         self._remove_horizontal_edges(networkx_graph)
         self._remove_vertical_edges(networkx_graph)
 
-    def _remove_nodes(self, networkx_graph: nx.Graph):
+    def _remove_nodes(self, networkx_graph: Graph) -> None:
         self._remove_horizontal_nodes(networkx_graph)
 
-    def _remove_horizontal_edges(self, networkx_graph: nx.Graph):
+    def _remove_horizontal_edges(self, networkx_graph: Graph) -> None:
         for i in range(0, self.m_extended - self.ion_chain_size_vertical, self.ion_chain_size_vertical):
             for k in range(1, self.ion_chain_size_vertical):
                 for j in range(self.n_extended - 1):
                     networkx_graph.remove_edge((i + k, j), (i + k, j + 1))
 
-    def _remove_vertical_edges(self, networkx_graph: nx.Graph):
+    def _remove_vertical_edges(self, networkx_graph: Graph) -> None:
         for i in range(0, self.n_extended - self.ion_chain_size_horizontal, self.ion_chain_size_horizontal):
             for k in range(1, self.ion_chain_size_horizontal):
                 for j in range(self.m_extended - 1):
                     networkx_graph.remove_edge((j, i + k), (j + 1, i + k))
 
-    def _remove_horizontal_nodes(self, networkx_graph: nx.Graph):
+    def _remove_horizontal_nodes(self, networkx_graph: Graph) -> None:
         for i in range(0, self.m_extended - self.ion_chain_size_vertical, self.ion_chain_size_vertical):
             for k in range(1, self.ion_chain_size_vertical):
                 for j in range(0, self.n_extended - self.ion_chain_size_horizontal, self.ion_chain_size_horizontal):
                     for s in range(1, self.ion_chain_size_horizontal):
                         networkx_graph.remove_node((i + k, j + s))
 
-    def _set_junction_nodes(self, networkx_graph: nx.Graph):
+    def _set_junction_nodes(self, networkx_graph: Graph) -> None:
         for i in range(0, self.m_extended, self.ion_chain_size_vertical):
             for j in range(0, self.n_extended, self.ion_chain_size_horizontal):
                 networkx_graph.add_node((i, j), node_type="junction_node", color="g")
                 networkx_graph.junction_nodes.append((i, j))
 
-    def _remove_junctions(self, networkx_graph: nx.Graph, num_nodes_to_remove: int):
+    def _remove_junctions(self, networkx_graph: Graph, num_nodes_to_remove: int) -> None:
         """
         Removes a specified number of nodes from the graph, excluding nodes of type 'exit_node' or 'entry_node'.
         """
@@ -113,5 +114,5 @@ class GraphCreator:
         for node in nodes_to_remove[:num_nodes_to_remove]:
             networkx_graph.remove_node(node)
 
-    def get_graph(self) -> nx.Graph:
+    def get_graph(self) -> Graph:
         return self.networkx_graph

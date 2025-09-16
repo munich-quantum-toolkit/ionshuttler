@@ -1,21 +1,33 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING
+
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 
 from .graph_utils import get_idx_from_idc
 
+if TYPE_CHECKING:
+    from .graph import Graph
+    from .types import Edge
+
 
 # Plotting function
 def plot_state(
-    graph,
-    labels,
-    plot_ions=True,
-    show_plot=False,
-    save_plot=False,
-    plot_cycle=False,
-    plot_pzs=False,
-    filename="graph.pdf",
-):
+    graph: Graph,
+    labels: tuple[str, str | None],
+    plot_ions: bool = True,
+    show_plot: bool = False,
+    save_plot: bool = False,
+    plot_cycle: list[Edge] | bool = False,
+    plot_pzs: bool = False,
+    filename: Path | None = None,
+) -> None:
+    if filename is None:
+        filename = Path("graph.pdf")
+
     idc_dict = graph.idc_dict
     pos = {(x, y): (y, -x) for i, (x, y) in enumerate(list(graph.nodes()))}
     if plot_ions is True:
@@ -30,7 +42,7 @@ def plot_state(
         # color all edges black
         graph.add_edge(edge_idc[0], edge_idc[1], color="k")
 
-        ion_holder = {}
+        ion_holder: dict[Edge, list[int]] = {}
         colors = []
         np.random.seed(0)
         for _ in range(len(graph.edges)):
@@ -60,6 +72,7 @@ def plot_state(
             )
 
     if plot_cycle is not False:
+        assert isinstance(plot_cycle, list)
         for edge in plot_cycle:
             graph.add_edge(edge[0], edge[1], color="r")
 

@@ -1,12 +1,19 @@
+from __future__ import annotations
+
 import random
+from typing import TYPE_CHECKING
 
 import networkx as nx
 from more_itertools import pairwise
 
 from .graph_utils import get_idx_from_idc
 
+if TYPE_CHECKING:
+    from .graph import Graph
+    from .types import Edge, Node
 
-def create_starting_config(graph, n_of_chains, seed=None):
+
+def create_starting_config(graph: Graph, n_of_chains: int, seed: int | None = None) -> int:
     # Initialize ions on edges using an edge attribute
     nx.set_edge_attributes(graph, {edge: [] for edge in graph.edges}, "ions")
 
@@ -26,14 +33,13 @@ def create_starting_config(graph, n_of_chains, seed=None):
     number_of_registers = len(starting_traps)
 
     # place ions onto traps (ion0 on starting_trap0)
-    ion_chains = {}
     for ion, idc in enumerate(starting_traps):
         graph.edges[idc]["ions"] = [ion]
 
-    return ion_chains, number_of_registers
+    return number_of_registers
 
 
-def get_ion_chains(graph):
+def get_ion_chains(graph: Graph) -> dict[int, Edge]:
     ion_chains = {}
     # Iterate over all edges in the graph
     for u, v, data in graph.edges(data=True):
@@ -54,7 +60,7 @@ def get_ion_chains(graph):
     return ion_chains
 
 
-def get_edge_state(graph):
+def get_edge_state(graph: Graph) -> dict[Edge, list[int]]:
     # TODO is wrong for multiple ions on one edge (only returns one ion)
     state_dict = {}
     # Iterate over all edges in the graph
@@ -76,7 +82,7 @@ def get_edge_state(graph):
     return state_dict
 
 
-def have_common_junction_node(graph, edge1, edge2):
+def have_common_junction_node(graph: Graph, edge1: Edge, edge2: Edge) -> bool:
     # Extract nodes from the edges
     nodes_edge1 = set(edge1)
     nodes_edge2 = set(edge2)
@@ -87,7 +93,7 @@ def have_common_junction_node(graph, edge1, edge2):
     return len(common_junction_nodes) > 0
 
 
-def check_if_edge_is_filled(graph, edge_idc):
+def check_if_edge_is_filled(graph: Graph, edge_idc: Edge) -> bool:
     chain = graph.edges()[edge_idc]["ions"]
     if len(chain) > 1:
         # raise ValueError(f"Edge {edge_idc} has more than one ion entry: {chain}")
@@ -95,7 +101,7 @@ def check_if_edge_is_filled(graph, edge_idc):
     return len(chain) > 0  # == 1
 
 
-def find_path_node_to_edge(graph, node, goal_edge):
+def find_path_node_to_edge(graph: Graph, node: Node, goal_edge: Edge) -> list[Node]:
     # manipulate graph weights
     original_weight = graph[goal_edge[0]][goal_edge[1]].get("weight", 1)
     # set weight of goal edge to inf (so it can't move past the edge)
@@ -114,7 +120,7 @@ def find_path_node_to_edge(graph, node, goal_edge):
     return path0
 
 
-def find_path_edge_to_edge(graph, edge_idc, goal_edge):
+def find_path_edge_to_edge(graph: Graph, edge_idc: Edge, goal_edge: Edge) -> list[Node]:
     # find path to goal edge from both nodes
     path0 = find_path_node_to_edge(graph, edge_idc[0], goal_edge)
     path1 = find_path_node_to_edge(graph, edge_idc[1], goal_edge)
@@ -125,7 +131,7 @@ def find_path_edge_to_edge(graph, edge_idc, goal_edge):
     return path0
 
 
-def find_next_edge(graph, edge_idc, goal_edge):
+def find_next_edge(graph: Graph, edge_idc: Edge, goal_edge: Edge) -> Edge:
     if edge_idc == goal_edge:
         return goal_edge
 
@@ -136,17 +142,17 @@ def find_next_edge(graph, edge_idc, goal_edge):
     return (node_path[0], node_path[1])
 
 
-def find_ordered_edges(graph, edge1, edge2):
+def find_ordered_edges(graph: Graph, edge1: Edge, edge2: Edge) -> tuple[Edge, Edge]:
     idc_dict = graph.idc_dict
 
     # Find the common node shared between the two edges
-    common_node = set(edge1).intersection(set(edge2))
+    common_nodes = set(edge1).intersection(set(edge2))
 
-    if len(common_node) != 1 and edge1 != edge2:
+    if len(common_nodes) != 1 and edge1 != edge2:
         msg = f"The input edges are not connected. Edges: {edge1}, {edge2}"
         raise ValueError(msg)
 
-    common_node = common_node.pop()
+    common_node = common_nodes.pop()
     if edge1[0] == common_node:
         edge1_in_order = (edge1[1], common_node)
         edge2_in_order = (common_node, edge2[1]) if edge2[0] == common_node else (common_node, edge2[0])
@@ -162,10 +168,10 @@ def find_ordered_edges(graph, edge1, edge2):
 
 
 def create_cycle(
-    graph,
-    edge_idc,
-    next_edge,
-):
+    graph: Graph,
+    edge_idc: Edge,
+    next_edge: Edge,
+) -> list[Edge]:
     idc_dict = graph.idc_dict
 
     # cycles within memory zone

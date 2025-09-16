@@ -44,7 +44,7 @@ def parse_qasm(filename: Path) -> list[tuple[int, ...]]:
     return gates_and_qubits
 
 
-def compile(filename: Path | str) -> list:  # noqa: A001
+def compile(filename: Path | str) -> list[tuple[int, ...]]:  # noqa: A001
     """Compile a QASM file and return the compiled sequence of qubits."""
     filename = Path(filename)
 

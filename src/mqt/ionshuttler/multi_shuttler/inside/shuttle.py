@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import pathlib
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from .cycles import get_ion_chains
 from .plotting import plot_state
@@ -14,8 +17,12 @@ from .scheduling import (
     rotate_free_cycles,
 )
 
+if TYPE_CHECKING:
+    from .graph import Graph
+    from .types import Edge
 
-def find_pz_order(graph, gate_info_list):
+
+def find_pz_order(graph: Graph, gate_info_list: dict[str, list[int]]) -> list[str]:
     # find next processing zone that will execute a gate
     pz_order = []
     for gate in graph.sequence:
@@ -34,7 +41,13 @@ def find_pz_order(graph, gate_info_list):
     return pz_order
 
 
-def shuttle(graph, priority_queue, partition, timestep, cycle_or_paths, unique_folder: pathlib.Path):
+def shuttle(
+    graph: Graph,
+    priority_queue: dict[int, str],
+    timestep: int,
+    cycle_or_paths: str,
+    unique_folder: pathlib.Path,
+) -> None:
     gate_info_list = create_gate_info_list(graph)
     print(f"Gate info list: {gate_info_list}")
 
@@ -86,9 +99,9 @@ def shuttle(graph, priority_queue, partition, timestep, cycle_or_paths, unique_f
     # Update ion chains after preprocess
     graph.state = get_ion_chains(graph)
     # print(f"priority queue: {priority_queue}")
-    part_prio_queues = get_partitioned_priority_queues(graph, priority_queue, partition)
+    part_prio_queues = get_partitioned_priority_queues(priority_queue)
 
-    all_cycles = {}
+    all_cycles: dict[int, list[Edge]] = {}
     # Iterate over all processing zones
     # create move list for each pz -> needed to get all cycles
     # priority queue later picks the cycles to rotate
@@ -128,7 +141,7 @@ def shuttle(graph, priority_queue, partition, timestep, cycle_or_paths, unique_f
     )
 
 
-def main(graph, sequence, partition, cycle_or_paths):
+def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str) -> int:
     timestep = 0
     max_timesteps = 1e6
     graph.state = get_ion_chains(graph)
@@ -182,14 +195,14 @@ def main(graph, sequence, partition, cycle_or_paths):
         # print('in process before shuttling:', graph.in_process)
 
         # shuttle one timestep
-        shuttle(graph, priority_queue, partition, timestep, cycle_or_paths, unique_folder)
+        shuttle(graph, priority_queue, timestep, cycle_or_paths, unique_folder)
 
         # reset ions in process
         graph.in_process = []
 
         # Check the state of each ion in the sequence
         graph.state = get_ion_chains(graph)
-        processed_ions = []
+        processed_ions: list[tuple[int, ...]] = []
         previous_ion_processed = True
         pzs = graph.pzs.copy()
         # go through the first gates in the sequence (as many as pzs or sequence length)

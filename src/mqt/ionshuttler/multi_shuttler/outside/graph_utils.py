@@ -172,7 +172,7 @@ class Graph(nx.Graph):  # type: ignore [type-arg]
 
 # create dictionary to swap from idx to idc and vice versa
 # reversed in comparison with previous versions -> edge_idc key, edge_idx value now -> can also have an entry for the reversed edge_idc
-def create_idc_dictionary(graph: nx.Graph[Node]) -> dict[Edge, int]:
+def create_idc_dictionary(graph: Graph) -> dict[Edge, int]:
     edge_dict = {}
     for edge_idx, edge_idc in enumerate(graph.edges()):
         node1, node2 = tuple(sorted(edge_idc, key=sum))
