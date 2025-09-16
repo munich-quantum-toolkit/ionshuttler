@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from collections import OrderedDict, defaultdict
+from typing import TYPE_CHECKING
 
 import numpy as np
 from more_itertools import distinct_combinations, pairwise
@@ -16,6 +19,9 @@ from .cycles import (
 from .graph_utils import get_idx_from_idc
 from .paths import create_path_via_bfs_directional, find_nonfree_paths
 
+if TYPE_CHECKING:
+    from .types import Edge
+
 # Set up logging configuration
 # logging.basicConfig(
 #     level=logging.DEBUG,
@@ -26,7 +32,7 @@ from .paths import create_path_via_bfs_directional, find_nonfree_paths
 
 
 class ProcessingZone:
-    def __init__(self, name, edge_idc):
+    def __init__(self, name: str, edge_idc: Edge) -> None:
         self.name = name
         self.edge_idc = edge_idc
 

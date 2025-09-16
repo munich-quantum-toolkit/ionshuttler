@@ -69,7 +69,7 @@ repos:
     rev: v1.18.1
     hooks:
       - id: mypy
-        files: ^(src/mqt/ionshuttler/single_shuttler|run_exact.py)
+        files: ^(src/mqt/ionshuttler/multi_shuttler/outside|run_exact.py)
         args: []
         additional_dependencies:
           - matplotlib

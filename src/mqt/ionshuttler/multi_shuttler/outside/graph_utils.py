@@ -1,30 +1,196 @@
+from __future__ import annotations
+
 import math
 import random
+from typing import TYPE_CHECKING
 
 import networkx as nx
+
+if TYPE_CHECKING:
+    from qiskit.dagcircuit import DAGDepNode
+
+    from .types import Edge, Node
+
+
+class Graph(nx.Graph):  # type: ignore [type-arg]
+    @property
+    def mz_graph(self) -> Graph:
+        return self._mz_graph
+
+    @mz_graph.setter
+    def mz_graph(self, value: Graph) -> None:
+        self._mz_graph = value
+
+    @property
+    def seed(self) -> int:
+        return self._seed
+
+    @seed.setter
+    def seed(self, value: int) -> None:
+        self._seed = value
+
+    @property
+    def idc_dict(self) -> dict[Edge, int]:
+        if not hasattr(self, "_idc_dict"):
+            self._idc_dict = create_idc_dictionary(self)
+        return self._idc_dict
+
+    @property
+    def max_num_parking(self) -> int:
+        return self._max_num_parking
+
+    @max_num_parking.setter
+    def max_num_parking(self, value: int) -> None:
+        self._max_num_parking = value
+
+    @property
+    def pzs(self) -> list[ProcessingZone]:
+        return self._pzs
+
+    @pzs.setter
+    def pzs(self, value: list[ProcessingZone]) -> None:
+        parking_edges_idxs = []
+        pzs_name_map = {}
+        edge_to_pz_map = {}
+
+        for pz in value:
+            pz.max_num_parking = self.max_num_parking
+            parking_idx = get_idx_from_idc(self.idc_dict, pz.parking_edge)
+            parking_edges_idxs.append(parking_idx)
+            pzs_name_map[pz.name] = pz
+            # Populate edge_to_pz_map for edges belonging to this PZ's structure
+            for edge_idx in pz.pz_edges_idx:
+                edge_to_pz_map[edge_idx] = pz
+
+        self._parking_edges_idxs = parking_edges_idxs
+        self._pzs_name_map = pzs_name_map
+        self._edge_to_pz_map = edge_to_pz_map
+        self._pzs = value
+
+    @property
+    def parking_edges_idxs(self) -> list[int]:
+        return self._parking_edges_idxs
+
+    @property
+    def pzs_name_map(self) -> dict[str, ProcessingZone]:
+        return self._pzs_name_map
+
+    @property
+    def edge_to_pz_map(self) -> dict[int, ProcessingZone]:
+        return self._edge_to_pz_map
+
+    @property
+    def plot(self) -> bool:
+        return self._plot
+
+    @plot.setter
+    def plot(self, value: bool) -> None:
+        self._plot = value
+
+    @property
+    def save(self) -> bool:
+        return self._save
+
+    @save.setter
+    def save(self, value: bool) -> None:
+        self._save = value
+
+    @property
+    def state(self) -> dict[int, Edge]:
+        return self._state
+
+    @state.setter
+    def state(self, value: dict[int, Edge]) -> None:
+        self._state = value
+
+    @property
+    def sequence(self) -> list[tuple[int, ...]]:
+        return self._sequence
+
+    @sequence.setter
+    def sequence(self, value: list[tuple[int, ...]]) -> None:
+        self._sequence = value
+
+    @property
+    def locked_gates(self) -> dict[tuple[int, ...], str]:
+        return self._locked_gates
+
+    @locked_gates.setter
+    def locked_gates(self, value: dict[tuple[int, ...], str]) -> None:
+        self._locked_gates = value
+
+    @property
+    def in_process(self) -> list[int]:
+        return self._in_process
+
+    @in_process.setter
+    def in_process(self, value: list[int]) -> None:
+        self._in_process = value
+
+    @property
+    def arch(self) -> str:
+        return self._arch
+
+    @arch.setter
+    def arch(self, value: str) -> None:
+        self._arch = value
+
+    @property
+    def map_to_pz(self) -> dict[int, str]:
+        return self._map_to_pz
+
+    @map_to_pz.setter
+    def map_to_pz(self, value: dict[int, str]) -> None:
+        self._map_to_pz = value
+
+    @property
+    def next_gate_at_pz(self) -> dict[str, tuple[int, ...]]:
+        return self._next_gate_at_pz
+
+    @next_gate_at_pz.setter
+    def next_gate_at_pz(self, value: dict[str, tuple[int, ...]]) -> None:
+        self._next_gate_at_pz = value
+
+    @property
+    def dist_dict(self) -> dict[str, dict[Edge, list[Node]]]:
+        if not hasattr(self, "_dist_dict"):
+            self._dist_dict = create_dist_dict(self)
+        return self._dist_dict
+
+    @dist_dict.setter
+    def dist_dict(self, value: dict[str, dict[Edge, list[Node]]]) -> None:
+        self._dist_dict = value
+
+    @property
+    def junction_nodes(self) -> list[Node]:
+        return self._junction_nodes
+
+    @junction_nodes.setter
+    def junction_nodes(self, value: list[Node]) -> None:
+        self._junction_nodes = value
 
 
 # create dictionary to swap from idx to idc and vice versa
 # reversed in comparison with previous versions -> edge_idc key, edge_idx value now -> can also have an entry for the reversed edge_idc
-def create_idc_dictionary(graph):
+def create_idc_dictionary(graph: nx.Graph[Node]) -> dict[Edge, int]:
     edge_dict = {}
     for edge_idx, edge_idc in enumerate(graph.edges()):
-        sorted_edge_idc = tuple(sorted(edge_idc, key=sum))
-        edge_dict[sorted_edge_idc] = edge_idx
-        edge_dict[sorted_edge_idc[1], sorted_edge_idc[0]] = edge_idx
+        node1, node2 = tuple(sorted(edge_idc, key=sum))
+        edge_dict[node1, node2] = edge_idx
+        edge_dict[node2, node1] = edge_idx
     return edge_dict
 
 
-def get_idx_from_idc(edge_dictionary, idc):
-    idc = tuple(sorted(idc, key=sum))
-    return edge_dictionary[idc]
+def get_idx_from_idc(edge_dictionary: dict[Edge, int], idc: Edge) -> int:
+    node1, node2 = tuple(sorted(idc, key=sum))
+    return edge_dictionary[node1, node2]
 
 
-def get_idc_from_idx(edge_dictionary, idx):
-    return next((k for k, v in edge_dictionary.items() if v == idx), None)  # list(edge_dictionary.values()).index(idx)
+def get_idc_from_idx(edge_dictionary: dict[Edge, int], idx: int) -> Edge:
+    return next((k for k, v in edge_dictionary.items() if v == idx))  # list(edge_dictionary.values()).index(idx)
 
 
-def create_dist_dict(graph):
+def create_dist_dict(graph: Graph) -> dict[str, dict[Edge, list[Node]]]:
     # create dictionary of dictionary with all distances to entry of each edge for each pz
     from .cycles import find_path_edge_to_edge  # noqa: PLC0415
 
@@ -36,17 +202,16 @@ def create_dist_dict(graph):
             edge_idx = get_idx_from_idc(graph.idc_dict, edge_idc)
             # for pz_path_idx in pz.path_to_pz_idxs:
             #     if edge_idx == pz.path_to_pz:
-
-            pz_dict[get_idc_from_idx(graph.idc_dict, edge_idx)] = find_path_edge_to_edge(
-                graph, edge_idc, pz.parking_edge
-            )
+            path = find_path_edge_to_edge(graph, edge_idc, pz.parking_edge)
+            assert path is not None
+            pz_dict[get_idc_from_idx(graph.idc_dict, edge_idx)] = path
 
         dist_dict[pz.name] = pz_dict
     return dist_dict
 
 
 # calc distance to parking edge for all ions
-def update_distance_map(graph, state):
+def update_distance_map(graph: Graph, state: dict[int, int]) -> dict[int, dict[str, int]]:
     """Update a distance map that tracks the distances to each pz for each ion of current state.
     Dict: {ion: {'pz_name': distance}},
     e.g.,  {0: {'pz1': 2, 'pz2': 2, 'pz3': 1}, 1: {'pz1': 4, 'pz2': 1, 'pz3': 2}, 2: {'pz1': 3, 'pz2': 1, 'pz3': 3}}"""
@@ -60,9 +225,9 @@ def update_distance_map(graph, state):
 
 
 # Function to convert all nodes to float
-def convert_nodes_to_float(graph):
+def convert_nodes_to_float(graph: Graph) -> Graph:
     mapping = {node: (float(node[0]), float(node[1])) for node in graph.nodes}
-    return nx.relabel_nodes(graph, mapping)
+    return nx.relabel_nodes(graph, mapping, copy=False)  # type: ignore [return-value]
 
 
 class GraphCreator:
@@ -73,7 +238,7 @@ class GraphCreator:
         ion_chain_size_vertical: int,
         ion_chain_size_horizontal: int,
         failing_junctions: int,
-        pz_info: list,
+        pz_info: list[ProcessingZone],
     ):
         self.m = m
         self.n = n
@@ -85,12 +250,12 @@ class GraphCreator:
         self.n_extended = self.n + (self.ion_chain_size_horizontal - 1) * (self.n - 1)
         self.networkx_graph = self.create_graph()
 
-    def create_graph(self) -> nx.Graph:
-        networkx_graph = nx.grid_2d_graph(self.m_extended, self.n_extended)
+    def create_graph(self) -> Graph:
+        networkx_graph = nx.grid_2d_graph(self.m_extended, self.n_extended, create_using=Graph)
         # Convert nodes to float
         networkx_graph = convert_nodes_to_float(networkx_graph)
         # color all edges black
-        nx.set_edge_attributes(networkx_graph, "k", "color")
+        nx.set_edge_attributes(networkx_graph, values=dict.fromkeys(networkx_graph.edges(), "k"), name="color")
         # num_edges needed for outer pz (length of one-way connection - exit/entry)
         self._set_trap_nodes(networkx_graph)
         self._remove_edges(networkx_graph)
@@ -100,24 +265,24 @@ class GraphCreator:
         # if self.pz == 'mid':
         #     self._remove_mid_part(networkx_graph)
         self._remove_junctions(networkx_graph, self.failing_junctions)
-        nx.set_edge_attributes(networkx_graph, "trap", "edge_type")
-        nx.set_edge_attributes(networkx_graph, 1, "weight")
+        nx.set_edge_attributes(networkx_graph, values=dict.fromkeys(networkx_graph.edges(), "trap"), name="edge_type")
+        nx.set_edge_attributes(networkx_graph, values=dict.fromkeys(networkx_graph.edges(), 1), name="weight")
 
         return networkx_graph
 
-    def _set_trap_nodes(self, networkx_graph: nx.Graph):
+    def _set_trap_nodes(self, networkx_graph: Graph) -> None:
         for node in networkx_graph.nodes():
             float_node = (float(node[0]), float(node[1]))
             networkx_graph.add_node(float_node, node_type="trap_node", color="k", node_size=100)
 
-    def _remove_edges(self, networkx_graph: nx.Graph):
+    def _remove_edges(self, networkx_graph: Graph) -> None:
         self._remove_horizontal_edges(networkx_graph)
         self._remove_vertical_edges(networkx_graph)
 
-    def _remove_nodes(self, networkx_graph: nx.Graph):
+    def _remove_nodes(self, networkx_graph: Graph) -> None:
         self._remove_horizontal_nodes(networkx_graph)
 
-    def _remove_horizontal_edges(self, networkx_graph: nx.Graph):
+    def _remove_horizontal_edges(self, networkx_graph: Graph) -> None:
         for i in range(0, self.m_extended - self.ion_chain_size_vertical, self.ion_chain_size_vertical):
             for k in range(1, self.ion_chain_size_vertical):
                 for j in range(self.n_extended - 1):
@@ -125,7 +290,7 @@ class GraphCreator:
                     node2 = (float(i + k), float(j + 1))
                     networkx_graph.remove_edge(node1, node2)
 
-    def _remove_vertical_edges(self, networkx_graph: nx.Graph):
+    def _remove_vertical_edges(self, networkx_graph: Graph) -> None:
         for i in range(0, self.n_extended - self.ion_chain_size_horizontal, self.ion_chain_size_horizontal):
             for k in range(1, self.ion_chain_size_horizontal):
                 for j in range(self.m_extended - 1):
@@ -133,7 +298,7 @@ class GraphCreator:
                     node2 = (float(j + 1), float(i + k))
                     networkx_graph.remove_edge(node1, node2)
 
-    def _remove_horizontal_nodes(self, networkx_graph: nx.Graph):
+    def _remove_horizontal_nodes(self, networkx_graph: Graph) -> None:
         for i in range(0, self.m_extended - self.ion_chain_size_vertical, self.ion_chain_size_vertical):
             for k in range(1, self.ion_chain_size_vertical):
                 for j in range(0, self.n_extended - self.ion_chain_size_horizontal, self.ion_chain_size_horizontal):
@@ -141,19 +306,19 @@ class GraphCreator:
                         node = (float(i + k), float(j + s))
                         networkx_graph.remove_node(node)
 
-    def _set_junction_nodes(self, networkx_graph: nx.Graph):
+    def _set_junction_nodes(self, networkx_graph: Graph) -> None:
         for i in range(0, self.m_extended, self.ion_chain_size_vertical):
             for j in range(0, self.n_extended, self.ion_chain_size_horizontal):
                 float_node = (float(i), float(j))
                 networkx_graph.add_node(float_node, node_type="junction_node", color="g", node_size=200)
                 networkx_graph.junction_nodes.append(float_node)
 
-    def _remove_junctions(self, networkx_graph: nx.Graph, num_nodes_to_remove: int):
+    def _remove_junctions(self, networkx_graph: Graph, num_nodes_to_remove: int) -> None:
         """
         Removes a specified number of nodes from the graph, excluding nodes of type 'exit_node' or 'entry_node'.
         """
         #  Filter out nodes that are of type 'exit_node' or 'entry_node'
-        nodes_to_remove = [
+        nodes_to_remove: list[Node] = [
             node
             for node, data in networkx_graph.nodes(data=True)
             if data.get("node_type") not in {"exit_node", "entry_node", "exit_connection_node", "entry_connection_node"}
@@ -169,7 +334,7 @@ class GraphCreator:
 
         random.seed()
 
-    def get_graph(self) -> nx.Graph:
+    def get_graph(self) -> Graph:
         return self.networkx_graph
 
 
@@ -181,6 +346,182 @@ class ProcessingZone:
         self.entry_node = info[1]
         self.processing_zone = info[2]
 
+    @property
+    def parking_node(self) -> Node:
+        return self._parking_node
+
+    @parking_node.setter
+    def parking_node(self, value: Node) -> None:
+        self._parking_node = value
+
+    @property
+    def parking_edge(self) -> Edge:
+        return self._parking_edge
+
+    @parking_edge.setter
+    def parking_edge(self, value: Edge) -> None:
+        self._parking_edge = value
+
+    @property
+    def time_in_pz_counter(self) -> int:
+        return self._time_in_pz_counter
+
+    @time_in_pz_counter.setter
+    def time_in_pz_counter(self, value: int) -> None:
+        self._time_in_pz_counter = value
+
+    @property
+    def gate_execution_finished(self) -> bool:
+        return self._gate_execution_finished
+
+    @gate_execution_finished.setter
+    def gate_execution_finished(self, value: bool) -> None:
+        self._gate_execution_finished = value
+
+    @property
+    def getting_processed(self) -> list[DAGDepNode]:
+        return self._getting_processed
+
+    @getting_processed.setter
+    def getting_processed(self, value: list[DAGDepNode]) -> None:
+        self._getting_processed = value
+
+    @property
+    def rotate_entry(self) -> bool:
+        return self._rotate_entry
+
+    @rotate_entry.setter
+    def rotate_entry(self, value: bool) -> None:
+        self._rotate_entry = value
+
+    @property
+    def out_of_parking_cycle(self) -> int | None:
+        return self._out_of_parking_cycle
+
+    @out_of_parking_cycle.setter
+    def out_of_parking_cycle(self, value: int | None) -> None:
+        self._out_of_parking_cycle = value
+
+    @property
+    def out_of_parking_move(self) -> int | None:
+        return self._out_of_parking_move
+
+    @out_of_parking_move.setter
+    def out_of_parking_move(self, value: int | None) -> None:
+        self._out_of_parking_move = value
+
+    @property
+    def entry_edge(self) -> Edge:
+        return self._entry_edge
+
+    @entry_edge.setter
+    def entry_edge(self, value: Edge) -> None:
+        self._entry_edge = value
+
+    @property
+    def exit_edge(self) -> Edge:
+        return self._exit_edge
+
+    @exit_edge.setter
+    def exit_edge(self, value: Edge) -> None:
+        self._exit_edge = value
+
+    @property
+    def ion_to_move_out_of_pz(self) -> int | None:
+        return self._ion_to_move_out_of_pz
+
+    @ion_to_move_out_of_pz.setter
+    def ion_to_move_out_of_pz(self, value: int | None) -> None:
+        self._ion_to_move_out_of_pz = value
+
+    @property
+    def path_from_pz(self) -> list[Edge]:
+        return self._path_from_pz
+
+    @path_from_pz.setter
+    def path_from_pz(self, value: list[Edge]) -> None:
+        self._path_from_pz = value
+
+    @property
+    def rest_of_path_from_pz(self) -> dict[Edge, list[Edge]]:
+        return self._rest_of_path_from_pz
+
+    @rest_of_path_from_pz.setter
+    def rest_of_path_from_pz(self, value: dict[Edge, list[Edge]]) -> None:
+        self._rest_of_path_from_pz = value
+
+    @property
+    def path_to_pz(self) -> list[Edge]:
+        return self._path_to_pz
+
+    @path_to_pz.setter
+    def path_to_pz(self, value: list[Edge]) -> None:
+        self._path_to_pz = value
+
+    @property
+    def rest_of_path_to_pz(self) -> dict[Edge, list[Edge]]:
+        return self._rest_of_path_to_pz
+
+    @rest_of_path_to_pz.setter
+    def rest_of_path_to_pz(self, value: dict[Edge, list[Edge]]) -> None:
+        self._rest_of_path_to_pz = value
+
+    @property
+    def first_entry_connection_from_pz(self) -> Edge:
+        return self._first_entry_connection_from_pz
+
+    @first_entry_connection_from_pz.setter
+    def first_entry_connection_from_pz(self, value: Edge) -> None:
+        self._first_entry_connection_from_pz = value
+
+    @property
+    def ion_to_park(self) -> int | None:
+        return self._ion_to_park
+
+    @ion_to_park.setter
+    def ion_to_park(self, value: int | None) -> None:
+        self._ion_to_park = value
+
+    @property
+    def max_num_parking(self) -> int:
+        return self._max_num_parking
+
+    @max_num_parking.setter
+    def max_num_parking(self, value: int) -> None:
+        self._max_num_parking = value
+
+    @property
+    def path_to_pz_idxs(self) -> list[int]:
+        return self._path_to_pz_idxs
+
+    @path_to_pz_idxs.setter
+    def path_to_pz_idxs(self, value: list[int]) -> None:
+        self._path_to_pz_idxs = value
+
+    @property
+    def path_from_pz_idxs(self) -> list[int]:
+        return self._path_from_pz_idxs
+
+    @path_from_pz_idxs.setter
+    def path_from_pz_idxs(self, value: list[int]) -> None:
+        self._path_from_pz_idxs = value
+
+    @property
+    def pz_edges_idx(self) -> list[int]:
+        return self._pz_edges_idx
+
+    @pz_edges_idx.setter
+    def pz_edges_idx(self, value: list[int]) -> None:
+        self._pz_edges_idx = value
+
+    @property
+    def num_edges(self) -> int:
+        return self._num_edges
+
+    @num_edges.setter
+    def num_edges(self, value: int) -> None:
+        self._num_edges = value
+
 
 class PZCreator(GraphCreator):
     def __init__(
@@ -190,7 +531,7 @@ class PZCreator(GraphCreator):
         ion_chain_size_vertical: int,
         ion_chain_size_horizontal: int,
         failing_junctions: int,
-        pzs: list,
+        pzs: list[ProcessingZone],
     ):
         super().__init__(m, n, ion_chain_size_vertical, ion_chain_size_horizontal, failing_junctions, pzs)
         self.pzs = pzs
@@ -217,7 +558,7 @@ class PZCreator(GraphCreator):
             for edge in pz.pz_edges_idx:
                 self.get_pz_from_edge[edge] = pz
 
-    def find_shared_border(self, node1, node2):
+    def find_shared_border(self, node1: Node, node2: Node) -> str | None:
         x1, y1 = node1
         x2, y2 = node2
 
@@ -237,7 +578,7 @@ class PZCreator(GraphCreator):
 
         return None
 
-    def _set_processing_zone(self, networkx_graph, pz):
+    def _set_processing_zone(self, networkx_graph: Graph, pz: ProcessingZone) -> Graph:
         border = self.find_shared_border(pz.exit_node, pz.entry_node)
 
         # Define the parking edge (edge between processing zone and parking node)
@@ -331,15 +672,15 @@ class PZCreator(GraphCreator):
 
         return networkx_graph
 
-    def order_edges(self, edge1, edge2):
+    def order_edges(self, edge1: Edge, edge2: Edge) -> tuple[Edge, Edge]:
         # Find the common node shared between the two edges
-        common_node = set(edge1).intersection(set(edge2))
+        common_nodes = set(edge1).intersection(set(edge2))
 
-        if len(common_node) != 1 and edge1 != edge2:
+        if len(common_nodes) != 1 and edge1 != edge2:
             msg = f"The input edges are not connected. Edges: {edge1}, {edge2}"
             raise ValueError(msg)
 
-        common_node = common_node.pop()
+        common_node = common_nodes.pop()
         if edge1[0] == common_node:
             edge1_in_order = (edge1[1], common_node)
             edge2_in_order = (common_node, edge2[1]) if edge2[0] == common_node else (common_node, edge2[0])
@@ -349,7 +690,7 @@ class PZCreator(GraphCreator):
 
         return edge1_in_order, edge2_in_order
 
-    def find_connected_edges(self):
+    def find_connected_edges(self) -> list[list[Edge]]:
         connected_edge_pairs = set()
         for edge in self.networkx_graph.edges():
             node1, node2 = edge
@@ -364,8 +705,8 @@ class PZCreator(GraphCreator):
                     edge_pair = tuple(sorted([edge, (node2, neighbor)]))
                     connected_edge_pairs.add(edge_pair)
         # order edges (also include reverse order -> opposite direction moves are now needed if a junction fails)
-        connected_edge_pairs = [self.order_edges(edge_pair[0], edge_pair[1]) for edge_pair in connected_edge_pairs] + [
-            self.order_edges(edge_pair[1], edge_pair[0]) for edge_pair in connected_edge_pairs
-        ]
+        connected_edge_pair_list = [
+            self.order_edges(edge_pair[0], edge_pair[1]) for edge_pair in connected_edge_pairs
+        ] + [self.order_edges(edge_pair[1], edge_pair[0]) for edge_pair in connected_edge_pairs]
         # Convert set of tuples to a list of lists
-        return [list(pair) for pair in connected_edge_pairs]
+        return [list(pair) for pair in connected_edge_pair_list]

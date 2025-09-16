@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import pathlib
 from collections import Counter
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from .compilation import get_all_first_gates_and_update_sequence_non_destructive, remove_processed_gates
 from .cycles import get_ions
@@ -19,8 +22,14 @@ from .scheduling import (
     update_entry_and_exit_cycles,
 )
 
+if TYPE_CHECKING:
+    from qiskit.dagcircuit import DAGDependency
 
-def check_duplicates(graph):
+    from .graph_utils import Graph
+    from .types import Edge
+
+
+def check_duplicates(graph: Graph) -> None:
     edge_idxs_occupied = []
     for edge_idc in graph.state.values():
         edge_idxs_occupied.append(get_idx_from_idc(graph.idc_dict, edge_idc))
@@ -41,7 +50,7 @@ def check_duplicates(graph):
             raise AssertionError(message)
 
 
-def find_pz_order(graph, gate_info_list):
+def find_pz_order(graph: Graph, gate_info_list: dict[str, list[int]]) -> list[str]:
     # find next processing zone that will execute a gate
     pz_order = []
     for gate in graph.sequence:
@@ -60,10 +69,13 @@ def find_pz_order(graph, gate_info_list):
     return pz_order
 
 
-def shuttle(graph, priority_queue, timestep, cycle_or_paths, unique_folder: pathlib.Path):
-    # stop moves (ions that are already in the correct processing zone for a two-qubit gate)
-    graph.stop_moves = []
-
+def shuttle(
+    graph: Graph,
+    priority_queue: dict[int, str],
+    timestep: int,
+    cycle_or_paths: str,
+    unique_folder: pathlib.Path,
+) -> None:
     preprocess(graph, priority_queue)
 
     # Update ion chains after preprocess
@@ -72,7 +84,7 @@ def shuttle(graph, priority_queue, timestep, cycle_or_paths, unique_folder: path
     check_duplicates(graph)
     part_prio_queues = get_partitioned_priority_queues(priority_queue)
 
-    all_cycles = {}
+    all_cycles: dict[int, list[Edge]] = {}
     # Iterate over all processing zones
     # create move list for each pz -> needed to get all cycles
     # priority queue later picks the cycles to rotate
@@ -80,9 +92,7 @@ def shuttle(graph, priority_queue, timestep, cycle_or_paths, unique_folder: path
     for pz in graph.pzs:
         prio_queue = part_prio_queues[pz.name]
         move_list = create_move_list(graph, prio_queue, pz)
-        cycles, in_and_into_exit_moves = create_cycles_for_moves(
-            graph, move_list, cycle_or_paths, pz, other_next_edges=None
-        )
+        cycles, in_and_into_exit_moves = create_cycles_for_moves(graph, move_list, cycle_or_paths, pz)
         # add cycles to all_cycles
         all_cycles = {**all_cycles, **cycles}
 
@@ -122,7 +132,7 @@ def shuttle(graph, priority_queue, timestep, cycle_or_paths, unique_folder: path
         )
 
 
-def main(graph, partition, dag, cycle_or_paths, use_dag):
+def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool) -> int:
     timestep = 0
     max_timesteps = 1e6
     graph.state = get_ions(graph)
@@ -152,7 +162,7 @@ def main(graph, partition, dag, cycle_or_paths, use_dag):
     if use_dag:
         next_processable_gate_nodes = get_all_first_gates_and_update_sequence_non_destructive(graph, dag)
 
-    locked_gates = {}
+    locked_gates: dict[tuple[int, ...], str] = {}
     while timestep < max_timesteps:
         for pz in graph.pzs:
             pz.rotate_entry = False
@@ -160,7 +170,7 @@ def main(graph, partition, dag, cycle_or_paths, use_dag):
             pz.out_of_parking_move = None
 
         if use_dag:
-            gate_info_list = {pz.name: [] for pz in graph.pzs}
+            gate_info_list: dict[str, list[int]] = {pz.name: [] for pz in graph.pzs}
             for pz_name, node in next_processable_gate_nodes.items():
                 for ion in node.qindices:
                     gate_info_list[pz_name].append(ion)
@@ -274,7 +284,7 @@ def main(graph, partition, dag, cycle_or_paths, use_dag):
                     raise ValueError(msg)
 
         else:
-            processed_ions = []
+            processed_ions: list[tuple[int, ...]] = []
             previous_ion_processed = True
             pzs = graph.pzs.copy()
             next_gates = graph.sequence[: min(len(graph.pzs), len(graph.sequence))]
@@ -351,7 +361,7 @@ def main(graph, partition, dag, cycle_or_paths, use_dag):
                 remove_processed_gates(graph, dag, processed_nodes)
                 next_processable_gate_nodes = get_all_first_gates_and_update_sequence_non_destructive(graph, dag)
                 for pz_name, node in next_processable_gate_nodes.items():
-                    locked_gates[pz_name] = tuple(node.qindices)
+                    locked_gates[tuple(node.qindices)] = pz_name
         else:
             for gate in processed_ions:
                 graph.sequence.remove(gate)

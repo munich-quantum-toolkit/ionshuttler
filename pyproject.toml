@@ -121,6 +121,7 @@ ignore = [
     "ARG001",   # Unused function argument
     "E501",     # Line too long (Black is enough)
     "PLR2004",  # Magic values
+    "PLR0904",  # Too many public methods
     "PLR0913",  # Too many arguments
     "PLR0912",  # Too many branches
     "PLR0914",  # Too many local variables

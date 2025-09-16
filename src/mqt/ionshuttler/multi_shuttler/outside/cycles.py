@@ -1,12 +1,19 @@
+from __future__ import annotations
+
 import random
+from typing import TYPE_CHECKING
 
 import networkx as nx
 from more_itertools import distinct_combinations, pairwise
 
 from .graph_utils import get_idx_from_idc
 
+if TYPE_CHECKING:
+    from .graph_utils import Graph, ProcessingZone
+    from .types import Edge, Node
 
-def get_ions_in_pz_and_connections(graph, pz):
+
+def get_ions_in_pz_and_connections(graph: Graph, pz: ProcessingZone) -> int:
     return len([
         ion_idx
         for ion_idx, edge_idc in get_ions(graph).items()
@@ -14,7 +21,7 @@ def get_ions_in_pz_and_connections(graph, pz):
     ])
 
 
-def get_ions_in_exit_connections(graph, pz):
+def get_ions_in_exit_connections(graph: Graph, pz: ProcessingZone) -> int:
     return len([
         ion_idx
         for ion_idx, edge_idc in get_ions(graph).items()
@@ -22,7 +29,7 @@ def get_ions_in_exit_connections(graph, pz):
     ])
 
 
-def get_ions_in_parking(graph, pz):
+def get_ions_in_parking(graph: Graph, pz: ProcessingZone) -> int:
     return len([
         ion_idx
         for ion_idx, edge_idc in get_ions(graph).items()
@@ -30,7 +37,7 @@ def get_ions_in_parking(graph, pz):
     ])
 
 
-def find_ion_in_edge(graph, edge_idc):
+def find_ion_in_edge(graph: Graph, edge_idc: Edge) -> int | None:
     ions = [
         ion
         for ion, ion_edge_idc in get_ions(graph).items()
@@ -42,7 +49,7 @@ def find_ion_in_edge(graph, edge_idc):
     return ions[0]
 
 
-def find_ions_in_parking(graph, pz):
+def find_ions_in_parking(graph: Graph, pz: ProcessingZone) -> list[int]:
     return [
         ion
         for ion, ion_edge_idc in get_ions(graph).items()
@@ -51,14 +58,14 @@ def find_ions_in_parking(graph, pz):
 
 
 # get dict of edge idxs of ions
-def get_state_idxs(graph):
+def get_state_idxs(graph: Graph) -> dict[int, int]:
     ions_edge_idxs = {}
     for ion, edge_idc in get_ions(graph).items():
         ions_edge_idxs[ion] = get_idx_from_idc(graph.idc_dict, edge_idc)
     return ions_edge_idxs
 
 
-def find_least_import_ion_in_parking(seq, ions_in_parking):
+def find_least_import_ion_in_parking(seq: list[int], ions_in_parking: list[int]) -> int:
     for num in seq:
         if num in ions_in_parking:
             ions_in_parking.remove(num)
@@ -67,9 +74,9 @@ def find_least_import_ion_in_parking(seq, ions_in_parking):
     return ions_in_parking[-1]
 
 
-def create_starting_config(graph, n_of_ions, seed=None):
+def create_starting_config(graph: Graph, n_of_ions: int, seed: int | None = None) -> int:
     # Initialize ions on edges using an edge attribute
-    nx.set_edge_attributes(graph, {edge: [] for edge in graph.edges}, "ions")
+    nx.set_edge_attributes(graph, {key: [] for key in graph.edges()}, "ions")
 
     if seed is not None:
         random.seed(seed)
@@ -87,24 +94,23 @@ def create_starting_config(graph, n_of_ions, seed=None):
     number_of_registers = len(starting_traps)
 
     # place ions onto traps (ion0 on starting_trap0)
-    ions = {}
     for ion, idc in enumerate(starting_traps):
         graph.edges[idc]["ions"] = [ion]
 
-    return ions, number_of_registers
+    return number_of_registers
 
 
-def get_ions(graph):
+def get_ions(graph: Graph) -> dict[int, Edge]:
     ions = {}
     # Iterate over all edges in the graph
     for u, v, data in graph.edges(data=True):
         try:
             ions_on_edge = data["ions"]
             # make indices of edge consistent
-            edge_idc = tuple(sorted((u, v), key=sum))
+            node1, node2 = tuple(sorted((u, v), key=sum))
 
             for ion in ions_on_edge:
-                ions[ion] = edge_idc
+                ions[ion] = (node1, node2)
 
         except (KeyError, IndexError):
             pass
@@ -112,15 +118,15 @@ def get_ions(graph):
     return ions
 
 
-def get_edge_state(graph):
+def get_edge_state(graph: Graph) -> dict[Edge, list[int]]:
     state_dict = {}
     # Iterate over all edges in the graph
     for u, v, data in graph.edges(data=True):
         try:
             ions = data["ions"]
             # make indices of edge consistent
-            edge_idc = tuple(sorted((u, v), key=sum))
-            state_dict[edge_idc] = ions
+            node1, node2 = tuple(sorted((u, v), key=sum))
+            state_dict[node1, node2] = ions
             # assert ions is list type
             assert isinstance(ions, list)
 
@@ -129,7 +135,7 @@ def get_edge_state(graph):
     return state_dict
 
 
-def have_common_junction_node(graph, edge1, edge2):
+def have_common_junction_node(graph: Graph, edge1: Edge, edge2: Edge) -> bool:
     # Extract nodes from the edges
     nodes_edge1 = set(edge1)
     nodes_edge2 = set(edge2)
@@ -139,12 +145,18 @@ def have_common_junction_node(graph, edge1, edge2):
     return len(common_junction_nodes) > 0
 
 
-def check_if_edge_is_filled(graph, edge_idc):
+def check_if_edge_is_filled(graph: Graph, edge_idc: Edge) -> bool:
     ion = graph.edges()[edge_idc]["ions"]
     return len(ion) > 0  # == 1
 
 
-def shortest_path_to_node(nx_g, src, tar, exclude_exit=False, exclude_first_entry_connection=True):
+def shortest_path_to_node(
+    nx_g: Graph,
+    src: Node,
+    tar: Node,
+    exclude_exit: bool = False,
+    exclude_first_entry_connection: bool = True,
+) -> list[Node]:
     if exclude_first_entry_connection:
         if exclude_exit:
             return nx.shortest_path(
@@ -172,7 +184,13 @@ def shortest_path_to_node(nx_g, src, tar, exclude_exit=False, exclude_first_entr
     return nx.shortest_path(nx_g, src, tar)
 
 
-def find_path_node_to_edge(graph, node, goal_edge, exclude_exit=False, exclude_first_entry_connection=True):
+def find_path_node_to_edge(
+    graph: Graph,
+    node: Node,
+    goal_edge: Edge,
+    exclude_exit: bool = False,
+    exclude_first_entry_connection: bool = True,
+) -> list[Node] | None:
     if goal_edge[0] in graph.nodes() and goal_edge[1] in graph.nodes():
         original_weight = graph[goal_edge[0]][goal_edge[1]].get("weight", 1)
         # set weight of goal edge to inf (so it can't move past the edge)
@@ -217,7 +235,13 @@ def find_path_node_to_edge(graph, node, goal_edge, exclude_exit=False, exclude_f
     return path0
 
 
-def find_path_edge_to_edge(graph, edge_idc, goal_edge, exclude_exit=False, exclude_first_entry_connection=True):
+def find_path_edge_to_edge(
+    graph: Graph,
+    edge_idc: Edge,
+    goal_edge: Edge,
+    exclude_exit: bool = False,
+    exclude_first_entry_connection: bool = True,
+) -> list[Node] | None:
     # Find path from edge_idc to goal_edge
     # does not include the target edge itself
 
@@ -242,6 +266,8 @@ def find_path_edge_to_edge(graph, edge_idc, goal_edge, exclude_exit=False, exclu
         exclude_exit=exclude_exit,
         exclude_first_entry_connection=exclude_first_entry_connection,
     )
+    assert path0 is not None
+
     path1 = find_path_node_to_edge(
         graph,
         edge_idc[1],
@@ -249,6 +275,7 @@ def find_path_edge_to_edge(graph, edge_idc, goal_edge, exclude_exit=False, exclu
         exclude_exit=exclude_exit,
         exclude_first_entry_connection=exclude_first_entry_connection,
     )
+    assert path1 is not None
 
     # return min path
     if len(path1) < len(path0):
@@ -256,7 +283,13 @@ def find_path_edge_to_edge(graph, edge_idc, goal_edge, exclude_exit=False, exclu
     return path0
 
 
-def find_next_edge(graph, edge_idc, goal_edge, exclude_exit=False, exclude_first_entry_connection=True):
+def find_next_edge(
+    graph: Graph,
+    edge_idc: Edge,
+    goal_edge: Edge,
+    exclude_exit: bool = False,
+    exclude_first_entry_connection: bool = True,
+) -> Edge:
     if get_idx_from_idc(graph.idc_dict, edge_idc) == get_idx_from_idc(graph.idc_dict, goal_edge):
         return goal_edge
 
@@ -286,21 +319,22 @@ def find_next_edge(graph, edge_idc, goal_edge, exclude_exit=False, exclude_first
         exclude_exit=exclude_exit,
         exclude_first_entry_connection=exclude_first_entry_connection,
     )
+    assert node_path is not None
 
     return (node_path[0], node_path[1])
 
 
-def find_ordered_edges(graph, edge1, edge2):
+def find_ordered_edges(graph: Graph, edge1: Edge, edge2: Edge) -> tuple[Edge, Edge]:
     idc_dict = graph.idc_dict
 
     # Find the common node shared between the two edges
-    common_node = set(edge1).intersection(set(edge2))
+    common_nodes = set(edge1).intersection(set(edge2))
 
-    if len(common_node) != 1 and get_idx_from_idc(idc_dict, edge1) != get_idx_from_idc(idc_dict, edge2):
+    if len(common_nodes) != 1 and get_idx_from_idc(idc_dict, edge1) != get_idx_from_idc(idc_dict, edge2):
         msg = f"The input edges are not connected. Edges: {edge1}, {edge2}"
         raise ValueError(msg)
 
-    common_node = common_node.pop()
+    common_node = common_nodes.pop()
     if edge1[0] == common_node:
         edge1_in_order = (edge1[1], common_node)
         edge2_in_order = (common_node, edge2[1]) if edge2[0] == common_node else (common_node, edge2[0])
@@ -315,7 +349,7 @@ def find_ordered_edges(graph, edge1, edge2):
     return edge1_in_order, edge2_in_order
 
 
-def create_cycle(graph, edge_idc, next_edge):
+def create_cycle(graph: Graph, edge_idc: Edge, next_edge: Edge) -> list[Edge]:
     idc_dict = graph.idc_dict
 
     # cycles within memory zone
@@ -341,10 +375,10 @@ def create_cycle(graph, edge_idc, next_edge):
     return [edge_idc, next_edge, *edge_path, edge_idc]
 
 
-def find_conflict_cycle_idxs(graph, cycles_dict):
+def find_conflict_cycle_idxs(graph: Graph, cycles_dict: dict[int, list[Edge]]) -> list[tuple[int, int]]:
     combinations_of_cycles = list(distinct_combinations(cycles_dict.keys(), 2))
 
-    def get_cycle_nodes(cycle, graph):
+    def get_cycle_nodes(cycle: int, graph: Graph) -> set[Node]:
         # if next edge is free -> cycle is just two edges -> can skip first and last node
         if len(cycles_dict[cycle]) == 2:
             if cycles_dict[cycle][0] != cycles_dict[cycle][1]:
