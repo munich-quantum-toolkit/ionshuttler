@@ -183,7 +183,10 @@ convention = "google"
 git-only = [
     ".gitignore",
     ".license-tools-config.json",
+    ".readthedocs.yaml",
     "docs/*",
+    "sitecustomize.py",
+    "tests/*",
     "uv.lock",
 ]
 
