@@ -60,6 +60,7 @@ def get_front_layer(dag: DAGDependency) -> list[DAGDepNode]:
     """Get the front layer of the DAG."""
     front_layer: list[DAGDepNode] = []
     for node in dag.get_nodes():
+        # If a node has no predecessors, it's in the front layer
         if not dag.direct_predecessors(node.node_id):
             front_layer.append(node)
     return front_layer

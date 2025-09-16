@@ -353,7 +353,7 @@ def rotate_free_circles(
             get_idx_from_idc(memorygrid.idc_dict, edge_idc) for edge_idc in all_circles[seq_idx]
         ]
         # rotate chains
-        _ = memorygrid.rotate(free_circle_idxs[seq_idx])
+        memorygrid.rotate(free_circle_idxs[seq_idx])
     if rotate_entry:
         assert chain_to_move_out_of_pz is not None
         memorygrid.ion_chains[chain_to_move_out_of_pz] = memorygrid.graph_creator.path_from_pz[0]

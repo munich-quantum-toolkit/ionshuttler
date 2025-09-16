@@ -65,8 +65,8 @@ def get_path_to_node(
             tar,
             lambda _, __, edge_attr_dict: (edge_attr_dict["edge_type"] == "first_entry_connection") * 1e8 + 1,
         )
+        # also exclude exit edge if necessary
         if exclude_exit is True:
-            # also exclude exit edge if necessary
             node_path = nx.shortest_path(
                 nx_g,
                 src,
@@ -80,9 +80,10 @@ def get_path_to_node(
         node_path = nx.shortest_path(
             nx_g, src, tar, lambda _, __, edge_attr_dict: (edge_attr_dict["edge_type"] == "exit") * 1e8 + 1
         )
+
     else:
         node_path = nx.shortest_path(nx_g, src, tar)
-        # shortest path should always be the correct path in a grid -> care for changes
+    # shortest path should always be the correct path in a grid -> care for changes
 
     for edge in pairwise(node_path):
         edge_path.append(edge)
