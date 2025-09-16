@@ -11,6 +11,27 @@ We appreciate any feedback and contributions to the project.
 If you want to contribute, you can find more information in the {doc}`contribution guide <contributing>`.
 If you are having trouble with the installation or the usage of MQT QuSAT, please let us know on our {doc}`support page <support>`.
 
+## Overview
+
+MQT IonShuttler supports
+
+- **exact shuttling schedules** for small architectures with **a single processing zone (PZ)**, and
+- **heuristic shuttling schedules** for larger devices with **one _or_ multiple processing zones**.
+
+<p align="center">
+  <a href="_static/QCCD_device.pdf">
+  <img src="_static/QCCD_device.png" width="63%" alt="(a) Potential QCCD device with four processing zones">
+  </a>
+  <a href="_static/graph.pdf">
+  <img src="_static/graph.png" width="33%" alt="(b) Corresponding interaction graph">
+  </a>
+</p>
+<p align="center">
+<b>Figure 1:</b> (<b>a</b>) Potential QCCD device with four processing zones; (<b>b</b>) corresponding graph abstraction.</p>
+
+The exact solution guarantees optimality but is limited to a single PZ, while the heuristic method scales to many qubits and PZs.
+In the heuristic workflow, an optional **compilation** feature (`use_dag`) allows for dynamic rescheduling of gates based on the current ion positions and dependencies, potentially reducing shuttling overhead compared to executing a fixed sequence.
+
 ## Usage
 
 ### Exact Solution (single PZ)
