@@ -135,7 +135,10 @@ def create_initial_sequence(filename: Path) -> list[tuple[int, ...]]:
 
 
 def create_updated_sequence_destructive(
-    graph: Graph, filename: Path, dag_dep: DAGDependency, use_dag: bool
+    graph: Graph,
+    filename: Path,
+    dag_dep: DAGDependency,
+    use_dag: bool,
 ) -> tuple[list[tuple[int, ...]], list[int], DAGDependency]:
     # assert file is a qasm file
     assert is_qasm_file(filename), "The file is not a valid QASM file."
@@ -253,7 +256,9 @@ def remove_processed_gates(graph: Graph, dag: DAGDependency, removed_nodes: dict
 
 
 def get_all_first_gates_and_update_sequence_non_destructive(
-    graph: Graph, dag: DAGDependency, max_rounds: int = 5
+    graph: Graph,
+    dag: DAGDependency,
+    max_rounds: int = 5,
 ) -> dict[str, DAGDepNode]:
     """Get the first gates from the DAG for each processing zone (only first round, so they are simultaneously processable).
     Continue finding the subsequent "first gates" and update the sequence accordingly.

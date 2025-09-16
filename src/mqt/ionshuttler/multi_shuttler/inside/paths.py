@@ -1,4 +1,3 @@
-# from compilation import is_qasm_file, manual_copy_dag, parse_qasm, remove_node, update_sequence
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -12,17 +11,20 @@ from .graph_utils import get_idc_from_idx, get_idx_from_idc
 if TYPE_CHECKING:
     from .graph import Graph
     from .types import Edge, Node
+
+
 # BFS with direction based on a starting edge and a next edge
-
-
 def create_path_via_bfs_directional(
-    graph: Graph, current_edge: Edge, next_edge: Edge, towards: Node = (0, 0)
+    graph: Graph,
+    current_edge: Edge,
+    next_edge: Edge,
+    towards: Node = (0, 0),
 ) -> list[Edge]:
     if towards == (0, 0):
-        # towards is first edge in graph (can't be (0,0) because it may be deleted)
+        # towards is first edge in graph (can't be (0, 0) because it may be deleted)
         towards = next(iter(graph.edges()))[0]
 
-    #     # move from entry to memory zone
+    # move from entry to memory zone
     # if get_idx_from_idc(graph.idc_dict, current_edge) == get_idx_from_idc(
     #     graph.idc_dict, graph.pzgraph_creator.entry_edge
     # ):  # in graph.pzgraph_creator.path_from_pz_idxs:
@@ -88,7 +90,7 @@ def create_path_via_bfs_directional(
             if neighbor not in visited:
                 queue.append((neighbor, [*path, current_node]))
 
-    msg = "No path found"
+    msg = f"No path found for edge {current_edge}"
     raise RuntimeError(msg)
 
 

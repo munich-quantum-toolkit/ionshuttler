@@ -14,6 +14,16 @@ def run_simulation_for_architecture(
 ) -> tuple[list[int], list[float], int, int, int]:
     """
     Runs simulations for the given architecture and seeds, logs the results.
+
+    Args:
+        arch: Architecture parameters.
+        seeds: List of seed values.
+        pz: Position of Processing zone.
+        max_timesteps: Maximum timesteps.
+        compilation: Compilation flag (Gate Selection Step).
+
+    Returns:
+        (timestep_arr, cpu_time_arr, number_of_registers, n_of_traps, seq_length)
     """
     timestep_arr: list[int] = []
     cpu_time_arr: list[float] = []
@@ -38,9 +48,11 @@ def run_simulation_for_architecture(
             / f"inputs/qasm_files/qft_no_swaps_nativegates_quantinuum_tket/qft_no_swaps_nativegates_quantinuum_tket_{num_ion_chains}.qasm"
         )
         print(f"arch: {arch}, seed: {seed}, registers: {number_of_registers}\n")
+
         time_2qubit_gate = 3
         time_1qubit_gate = 1
         max_chains_in_parking = 3
+
         memorygrid = MemoryZone(
             m,
             n,
@@ -53,6 +65,7 @@ def run_simulation_for_architecture(
             time_2qubit_gate=time_2qubit_gate,
             time_1qubit_gate=time_1qubit_gate,
         )
+
         memorygrid.update_distance_map()
         seq, flat_seq, dag_dep, next_node_initial = create_initial_sequence(
             memorygrid.distance_map, filename, compilation=compilation
@@ -63,6 +76,7 @@ def run_simulation_for_architecture(
         timestep_arr.append(timestep)
         cpu_time = time.time() - start_time
         cpu_time_arr.append(cpu_time)
+
     return timestep_arr, cpu_time_arr, number_of_registers, n_of_traps, seq_length
 
 
@@ -77,6 +91,15 @@ def log_results(
 ) -> None:
     """
     Logs the results of the simulation to a file.
+
+    Args:
+        arch: Architecture parameters.
+        timestep_arr: List of timesteps.
+        cpu_time_arr: List of CPU times.
+        number_of_registers: Number of registers.
+        n_of_traps: Number of traps.
+        seq_length: Sequence length.
+        compilation: Compilation flag (Gate Selection Step).
     """
     timestep_mean = np.mean(timestep_arr)
     timestep_var = np.var(timestep_arr)
@@ -84,11 +107,20 @@ def log_results(
     print(cpu_time_mean)
     print(f"timestep mean: {timestep_mean}, timestep var: {timestep_var}, cpu time mean: {cpu_time_mean}")
 
+    # file_path = Path("results.txt")
+    # try:
+    #     with file_path.open("a") as file:
+    #         line = (
+    #             f"& {arch[0]} {arch[1]} {arch[2]} {arch[3]} & {number_of_registers}/{n_of_traps} & {seq_length} "
+    #             f"& {timestep_mean} & {cpu_time_mean} s & Gate Selection={compilation} \\\\"
+    #         )
+    #         file.write(f"array ts: {timestep_arr}\n" + line + "\n\n")
+    # except:
+    #     pass
+
 
 def main() -> None:
-    archs: list[list[int]] = [
-        [3, 3, 1, 1],
-    ]
+    archs: list[list[int]] = [[3, 3, 1, 1]]
     seeds: list[int] = [0]
     pz: str = "outer"
     max_timesteps: int = 10000000

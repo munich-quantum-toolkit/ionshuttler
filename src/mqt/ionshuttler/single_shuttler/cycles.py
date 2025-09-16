@@ -171,7 +171,7 @@ class MemoryZone:
             elif towards == "exit":
                 next_edge = self.path_entry_to_exit[0]
             else:
-                msg = "towards must be (0,0) or 'exit'"
+                msg = "towards must be (0, 0) or 'exit'"
                 raise ValueError(msg)
 
             # assert that next edge after entry is not entry or exit
@@ -432,7 +432,8 @@ class MemoryZone:
                 and get_idx_from_idc(self.idc_dict, edge_idc) not in other_next_edges_idxs
             ):
                 return edge_idc
-        raise RuntimeError
+        msg = f"No free edge found for node {node}"
+        raise RuntimeError(msg)
 
     def find_least_import_chain_in_parking(self, seq: list[int], ions_in_parking: list[int]) -> int:
         for num in seq:

@@ -89,7 +89,9 @@ def pick_pz_for_2_q_gate(graph: Graph, ion0: int, ion1: int) -> str:
 
 
 def create_priority_queue(
-    graph: Graph, sequence: list[tuple[int, ...]], max_length: int = 10
+    graph: Graph,
+    sequence: list[tuple[int, ...]],
+    max_length: int = 10,
 ) -> tuple[dict[int, str], dict[str, tuple[int, ...]]]:
     """
     Create a priority queue based on a given graph and sequence of gates.
@@ -252,9 +254,8 @@ def create_cycles_for_moves(
         elif cycle_or_paths == "Cycles":
             all_cycles[rotate_chain] = create_cycle(graph, edge_idc, next_edge)
         else:
-            all_cycles[rotate_chain] = create_path_via_bfs_directional(
-                graph, edge_idc, next_edge
-            )  # TODO other next edges for pz
+            # TODO: other next edges
+            all_cycles[rotate_chain] = create_path_via_bfs_directional(graph, edge_idc, next_edge)
     return all_cycles
 
 
@@ -303,7 +304,10 @@ def find_conflict_cycle_idxs(graph: Graph, cycles_dict: dict[int, list[Edge]]) -
 
 
 def find_movable_cycles(
-    graph: Graph, all_cycles: dict[int, list[Edge]], priority_queue: dict[int, str], cycle_or_paths: str
+    graph: Graph,
+    all_cycles: dict[int, list[Edge]],
+    priority_queue: dict[int, str],
+    cycle_or_paths: str,
 ) -> list[int]:
     print("all_cycles", all_cycles)
     if cycle_or_paths == "Cycles":

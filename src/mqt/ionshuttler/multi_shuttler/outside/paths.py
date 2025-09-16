@@ -15,8 +15,6 @@ if TYPE_CHECKING:
 
 
 # BFS with direction based on a starting edge and a next edge
-
-
 def create_path_via_bfs_directional(
     graph: Graph,
     current_edge: Edge,
@@ -67,7 +65,7 @@ def create_path_via_bfs_directional(
             if neighbor not in visited:
                 queue.append((neighbor, [*path, current_node]))
 
-    msg = "No path found"
+    msg = f"No path found for edge {current_edge}"
     raise RuntimeError(msg)
 
 

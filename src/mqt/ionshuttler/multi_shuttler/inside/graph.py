@@ -4,16 +4,11 @@ from typing import TYPE_CHECKING
 
 import networkx as nx
 
+from .graph_utils import create_idc_dictionary
+
 if TYPE_CHECKING:
     from .processing_zone import ProcessingZone
     from .types import Edge, Node
-
-
-def _create_idc_dictionary(graph: Graph) -> dict[int, Edge]:
-    edge_dict = {}
-    for edge_idx, edge_idc in enumerate(graph.edges()):
-        edge_dict[edge_idx] = tuple(sorted(edge_idc, key=sum))
-    return edge_dict
 
 
 class Graph(nx.Graph):  # type: ignore [type-arg]
@@ -100,7 +95,7 @@ class Graph(nx.Graph):  # type: ignore [type-arg]
     @property
     def idc_dict(self) -> dict[int, Edge]:
         if not hasattr(self, "_idc_dict"):
-            self._idc_dict = _create_idc_dictionary(self)
+            self._idc_dict = create_idc_dictionary(self)
         return self._idc_dict
 
     @property

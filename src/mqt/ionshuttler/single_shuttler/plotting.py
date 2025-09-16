@@ -27,13 +27,13 @@ def plot_state(
     idc_dict = create_idc_dictionary(graph)
     pos = {(x, y): (y, -x) for i, (x, y) in enumerate(list(graph.nodes()))}
     if plot_ions is True:
+        # edge_labels = nx.get_edge_attributes(graph,'ion_chain')
         pass
     else:
-        edge_labels = {}
-        for idc in graph.edges():
-            edge_labels[idc] = f"$e_{{{get_idx_from_idc(idc_dict, idc)}}}$"
+        edge_labels = {idc: f"$e_{{{get_idx_from_idc(idc_dict, idc)}}}$" for idc in graph.edges()}
 
     for edge_idc in graph.edges():
+        # color all edges black
         graph.add_edge(edge_idc[0], edge_idc[1], color="k")
 
         ion_holder: dict[int, list[int]] = defaultdict(list)
@@ -57,6 +57,7 @@ def plot_state(
     node_color = list(nx.get_node_attributes(graph, "color").values())
     edge_labels = nx.get_edge_attributes(graph, "ion_chain")
 
+    # self.n * self.ion_chain_size_horizontal, self.m * self.ion_chain_size_vertical))
     plt.figure(figsize=(max(pos.keys())[0] * 3, max(pos.keys())[1] * 3))
     nx.draw_networkx(
         graph,
@@ -70,6 +71,7 @@ def plot_state(
     )
     nx.draw_networkx_edge_labels(graph, pos, edge_labels)
 
+    # reset edge labels
     for i, ion in enumerate(ion_moves):
         ion_edge_idc = get_idc_from_idx(idc_dict, ion)
         graph.add_edge(ion_edge_idc[0], ion_edge_idc[1], ion_chain="", color=colors[i])

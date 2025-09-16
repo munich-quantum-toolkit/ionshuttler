@@ -43,7 +43,7 @@ def run_simulation_for_architecture(
         graph = GraphCreator(m, n, v, h, pz).get_graph()
         try:
             ion_chains, number_of_registers = create_starting_config(num_ion_chains, graph, seed=seed)
-        except:  # noqa: E722
+        except Exception:
             continue
         print(f"ion chains: {ion_chains}, number of registers: {number_of_registers}")
         print(f"arch: {arch}, seed: {seed}, registers: {number_of_registers}\n")

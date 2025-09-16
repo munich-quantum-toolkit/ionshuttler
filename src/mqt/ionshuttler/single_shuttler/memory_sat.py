@@ -187,14 +187,15 @@ def get_junctions(
                 if nx_g.nodes[node_down]["node_type"] == "junction_node":
                     junction.append(node_down)
                     break
-    assert junction != [], "no junction found for node ({}, {}) - used exit, entry or processing_zone node?".format(
-        *node
-    )
+    assert junction != [], f"no junction found for node {node} - used exit, entry or processing_zone node?"
     return junction
 
 
 def get_possible_moves_over_junction(
-    nx_g: Graph, edge: Edge, ion_chain_size_horizontal: int, ion_chain_size_vertical: int
+    nx_g: Graph,
+    edge: Edge,
+    ion_chain_size_horizontal: int,
+    ion_chain_size_vertical: int,
 ) -> list[Edge]:
     assert len(edge[0]) == 2, "use edge"
     node1 = edge[0]

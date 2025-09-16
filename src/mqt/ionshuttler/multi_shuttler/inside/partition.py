@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 import networkx as nx
@@ -14,7 +16,7 @@ def read_qasm_file(file_path: Path) -> QuantumCircuit:
     return RemoveFinalMeasurements()(circuit)
 
 
-def construct_interaction_graph(circuit: QuantumCircuit) -> nx.Graph:  # type: ignore [type-arg]
+def construct_interaction_graph(circuit: QuantumCircuit) -> nx.Graph[int]:
     graph: nx.Graph[int] = nx.Graph()
     qubits = circuit.qubits
     for qubit in qubits:
@@ -82,7 +84,7 @@ def construct_interaction_graph(circuit: QuantumCircuit) -> nx.Graph:  # type: i
 #     return subgraphs#partitions
 
 
-def partition_graph(graph: nx.Graph, n: int) -> list[nx.Graph]:  # type: ignore [type-arg]
+def partition_graph(graph: nx.Graph[int], n: int) -> list[nx.Graph[int]]:
     if n == 1:
         return [graph]
 
@@ -90,7 +92,7 @@ def partition_graph(graph: nx.Graph, n: int) -> list[nx.Graph]:  # type: ignore 
         f"Number of partitions must be less or equal to the number of nodes {len(graph.nodes), graph.nodes, n}"
     )
     partitions = [graph.copy()]
-    new_partitions: list[nx.Graph] = []  # type: ignore [type-arg]
+    new_partitions: list[nx.Graph[int]] = []
     while len(partitions) < n:
         len_partitions = len(partitions)
         for _, partition in enumerate(partitions):

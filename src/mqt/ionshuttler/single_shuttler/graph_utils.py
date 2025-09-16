@@ -9,6 +9,11 @@ if TYPE_CHECKING:
     from .types import Edge, Graph, Node
 
 
+# global delete_node
+# delete_node = (3, 4)
+
+
+# create dictionary to swap from idx to idc and vice versa
 def create_idc_dictionary(nx_g: Graph) -> dict[int, Edge]:
     edge_dict: dict[int, Edge] = {}
     for edge_idx, edge_idc in enumerate(nx_g.edges()):
@@ -53,6 +58,7 @@ def get_path_to_node(
 ) -> list[Edge]:
     edge_path: list[Edge] = []
     if exclude_first_entry_connection is True:
+        # lambda function to give path over processing zone huge weight -> doesn't take that path if not necessary - now only encludes entry edge -> can use exit (in MemGrid was != trap before and then to exit node -> not PZ node)
         node_path = nx.shortest_path(
             nx_g,
             src,
@@ -60,6 +66,7 @@ def get_path_to_node(
             lambda _, __, edge_attr_dict: (edge_attr_dict["edge_type"] == "first_entry_connection") * 1e8 + 1,
         )
         if exclude_exit is True:
+            # also exclude exit edge if necessary
             node_path = nx.shortest_path(
                 nx_g,
                 src,
@@ -67,20 +74,26 @@ def get_path_to_node(
                 lambda _, __, edge_attr_dict: (edge_attr_dict["edge_type"] in {"first_entry_connection", "exit"}) * 1e8
                 + 1,
             )
+
+    # only exclude exit edge
     elif exclude_exit is True:
         node_path = nx.shortest_path(
             nx_g, src, tar, lambda _, __, edge_attr_dict: (edge_attr_dict["edge_type"] == "exit") * 1e8 + 1
         )
     else:
         node_path = nx.shortest_path(nx_g, src, tar)
+        # shortest path should always be the correct path in a grid -> care for changes
+
     for edge in pairwise(node_path):
         edge_path.append(edge)
+
     return edge_path
 
 
 def calc_dist_to_pz(nx_g_creator: GraphCreator, edge_idx: int) -> int:
     edge_idc = get_idc_from_idx(nx_g_creator.idc_dict, edge_idx)
     node1, node2 = edge_idc[0], edge_idc[1]
+
     path1 = get_path_to_node(
         nx_g_creator.networkx_graph, node1, nx_g_creator.processing_zone, exclude_first_entry_connection=True
     )
@@ -417,16 +430,20 @@ class GraphCreator:
         connected_edge_pairs: list[tuple[Edge, Edge]] = []
         for edge in self.networkx_graph.edges():
             node1, node2 = edge
+            # Find edges connected to node1
             for neighbor in self.networkx_graph.neighbors(node1):
-                if neighbor != node2:
+                if neighbor != node2:  # avoid the original edge
                     edge1, edge2 = tuple(sorted([edge, (node1, neighbor)]))
                     connected_edge_pairs.append((edge1, edge2))
+            # Find edges connected to node2
             for neighbor in self.networkx_graph.neighbors(node2):
-                if neighbor != node1:
+                if neighbor != node1:  # avoid the original edge
                     edge1, edge2 = tuple(sorted([edge, (node2, neighbor)]))
                     connected_edge_pairs.append((edge1, edge2))
 
+        # order edges (also include reverse order -> opposite direction moves are now needed if a junction fails)
         ordered_pairs = []
         ordered_pairs.extend([order_edges(edge_pair[0], edge_pair[1]) for edge_pair in connected_edge_pairs])
         ordered_pairs.extend([order_edges(edge_pair[1], edge_pair[0]) for edge_pair in connected_edge_pairs])
+
         return [list(pair) for pair in ordered_pairs]

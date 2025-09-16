@@ -31,18 +31,23 @@ def is_qasm_file(filename: Path) -> bool:
 
 def extract_qubits_from_gate(gate_line: str) -> list[int]:
     """Extract qubit numbers from a gate operation line."""
+    # Regular expression to match qubits (assuming they are in the format q[<number>])
     pattern = re.compile(r"q\[(\d+)\]")
     matches = pattern.findall(gate_line)
+
+    # Convert matched qubit numbers to integers
     return [int(match) for match in matches]
 
 
 def parse_qasm(filename: str | Path) -> list[tuple[int, ...]]:
     """Parse a QASM file and return qubits used for each gate, preserving their order."""
     gates_and_qubits: list[tuple[int, ...]] = []
+    # if filename is str
     if not isinstance(filename, Path):
         filename = Path(filename)
     with Path.open(filename) as file:
         for _line in file:
+            # Check if line represents a gate operation
             line = _line.strip()
             if not line.startswith(("OPENQASM", "include", "qreg", "creg", "gate", "barrier", "measure")):
                 qubits = extract_qubits_from_gate(line)
@@ -62,6 +67,9 @@ def get_front_layer(dag: DAGDependency) -> list[DAGDepNode]:
 
 def remove_node(dag: DAGDependency, node: DAGDepNode) -> None:
     """Execute a node and update the DAG (remove the node and its edges)."""
+    # if dag.direct_successors(node.node_id):
+    #    for successor in dag.direct_successors(node.node_id):
+    #        dag._multi_graph.remove_edge(node.node_id, successor)
     dag._multi_graph.remove_node(node.node_id)
 
 
@@ -72,6 +80,7 @@ def find_best_gate(front_layer: list[DAGDepNode], dist_map: dict[int, int]) -> D
     for _, gate_node in enumerate(front_layer):
         qubit_indices = gate_node.qindices
         gate_cost = max(dist_map[qs] for qs in qubit_indices)
+        # if both ions of 2-qubit gate are in pz execute 2-qubit gate
         if len(qubit_indices) == 2 and gate_cost == 0:
             return gate_node
         if gate_cost < min_gate_cost:
@@ -82,10 +91,15 @@ def find_best_gate(front_layer: list[DAGDepNode], dist_map: dict[int, int]) -> D
 
 def manual_copy_dag(dag: DAGDependency) -> DAGDependency:
     new_dag = DAGDependency()
+
+    # Recreate quantum registers in the new DAG
     for qreg in dag.qregs.values():
         new_dag.add_qreg(qreg)
+
+    # Iterate over all operation nodes in the original DAG and copy them
     for node in dag.get_nodes():
         new_dag.add_op_node(node.op, node.qargs, node.cargs)
+
     return new_dag
 
 

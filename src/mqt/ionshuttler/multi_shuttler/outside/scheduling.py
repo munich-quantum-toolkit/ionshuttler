@@ -85,7 +85,9 @@ def pick_pz_for_2_q_gate(graph: Graph, ion0: int, ion1: int) -> str:
 
 
 def create_priority_queue(
-    graph: Graph, pz_executing_gate_order: list[str], max_length: int = 10
+    graph: Graph,
+    pz_executing_gate_order: list[str],
+    max_length: int = 10,
 ) -> tuple[dict[int, str], dict[str, tuple[int, ...]]]:
     """
     Create a priority queue based on a given graph and sequence of gates.
@@ -94,8 +96,7 @@ def create_priority_queue(
     Args:
         graph: The graph representing the QCCD architecture.
         pz_executing_gate_order: The sequence of gates.
-        max_length: The maximum length of the priority queue.
-            Defaults to 10.
+        max_length: The maximum length of the priority queue. Defaults to 10.
 
     Returns:
         - The priority queue
@@ -323,7 +324,7 @@ def bfs_free_edge(graph: Graph, node: Node, other_next_edges: list[Edge]) -> Edg
         ):
             return edge_idc
 
-    msg = "No free edge found"
+    msg = f"No free edge found for node {node}"
     raise ValueError(msg)
 
 
@@ -362,6 +363,7 @@ def create_cycles_for_moves(
                 graph.idc_dict, position_pz.entry_edge
             ):  # in graph.pzgraph_creator.path_from_pz_idxs:
                 starting_search_node = position_pz.entry_node
+                # TODO: other next edges
                 target_edge = bfs_free_edge(graph, starting_search_node, [])
                 # calc path to target edge (node path does not include target edge and in this case - also not the start node)
                 start_node = next(
@@ -497,10 +499,8 @@ def update_entry_and_exit_cycles(
         else:
             # else bring everything to a stop in exit
             # same as above
-            for (
-                ion,
-                edge_idc,
-            ) in in_and_into_exit_moves_pz.items():  # into exit move? dont move into exit if not all in prio queue (partitioned?) in front of you are in exit, exitconn or parking?
+            # into exit move? dont move into exit if not all in prio queue (partitioned?) in front of you are in exit, exitconn or parking?
+            for ion, edge_idc in in_and_into_exit_moves_pz.items():
                 all_cycles[ion] = [edge_idc, edge_idc]
             # also stop out of parking moves since gate is not finished yet
             if pz.out_of_parking_cycle is not None:
