@@ -50,8 +50,41 @@ source-include = [
 mqt-ionshuttler = { workspace = true }
 
 
+[tool.pytest.ini_options]
+minversion = "7.2"
+testpaths = ["tests/"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--showlocals",
+    "--numprocesses=auto", # Automatically use all available CPU cores for parallel testing
+]
+log_cli_level = "INFO"
+xfail_strict = true
+filterwarnings = [
+    "error",
+]
+
+
+[tool.coverage]
+run.source = ["mqt.ionshuttler"]
+run.disable_warnings = [
+    "no-sysmon",
+]
+report.exclude_also = [
+    '\.\.\.',
+    'if TYPE_CHECKING:',
+    'raise AssertionError',
+    'raise NotImplementedError',
+]
+show_missing = true
+skip_empty = true
+precision = 1
+
+
 [tool.mypy]
-files = ["src/mqt", "run_exact.py", "run_heuristic.py"]
+files = ["src/mqt", "tests", "noxfile.py", "run_exact.py", "run_heuristic.py"]
 mypy_path = ["$MYPY_CONFIG_FILE_DIR/src"]
 python_version = "3.10"
 warn_unused_configs = true
@@ -150,4 +183,16 @@ git-only = [
     ".license-tools-config.json",
     "docs/*",
     "uv.lock",
+]
+
+
+[dependency-groups]
+test = [
+    "pytest>=8.3.5",
+    "pytest-cov>=6.1.1",
+    "pytest-sugar>=1.0.0",
+    "pytest-xdist>=3.7.0",
+]
+dev = [
+    {include-group = "test"},
 ]

@@ -69,10 +69,11 @@ repos:
     rev: v1.18.1
     hooks:
       - id: mypy
-        files: ^(src/mqt)
+        files: ^^(src/mqt|tests|noxfile.py)
         args: []
         additional_dependencies:
           - matplotlib
+          - nox
           - more_itertools
           - types-networkx
 
@@ -106,11 +107,11 @@ repos:
   #       exclude: .pre-commit-config.yaml
 
   # Check best practices for scientific Python code
-  # - repo: https://github.com/scientific-python/cookie
-  #   rev: 2025.05.02
-  #   hooks:
-  #     - id: sp-repo-review
-  #       additional_dependencies: ["repo-review[cli]"]
+  - repo: https://github.com/scientific-python/cookie
+    rev: 2025.05.02
+    hooks:
+      - id: sp-repo-review
+        additional_dependencies: ["repo-review[cli]"]
 
   # Check JSON schemata
   - repo: https://github.com/python-jsonschema/check-jsonschema
