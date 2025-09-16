@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 
 class ProcessingZone:
-    def __init__(self, name, info):
+    def __init__(self, name: str, info: list[tuple[float, float]]) -> None:
         self.name = name
         self.pz_info = info
         self.exit_node = info[0]

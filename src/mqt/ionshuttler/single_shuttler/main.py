@@ -1,24 +1,15 @@
-import argparse
-import json
-import pathlib
 import random
 import sys
 import time
+from typing import Any
 
-from mqt.ionshuttler.single_shuttler.memory_sat import MemorySAT, create_graph
+from .memory_sat import MemorySAT, create_graph
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("config_file", help="path to json config file")
-    parser.add_argument("--plot", action="store_true", help="plot grid")
-    args = parser.parse_args()
 
-    with pathlib.Path(args.config_file).open("r", encoding="utf-8") as f:
-        config = json.load(f)
+def main(config: dict[str, Any], plot: bool) -> None:
     arch = config["arch"]
     max_timesteps = config["max_timesteps"]
     num_ion_chains = config["num_ion_chains"]
-
     qu_alg = [(q[0] if len(q) == 1 else tuple(q)) for q in config["qu_alg"]]
 
     # create graph
@@ -60,7 +51,7 @@ if __name__ == "__main__":
 
         if is_satisfied:
             print(f"{time.time() - start:.1f}s Found satisfying solution with {timesteps} time steps.")
-            if args.plot:
+            if plot:
                 sat.plot(show_ions=True)
             break
     else:

@@ -28,6 +28,10 @@ dependencies = [
 ]
 requires-python = ">=3.10"
 
+[project.scripts]
+mqt-ionshuttler-exact = "mqt.ionshuttler.single_shuttler.__main__:main"
+mqt-ionshuttler-heuristic = "mqt.ionshuttler.multi_shuttler.__main__:main"
+
 [project.urls]
 Discussions = "https://github.com/munich-quantum-toolkit/ionshuttler/discussions"
 Documentation = "https://mqt.readthedocs.io/projects/ionshuttler"
@@ -41,9 +45,7 @@ required-version = ">=0.8.17"
 [tool.uv.build-backend]
 module-name = "mqt.ionshuttler"
 source-include = [
-  "algorithms_exact/**",
-  "algorithms_heuristic/**",
-  "QASM_files/**",
+  "inputs/**",
 ]
 
 [tool.uv.sources]
@@ -84,7 +86,7 @@ precision = 1
 
 
 [tool.mypy]
-files = ["src/mqt", "tests", "noxfile.py", "run_exact.py", "run_heuristic.py"]
+files = ["src/mqt", "tests", "noxfile.py"]
 mypy_path = ["$MYPY_CONFIG_FILE_DIR/src"]
 python_version = "3.10"
 warn_unused_configs = true

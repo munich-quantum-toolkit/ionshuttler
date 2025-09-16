@@ -176,9 +176,8 @@ def get_partition(qasm_file_path: Path, n: int) -> list[list[int]]:
 if __name__ == "__main__":
     # Example usage
 
-    qasm_file_path = Path(__file__).absolute().parent.parent / (
-        # "QASM_files/full_register_access/full_register_access_2.qasm"
-        "QASM_files/qft_no_swaps_nativegates_quantinuum_tket/qft_no_swaps_nativegates_quantinuum_tket_36.qasm"
+    qasm_file_path = Path(__file__).absolute().parent.parent.parent.parent.parent / (
+        "inputs/qasm_files/qft_no_swaps_nativegates_quantinuum_tket/qft_no_swaps_nativegates_quantinuum_tket_36.qasm"
     )
     n = 4
     print(get_partition(qasm_file_path, n))

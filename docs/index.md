@@ -16,8 +16,8 @@ If you are having trouble with the installation or the usage of MQT QuSAT, pleas
 ### Exact Solution (single PZ)
 
 ```console
-(.venv) $ python scripts/run_exact.py --help
-(.venv) $ python scripts/run_heuristic.py inputs/algorithms_exact/qft_06.json
+(.venv) $ mqt-ionshuttler-exact --help
+(.venv) $ mqt-ionshuttler-exact inputs/algorithms_exact/qft_06.json
 ```
 
 The script supports an additional `--plot` argument to visualise the result.
@@ -27,8 +27,8 @@ For examples, see [`inputs/algorithms_exact`](https://github.com/munich-quantum-
 ### Heuristic Solution (single & multiple PZs)
 
 ```console
-(.venv) $ python scripts/run_heuristic.py --help
-(.venv) $ python scripts/run_heuristic.py inputs/algorithms_heuristic/qft_60_4pzs.json
+(.venv) $ mqt-ionshuttler-heuristic --help
+(.venv) $ mqt-ionshuttler-heuristic inputs/algorithms_heuristic/qft_60_4pzs.json
 ```
 
 Architectures and algorithms are specified in JSON files.
