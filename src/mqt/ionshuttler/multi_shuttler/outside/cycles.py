@@ -9,7 +9,8 @@ from more_itertools import distinct_combinations, pairwise
 from .graph_utils import get_idx_from_idc
 
 if TYPE_CHECKING:
-    from .graph_utils import Graph, ProcessingZone
+    from .graph import Graph
+    from .processing_zone import ProcessingZone
     from .types import Edge, Node
 
 

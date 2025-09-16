@@ -28,7 +28,8 @@ from .graph_utils import get_idc_from_idx, get_idx_from_idc
 from .paths import create_path_via_bfs_directional, find_nonfree_paths
 
 if TYPE_CHECKING:
-    from .graph_utils import Graph, ProcessingZone
+    from .graph import Graph
+    from .processing_zone import ProcessingZone
     from .types import Edge, Node
 
 

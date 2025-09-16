@@ -10,7 +10,7 @@ from .cycles import check_if_edge_is_filled
 from .graph_utils import get_idc_from_idx, get_idx_from_idc
 
 if TYPE_CHECKING:
-    from .graph_utils import Graph
+    from .graph import Graph
     from .types import Edge, Node
 
 

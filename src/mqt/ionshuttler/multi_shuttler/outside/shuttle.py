@@ -25,7 +25,7 @@ from .scheduling import (
 if TYPE_CHECKING:
     from qiskit.dagcircuit import DAGDependency
 
-    from .graph_utils import Graph
+    from .graph import Graph
     from .types import Edge
 
 

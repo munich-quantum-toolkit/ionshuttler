@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
     from qiskit.dagcircuit import DAGDepNode
 
-    from .graph_utils import Graph
+    from .graph import Graph
 
 
 def is_qasm_file(file_path: Path) -> bool:
