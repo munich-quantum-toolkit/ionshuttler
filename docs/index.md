@@ -19,8 +19,8 @@ The MQT IonShuttler supports
 - **heuristic shuttling schedules** for larger devices with **one _or_ multiple processing zones**.
 
 <p align="center">
-  <a href="_static/QCCD_device.pdf">
-  <img src="_static/QCCD_device.png" width="63%" alt="(a) Potential QCCD device with four processing zones">
+  <a href="_static/qccd_device.pdf">
+  <img src="_static/qccd_device.png" width="63%" alt="(a) Potential QCCD device with four processing zones">
   </a>
   <a href="_static/graph.pdf">
   <img src="_static/graph.png" width="33%" alt="(b) Corresponding interaction graph">

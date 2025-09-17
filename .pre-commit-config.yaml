@@ -98,13 +98,13 @@ repos:
       - id: typos
 
   # Catch common capitalization mistakes
-  # - repo: local
-  #   hooks:
-  #     - id: disallow-caps
-  #       name: Disallow improper capitalization
-  #       language: pygrep
-  #       entry: PyBind|Numpy|Cmake|CCache|Github|PyTest|Mqt|Tum|MQTopt|MQTref
-  #       exclude: .pre-commit-config.yaml
+  - repo: local
+    hooks:
+      - id: disallow-caps
+        name: Disallow improper capitalization
+        language: pygrep
+        entry: PyBind|Numpy|Cmake|CCache|Github|PyTest|Mqt|Tum|MQTopt|MQTref
+        exclude: .pre-commit-config.yaml|^docs/_static
 
   # Check best practices for scientific Python code
   - repo: https://github.com/scientific-python/cookie

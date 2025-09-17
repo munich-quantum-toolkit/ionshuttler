@@ -22,7 +22,7 @@ def create_path_via_bfs_directional(
     towards: Node = (0, 0),
 ) -> list[Edge]:
     if towards == (0, 0):
-        # towards is first edge in graph (can't be (0,0) because it may be deleted)
+        # towards is first edge in graph (can't be (0, 0) because it may be deleted)
         towards = next(iter(graph.edges()))[0]
 
     # Define the starting node (the middle node where edges meet)
