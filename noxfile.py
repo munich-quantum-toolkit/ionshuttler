@@ -100,17 +100,6 @@ def docs(session: nox.Session) -> None:
     if serve:
         session.install("sphinx-autobuild")
 
-    env = {"UV_PROJECT_ENVIRONMENT": session.virtualenv.location}
-    # install build and docs dependencies on top of the existing environment
-    session.run(
-        "uv",
-        "sync",
-        "--inexact",
-        "--only-group",
-        "docs",
-        env=env,
-    )
-
     shared_args = [
         "-n",  # nitpicky mode
         "-T",  # full tracebacks
@@ -120,12 +109,13 @@ def docs(session: nox.Session) -> None:
         *posargs,
     ]
 
+    env = {"UV_PROJECT_ENVIRONMENT": session.virtualenv.location}
     session.run(
         "uv",
         "run",
         "--no-dev",  # do not auto-install dev dependencies
-        "--no-build-isolation-package",
-        "mqt-ionshuttler",  # build the project without isolation
+        "--group",
+        "docs",
         "sphinx-autobuild" if serve else "sphinx-build",
         *shared_args,
         env=env,
