@@ -1,0 +1,39 @@
+# This file has been generated from an external template. Please do not modify it directly.
+# Changes should be contributed to https://github.com/munich-quantum-toolkit/templates.
+
+name: ✨ Feature request
+description: Suggest a new feature or improvement
+title: "✨ <title>"
+body:
+  - type: markdown
+    attributes:
+      value: >
+        **Thanks for helping improve this project by suggesting a feature!**
+
+        ⚠ Before submitting:
+        - Search [existing feature requests](https://github.com/munich-quantum-toolkit/ionshuttler/search?q=is%3Aissue&type=issues) to avoid duplicates
+        - One feature per issue helps us track and implement ideas effectively
+
+  - type: textarea
+    attributes:
+      label: Problem Statement
+      description: >-
+        Describe the problem you are facing and why it needs to be solved. What limitations are you encountering?
+      placeholder: >-
+        Currently, when I try to [action/task], I am unable to [blockers/limitations].
+        This creates problems because [impact/consequences].
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Proposed Solution
+      description: >
+        Describe your ideal solution. What would the feature look like? How would it work?
+      placeholder: >-
+        I'd like to see [feature/change] that would:
+        - [benefit 1]
+        - [benefit 2]
+        - [example usage/scenario]
+    validations:
+      required: true
