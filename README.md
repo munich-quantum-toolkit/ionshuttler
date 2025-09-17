@@ -90,6 +90,25 @@ Building (and running) is continuously tested under Linux, macOS, and Windows us
 
 Please cite the work that best fits your use case.
 
+### MQT IonShuttler (the tool)
+
+When citing the software itself or results produced with it, cite the MQT IonShuttler paper:
+
+```bibtex
+@article{schoenberger2024shuttling,
+  title        = {Shuttling for Scalable Trapped-Ion Quantum Computers},
+  author       = {Schoenberger, Daniel and Hillmich, Stefan and Brandl, Matthias and Wille, Robert},
+  year         = 2024,
+  journal      = {IEEE Trans. on CAD of Integrated Circuits and Systems},
+  volume       = {44},
+  number       = {6},
+  pages        = {2144–2155},
+  doi          = {10.1109/TCAD.2024.3513262},
+  eprint       = {2402.14065},
+  eprinttype   = {arXiv}
+}
+```
+
 ### The Munich Quantum Toolkit (the project)
 
 When discussing the overall MQT project or its ecosystem, cite the MQT Handbook:
@@ -120,7 +139,7 @@ _Asia and South Pacific Design Automation Conference_, 2024.
 [[2]](https://arxiv.org/pdf/2402.14065)
 D. Schoenberger, S. Hillmich, M. Brandl, and R. Wille.
 Shuttling for Scalable Trapped-Ion Quantum Computers.
-_Trans. Comp.-Aided Des. Integ. Cir. Sys. 44, 2144_, 2024.
+_IEEE Trans. on CAD of Integrated Circuits and Systems 44, 2144_, 2024.
 
 [[3]](https://arxiv.org/abs/2505.07928)
 D. Schoenberger and R. Wille
