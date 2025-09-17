@@ -1,0 +1,53 @@
+# This file has been generated from an external template. Please do not modify it directly.
+# Changes should be contributed to https://github.com/munich-quantum-toolkit/templates.
+
+name: 🐛 Bug Report
+description: Report a problem or unexpected behavior
+title: "🐛 <brief description of the issue>"
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        **Thanks for taking the time to report an issue!**
+
+        ⚠ Before submitting:
+        1. Search [existing issues](https://github.com/munich-quantum-toolkit/ionshuttler/search?q=is%3Aissue&type=issues) to avoid duplicates
+        2. For questions or discussions, please use our [discussions forum](https://github.com/munich-quantum-toolkit/ionshuttler/discussions)
+
+  - type: textarea
+    attributes:
+      label: System and Environment Information
+      description: Provide details about your environment.
+      placeholder: |
+        - Operating system and version:
+        - MQT IonShuttler version:
+        - Language versions (e.g., C++, Python, Rust, ...):
+        - Compiler or build tool versions (e.g., Clang, GCC, rustc, ...):
+        - Any relevant dependencies and their versions:
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Bug Description
+      description: Provide a clear and detailed explanation of the issue you are experiencing.
+      placeholder: |
+        What happened?
+        What did you expect to happen instead?
+        Include any error messages or unexpected behavior you observed.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Steps to Reproduce
+      description: Provide specific steps to reproduce this issue.
+      placeholder: |
+        1. Set up environment with '...'
+        2. Configure workflow using '...'
+        3. Execute command '...'
+        4. Observe error/issue: '...'
+
+        Include any relevant code snippets, workflow configurations, or input files that help demonstrate the problem.
+    validations:
+      required: true
