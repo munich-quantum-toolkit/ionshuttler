@@ -196,9 +196,6 @@ git-only = [
 
 
 [dependency-groups]
-build = [
-    "uv_build>=0.8.17,<0.9.0"
-]
 docs = [
     "furo>=2024.8.6",
     "myst-nb>=1.2.0",
@@ -220,7 +217,6 @@ test = [
     "pytest-xdist>=3.7.0",
 ]
 dev = [
-    {include-group = "build"},
     {include-group = "docs"},
     {include-group = "test"},
 ]
