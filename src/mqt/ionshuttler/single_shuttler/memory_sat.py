@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import itertools
 from itertools import pairwise
 from typing import TYPE_CHECKING
@@ -254,22 +255,14 @@ def get_path_between_edges(nx_g: Graph, src_edge: Edge, tar_edge: Edge) -> list[
     node2 = tar_edge[1] if nx.get_node_attributes(nx_g, "node_type")[tar_edge[0]] == "junction_node" else tar_edge[0]
 
     path_edges = get_path_to_node(nx_g, node1, node2)
-    try:
+    with contextlib.suppress(ValueError):
         path_edges.remove((src_edge[0], src_edge[1]))
-    except ValueError:
-        pass
-    try:
+    with contextlib.suppress(ValueError):
         path_edges.remove((src_edge[1], src_edge[0]))
-    except ValueError:
-        pass
-    try:
+    with contextlib.suppress(ValueError):
         path_edges.remove((tar_edge[0], tar_edge[1]))
-    except ValueError:
-        pass
-    try:
+    with contextlib.suppress(ValueError):
         path_edges.remove((tar_edge[1], tar_edge[0]))
-    except ValueError:
-        pass
     return path_edges
 
 
@@ -288,14 +281,10 @@ def get_possible_previous_edges_from_junction_move(nx_g, edge, ion_chain_size_ho
     if nx_g.nodes[node1]["node_type"] == "junction_node":
         # find all other "big" edges around junction
         around_jct = list(nx_g.edges(node1))
-        try:
+        with contextlib.suppress(ValueError):
             around_jct.remove(edge)
-        except ValueError:
-            pass
-        try:
+        with contextlib.suppress(ValueError):
             around_jct.remove(tuple(reversed(edge)))
-        except ValueError:
-            pass
 
         possible_edges = []
         # find next junction in every big edge
@@ -322,14 +311,10 @@ def get_possible_previous_edges_from_junction_move(nx_g, edge, ion_chain_size_ho
     elif nx_g.nodes[node2]["node_type"] == "junction_node":
         # find all other "big" edges around junction
         around_jct = list(nx_g.edges(node2))
-        try:
+        with contextlib.suppress(ValueError):
             around_jct.remove(edge)
-        except ValueError:
-            pass
-        try:
+        with contextlib.suppress(ValueError):
             around_jct.remove(tuple(reversed(edge)))
-        except ValueError:
-            pass
 
         possible_edges = []
         # find next junction in every big edge

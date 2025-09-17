@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from collections import OrderedDict, defaultdict
 from typing import TYPE_CHECKING
 
@@ -353,10 +354,8 @@ def rotate(graph: Graph, ion: int, cycle_idcs: list[Edge]) -> None:
         # if len(current_ion) <= 1:
         current_ion_ = state_dict.get(current_edge_)
         if current_ion_ is not None:
-            try:
+            with contextlib.suppress(IndexError):
                 current_ion = current_ion_[0]
-            except IndexError:
-                pass
 
         # if ion already rotated via previous cycle
         # (now checks directly in state_dict, in case two ions on one edge)
@@ -381,10 +380,8 @@ def rotate(graph: Graph, ion: int, cycle_idcs: list[Edge]) -> None:
 def rotate_free_cycles(graph: Graph, all_cycles: dict[int, list[Edge]], free_cycles_idxs: list[int]) -> None:
     rotate_cycles_idcs = {}
     for cycle_ion in free_cycles_idxs:
-        try:
+        with contextlib.suppress(KeyError):
             rotate_cycles_idcs[cycle_ion] = all_cycles[cycle_ion]
-        except KeyError:
-            pass
 
     # skip stop moves
     for ion, indiv_cycle_idcs in rotate_cycles_idcs.items():

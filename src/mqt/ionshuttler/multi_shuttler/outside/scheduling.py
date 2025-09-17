@@ -591,10 +591,8 @@ def rotate(graph: Graph, ion: int, cycle_idcs: list[Edge]) -> None:
         else:
             current_ion_ = state_dict.get(current_edge)
             if current_ion_ is not None:
-                try:
+                with contextlib.suppress(IndexError):
                     current_ion = current_ion_[0]
-                except IndexError:
-                    pass
 
         first = False
         if (
@@ -610,10 +608,8 @@ def rotate(graph: Graph, ion: int, cycle_idcs: list[Edge]) -> None:
 def rotate_free_cycles(graph: Graph, all_cycles: dict[int, list[Edge]], free_cycles_idxs: list[int]) -> None:
     rotate_cycles_idcs: dict[int, list[Edge]] = {}
     for cycle_ion in free_cycles_idxs:
-        try:
+        with contextlib.suppress(KeyError):
             rotate_cycles_idcs[cycle_ion] = all_cycles[cycle_ion]
-        except KeyError:
-            pass
     # skip stop moves
     for ion, indiv_cycle_idcs in rotate_cycles_idcs.items():
         if len(indiv_cycle_idcs) == 2:
