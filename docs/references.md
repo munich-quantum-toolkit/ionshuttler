@@ -20,7 +20,7 @@ If you want to cite the Munich Quantum Toolkit, please use the following BibTeX 
 }
 ```
 
-If you use _MQT QECC_ in your work, we would appreciate if you cited {cite:p}`schoenberger2023usingbooleansatisfiabilityexact`, {cite:p}`schoenberger2024shuttlingscalabletrappedionquantum`, or {cite:p}`schoenberger2025orchestratingmultizoneshuttlingtrappedion`.
+If you use the _MQT IonShuttler_ in your work, we would appreciate if you cited {cite:p}`schoenberger2023usingbooleansatisfiabilityexact`, {cite:p}`schoenberger2024shuttlingscalabletrappedionquantum`, or {cite:p}`schoenberger2025orchestratingmultizoneshuttlingtrappedion`.
 
 A full list of references is given below.
 
