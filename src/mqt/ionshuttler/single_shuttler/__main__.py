@@ -6,7 +6,7 @@ from .main import main as single_shuttler_main
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Compute exact shuttling schedules")
     parser.add_argument("config_file", help="path to json config file")
     parser.add_argument("--plot", action="store_true", help="plot grid")
     args = parser.parse_args()

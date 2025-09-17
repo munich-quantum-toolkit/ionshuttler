@@ -7,7 +7,7 @@ from .main import main as multi_shuttler_main
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run MQT IonShuttler")
+    parser = argparse.ArgumentParser(description="Compute heuristic shuttling schedules")
     parser.add_argument("config_file", help="Path to the JSON configuration file")
     args = parser.parse_args()
 

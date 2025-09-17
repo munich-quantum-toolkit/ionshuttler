@@ -1,11 +1,11 @@
 # MQT IonShuttler
 
-MQT IonShuttler provides a framework to utilize quantum computing as a technology for users with little to no quantum computing knowledge
+The MQT IonShuttler is a tool for generating shuttling schedules for trapped-ion quantum computers with a grid-type Memory Zone based on the Quantum Charge Coupled Device (QCCD) architecture.
 It is developed as part of the _{doc}`Munich Quantum Toolkit (MQT) <mqt:index>`_.
 
 We recommend you to start with the {doc}`installation instructions <installation>`.
 Then proceed with the sections below.
-If you are interested in the theory behind MQT IonShuttler, have a look at the publications in the {doc}`publication list <references>`.
+If you are interested in the theory behind the MQT IonShuttler, have a look at the publications in the {doc}`publication list <references>`.
 
 We appreciate any feedback and contributions to the project.
 If you want to contribute, you can find more information in the {doc}`contribution guide <contributing>`.
@@ -13,7 +13,7 @@ If you are having trouble with the installation or the usage of MQT QuSAT, pleas
 
 ## Overview
 
-MQT IonShuttler supports
+The MQT IonShuttler supports
 
 - **exact shuttling schedules** for small architectures with **a single processing zone (PZ)**, and
 - **heuristic shuttling schedules** for larger devices with **one _or_ multiple processing zones**.
@@ -104,7 +104,7 @@ Among others, it is part of the [Munich Quantum Software Stack (MQSS)](https://w
 </div>
 </div>
 
-Thank you to all the contributors who have helped make MQT IonShuttler a reality!
+Thank you to all the contributors who have helped make the MQT IonShuttler a reality!
 
 <p align="center">
 <a href="https://github.com/munich-quantum-toolkit/ionshuttler/graphs/contributors">
