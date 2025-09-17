@@ -1,4 +1,10 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import networkx as nx
+from more_itertools import distinct_combinations, pairwise
+
 from .graph_utils import (
     GraphCreator,
     MZGraphCreator,
@@ -8,13 +14,25 @@ from .graph_utils import (
     get_path_to_node,
     order_edges,
 )
-from more_itertools import distinct_combinations, pairwise
+
+if TYPE_CHECKING:
+    from .types import Edge, Node
 
 
 class MemoryZone:
     def __init__(
-        self, m, n, v, h, starting_config, max_timestep, max_num_parking, pz, time_2qubit_gate=2, time_1qubit_gate=1
-    ):
+        self,
+        m: int,
+        n: int,
+        v: int,
+        h: int,
+        starting_config: dict[int, Edge],
+        max_timestep: int,
+        max_num_parking: int,
+        pz: str,
+        time_2qubit_gate: int = 2,
+        time_1qubit_gate: int = 1,
+    ) -> None:
         # new graph MZ
         self.mz_Graph_creator = MZGraphCreator(m, n, v, h, pz)
         self.mz_graph = self.mz_Graph_creator.get_graph()
@@ -30,7 +48,7 @@ class MemoryZone:
         self.idc_dict = self.graph_creator.idc_dict
 
         # create dictionary with all distances to entry
-        self.dist_dict = {}
+        self.dist_dict: dict[Edge, int] = {}
         for edge_idc in self.graph.edges():
             # keep node ordering consistent:
             edge_idx = get_idx_from_idc(self.idc_dict, edge_idc)
@@ -55,7 +73,7 @@ class MemoryZone:
             for node in self.graph.nodes()
             if (
                 nx.get_node_attributes(self.graph, "node_type")[node]
-                in ("junction_node", "exit_node", "exit_connection_node", "entry_node", "entry_connection_node")
+                in {"junction_node", "exit_node", "exit_connection_node", "entry_node", "entry_connection_node"}
             )
         ]
 
@@ -67,27 +85,26 @@ class MemoryZone:
         # self.bfs_top_left = nx.edge_bfs(self.mz_graph, (0, 0))
         # self.bfs_exit = nx.edge_bfs(self.mz_graph, self.graph_creator.exit)
 
+        def _get_edge_weight(self: MemoryZone, node0: Node, node1: Node) -> int:
+            if (
+                get_idx_from_idc(self.idc_dict, (node0, node1)) == get_idx_from_idc(self.idc_dict, edge_idc)
+                or get_idx_from_idc(self.idc_dict, (node0, node1)) == get_idx_from_idc(self.idc_dict, next_edge)
+                or get_idx_from_idc(self.idc_dict, (node0, node1))
+                == get_idx_from_idc(self.idc_dict, self.graph_creator.entry_edge)
+            ):
+                return int(1e8)
+
+            return 1
+
         # precalc all cycles (shortest paths from outer node to outer node)
         self.node_path_dict = {}
         for edge_idc, next_edge in GraphCreator(m, n, v, h, pz).find_connected_edges():
             self.node_path_dict[edge_idc, next_edge] = nx.shortest_path(
-                self.graph,
-                next_edge[1],
-                edge_idc[0],
-                lambda node0, node1, _: [
-                    1e8
-                    if (
-                        get_idx_from_idc(self.idc_dict, (node0, node1)) == get_idx_from_idc(self.idc_dict, edge_idc)
-                        or get_idx_from_idc(self.idc_dict, (node0, node1)) == get_idx_from_idc(self.idc_dict, next_edge)
-                        or get_idx_from_idc(self.idc_dict, (node0, node1))
-                        == get_idx_from_idc(self.idc_dict, self.graph_creator.entry_edge)
-                    )
-                    else 1
-                ][0],
+                self.graph, next_edge[1], edge_idc[0], lambda node0, node1, _: _get_edge_weight(self, node0, node1)
             )
 
     # get edge idxs of ion chains
-    def get_state_idxs(self):
+    def get_state_idxs(self) -> list[int]:
         ion_chains_idx = []
         for chain in self.ion_chains.values():
             ion_chains_idx.append(get_idx_from_idc(self.idc_dict, chain))
@@ -95,51 +112,49 @@ class MemoryZone:
         return ion_chains_idx
 
     # calc distance to parking edge for all ion chains
-    def update_distance_map(self):
+    def update_distance_map(self) -> dict[int, int]:
         self.distance_map = {}
         for ion_chain, edge_idx in enumerate(self.get_state_idxs()):
             self.distance_map[ion_chain] = self.dist_dict[get_idc_from_idx(self.idc_dict, edge_idx)]
         return self.distance_map
 
-    def count_chains_in_pz(self):
+    def count_chains_in_pz(self) -> int:
         return len([chain_idx for chain_idx in self.get_state_idxs() if chain_idx in self.graph_creator.pz_edges_idx])
 
-    def count_chains_in_exit(self):
-        return len(
-            [chain_idx for chain_idx in self.get_state_idxs() if chain_idx in self.graph_creator.path_to_pz_idxs]
-        )
+    def count_chains_in_exit(self) -> int:
+        return len([
+            chain_idx for chain_idx in self.get_state_idxs() if chain_idx in self.graph_creator.path_to_pz_idxs
+        ])
 
-    def count_chains_in_parking(self):
-        return len(
-            [
-                chain_idx
-                for chain_idx in self.get_state_idxs()
-                if chain_idx == get_idx_from_idc(self.idc_dict, self.graph_creator.parking_edge)
-            ]
-        )
+    def count_chains_in_parking(self) -> int:
+        return len([
+            chain_idx
+            for chain_idx in self.get_state_idxs()
+            if chain_idx == get_idx_from_idc(self.idc_dict, self.graph_creator.parking_edge)
+        ])
 
-    def find_chain_in_edge(self, edge_idc):
+    def find_chain_in_edge(self, edge_idc: Edge) -> int | None:
         chains = [
             ion
             for ion, chain_idx in enumerate(self.get_state_idxs())
             if chain_idx == get_idx_from_idc(self.idc_dict, edge_idc)
         ]
-        assert (
-            len(chains) <= 1
-        ), f"more than one chain ({chains}) in edge {edge_idc}, if parking edge -> use find_chains_in_parking()"
+        assert len(chains) <= 1, (
+            f"more than one chain ({chains}) in edge {edge_idc}, if parking edge -> use find_chains_in_parking()"
+        )
         if len(chains) == 0:
             return None
         return chains[0]
 
-    def find_chains_in_parking(self):
+    def find_chains_in_parking(self) -> list[int]:
         return [
             ion
             for ion, chain_idx in enumerate(self.get_state_idxs())
             if chain_idx == get_idx_from_idc(self.idc_dict, self.graph_creator.parking_edge)
         ]
 
-    def find_next_edge(self, edge_idc, towards=(0, 0)):
-        ### find next edge given edge_idc of ion chain
+    def find_next_edge(self, edge_idc: Edge, towards: Node | str = (0, 0)) -> Edge:
+        # find next edge given edge_idc of ion chain
 
         # if in entry connection -> move to next edge
         for i, edge_idx in enumerate(self.graph_creator.path_from_pz_idxs[:-1]):
@@ -151,12 +166,12 @@ class MemoryZone:
                 next_edge = next(
                     edge
                     for edge in self.graph.edges(self.graph_creator.entry)
-                    if edge not in (self.graph_creator.entry_edge, self.path_entry_to_exit[0])
+                    if edge not in {self.graph_creator.entry_edge, self.path_entry_to_exit[0]}
                 )
             elif towards == "exit":
                 next_edge = self.path_entry_to_exit[0]
             else:
-                msg = "towards must be (0,0) or 'exit'"
+                msg = "towards must be (0, 0) or 'exit'"
                 raise ValueError(msg)
 
             # assert that next edge after entry is not entry or exit
@@ -202,7 +217,7 @@ class MemoryZone:
         next_edge_idx = get_idx_from_idc(self.idc_dict, next_edge)
         return get_idc_from_idx(self.idc_dict, next_edge_idx)
 
-    def find_ordered_edges(self, edge1, edge2):
+    def find_ordered_edges(self, edge1: Edge, edge2: Edge) -> tuple[Edge, Edge]:
         edge1_in_order, edge2_in_order = order_edges(edge1, edge2)
 
         # new if same edge twice don't change order
@@ -211,7 +226,7 @@ class MemoryZone:
 
         return edge1_in_order, edge2_in_order
 
-    def have_common_junction_node(self, edge1, edge2):
+    def have_common_junction_node(self, edge1: Edge, edge2: Edge) -> bool:
         # Extract nodes from the edges
         nodes_edge1 = set(edge1)
         nodes_edge2 = set(edge2)
@@ -228,10 +243,16 @@ class MemoryZone:
 
         return len(common_junction_nodes) == 1
 
-    def create_outer_circle(self, edge_idc, next_edge, other_next_edges, towards=(0, 0)):
+    def create_outer_circle(
+        self,
+        edge_idc: Edge,
+        next_edge: Edge,
+        other_next_edges: list[Edge],
+        towards: Node = (0, 0),
+    ) -> list[Edge]:
         if towards == (0, 0):
-            # towards is first edge in graph (can't be (0,0) because it may be deleted)
-            towards = list(self.graph.edges())[0][0]
+            # towards is first edge in graph (can't be (0, 0) because it may be deleted)
+            towards = next(iter(self.graph.edges()))[0]
 
         # move from entry to memory zone
         if get_idx_from_idc(self.idc_dict, edge_idc) == get_idx_from_idc(
@@ -282,22 +303,23 @@ class MemoryZone:
 
         return [edge_idc, next_edge, *edge_path, edge_idc]
 
-    def check_if_edge_is_filled(self, edge_idc):
+    def check_if_edge_is_filled(self, edge_idc: Edge) -> bool:
         return get_idx_from_idc(self.idc_dict, edge_idc) in self.get_state_idxs()
 
-    def find_nonfree_and_free_circle_idxs(self, circles_dict):
+    def find_nonfree_and_free_circle_idxs(self, circles_dict: dict[int, list[Edge]]) -> list[Node]:
         # careful! If only two edges -> second edge must always be free! (could also be parking edge, because PE can store multiple)
         junction_nodes = [*self.junction_nodes, self.graph_creator.processing_zone]
         combinations_of_circles = list(distinct_combinations(circles_dict.keys(), 2))
 
-        def get_circle_nodes(circle):
+        def get_circle_nodes(circle: int) -> set[Node]:
+            circle_or_path: list[Edge]
             # if next edge is free -> circle is just two edges -> can skip first and last node
             if len(circles_dict[circle]) == 2:
                 if circles_dict[circle][0] != circles_dict[circle][1]:
                     circle_or_path = [(circles_dict[circle][0][1], circles_dict[circle][1][0])]
-                    assert (
-                        circles_dict[circle][0][1] == circles_dict[circle][1][0]
-                    ), "circle is not two edges? Middle node should be the same"
+                    assert circles_dict[circle][0][1] == circles_dict[circle][1][0], (
+                        "circle is not two edges? Middle node should be the same"
+                    )
                     # if middle node is exit or exit connection -> skip also middle node -> can always push through to parking edge
                     # TODO unskip
                     # if (
@@ -380,7 +402,7 @@ class MemoryZone:
     # change: if list in other list -> take longer list, delete other
     # if list can be connected to other list -> combine and delete both
 
-    def rotate(self, full_circle_idxs, plot=False):
+    def rotate(self, full_circle_idxs: list[int]) -> dict[int, int]:
         # create dictionary of state
         # convert keys to values and vice versa, so one can iterate over the path (positions need to be keys here)
         edge_state_dict = {}
@@ -399,14 +421,9 @@ class MemoryZone:
         for idx, ion in new_edge_state_dict.items():
             self.ion_chains[ion] = get_idc_from_idx(self.idc_dict, idx)
 
-        if plot is True:
-            self.graph_creator.plot_state(
-                [get_idx_from_idc(self.idc_dict, edge_idc) for edge_idc in self.ion_chains.values()], show_plot=True
-            )
-
         return new_edge_state_dict
 
-    def bfs_free_edge(self, node, other_next_edges):
+    def bfs_free_edge(self, node: Node, other_next_edges: list[Edge]) -> Edge:
         state_idxs = self.get_state_idxs()
         other_next_edges_idxs = [get_idx_from_idc(self.idc_dict, next_edge) for next_edge in other_next_edges]
         for edge_idc in nx.edge_bfs(self.mz_graph, node):
@@ -415,9 +432,10 @@ class MemoryZone:
                 and get_idx_from_idc(self.idc_dict, edge_idc) not in other_next_edges_idxs
             ):
                 return edge_idc
-        return None
+        msg = f"No free edge found for node {node}"
+        raise RuntimeError(msg)
 
-    def find_least_import_chain_in_parking(self, seq, ions_in_parking):
+    def find_least_import_chain_in_parking(self, seq: list[int], ions_in_parking: list[int]) -> int:
         for num in seq:
             if num in ions_in_parking:
                 ions_in_parking.remove(num)

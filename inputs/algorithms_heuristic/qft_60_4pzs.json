@@ -1,0 +1,14 @@
+{
+  "arch": [3, 3, 5, 5],
+  "num_pzs": 4,
+  "seed": 0,
+  "algorithm_name": "qft_no_swaps_nativegates_quantinuum_tket",
+  "num_ions": 60,
+  "qasm_base_dir": "inputs/qasm_files",
+  "use_dag": true,
+  "use_paths": false,
+  "max_timesteps": 100000,
+  "plot": false,
+  "save": false,
+  "failing_junctions": 0
+}

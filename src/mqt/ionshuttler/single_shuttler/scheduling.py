@@ -1,29 +1,40 @@
+from __future__ import annotations
+
 import contextlib
 import random
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import networkx as nx
 import numpy as np
-from .compilation import is_qasm_file, manual_copy_dag, parse_qasm, remove_node, update_sequence
-from .cycles import get_idc_from_idx, get_idx_from_idc
-from .plotting import plot_state
 from qiskit import QuantumCircuit
 from qiskit.converters import circuit_to_dagdependency
 from qiskit.transpiler.passes import RemoveBarriers, RemoveFinalMeasurements
+
+from .compilation import is_qasm_file, manual_copy_dag, parse_qasm, remove_node, update_sequence
+from .graph_utils import get_idc_from_idx, get_idx_from_idc
+from .plotting import plot_state
+
+if TYPE_CHECKING:
+    from qiskit.dagcircuit import DAGDependency, DAGDepNode
+
+    from .cycles import MemoryZone
+    from .types import Edge, Graph
+
 
 show_plot = False
 save_plot = False
 if save_plot:
     # Create a folder for each run with a timestamp (plot widget)
-    run_folder = Path(f'plots/run_{datetime.now().strftime("%Y%m%d_%H%M%S")}')
+    run_folder = Path(f"plots/run_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     run_folder.mkdir(parents=True, exist_ok=True)
 else:
-    run_folder = ""
+    run_folder = Path()
 
 
-def create_starting_config(n_of_chains, graph, seed=None):
+def create_starting_config(n_of_chains: int, graph: Graph, seed: int | None = None) -> tuple[dict[int, Edge], int]:
     if seed is not None:
         random.seed(seed)
         starting_traps = []
@@ -46,7 +57,7 @@ def create_starting_config(n_of_chains, graph, seed=None):
     return ion_chains, number_of_registers
 
 
-def preprocess(memorygrid, sequence):
+def preprocess(memorygrid: MemoryZone, sequence: list[int]) -> MemoryZone:
     # TODO check if this loop is needed (use unique_sequence instead of sequence now)
     # TODO combine with create_move_list? But max_length is different
     # unique sequence is sequence without repeating elements (for move_list and 2-qubit gates)
@@ -74,7 +85,7 @@ def preprocess(memorygrid, sequence):
     return memorygrid
 
 
-def create_move_list(memorygrid, sequence, max_length=10):
+def create_move_list(memorygrid: MemoryZone, sequence: list[int], max_length: int = 10) -> list[int]:
     """
     max_length: max length of move_list (if sequence is longer than max_length, only first max_length elements are considered)
     """
@@ -87,7 +98,7 @@ def create_move_list(memorygrid, sequence, max_length=10):
                 break
 
     path_length_sequence = {}
-    move_list = []
+    move_list: list[int] = []
     for i, rotate_chain in enumerate(unique_sequence):
         edge_idc = memorygrid.ion_chains[rotate_chain]
         # TODO shortest path here maybe not optimal?
@@ -113,7 +124,7 @@ def create_move_list(memorygrid, sequence, max_length=10):
     # NEW: add chains in exit connections to move_list as below for entry connections
     # -> for rare case that dag changed -> chain in exit connection was placed in front
     # -> overwrote other chain in exit connection which was still in move list but now later than the one that was inserted in front
-    chains_in_exit_connections = []
+    chains_in_exit_connections: list[int] = []
     for ion, chain_edge_idx in enumerate(memorygrid.get_state_idxs()):
         if chain_edge_idx in memorygrid.graph_creator.path_to_pz_idxs:
             chains_in_exit_connections.insert(0, ion)
@@ -144,7 +155,9 @@ def create_move_list(memorygrid, sequence, max_length=10):
     return move_list
 
 
-def create_initial_sequence(distance_map, filename, compilation):
+def create_initial_sequence(
+    distance_map: dict[int, int], filename: Path, compilation: bool
+) -> tuple[list[tuple[int, ...]], list[int], DAGDependency | None, DAGDepNode | None]:
     # assert file is a qasm file
     assert is_qasm_file(filename), "The file is not a valid QASM file."
 
@@ -169,9 +182,15 @@ def create_initial_sequence(distance_map, filename, compilation):
     return seq, flat_seq, dag_dep, next_node
 
 
-def create_circles_for_moves(memorygrid, move_list, flat_seq, gate_execution_finished, new_gate_starting):
+def create_circles_for_moves(
+    memorygrid: MemoryZone,
+    move_list: list[int],
+    flat_seq: list[int],
+    gate_execution_finished: bool,
+    new_gate_starting: bool,
+) -> tuple[dict[int, list[Edge]], bool, int | None]:
     # CREATE CIRCLES #
-    ### create circles for all chains in move_list (dictionary with chain as key and circle_idcs as value)
+    # create circles for all chains in move_list (dictionary with chain as key and circle_idcs as value)
     rotate_entry = False
     chain_to_park = memorygrid.find_chain_in_edge(memorygrid.graph_creator.path_to_pz[-1])
     chain_to_move_out_of_pz = None
@@ -180,9 +199,9 @@ def create_circles_for_moves(memorygrid, move_list, flat_seq, gate_execution_fin
     else:
         parking_open = False
 
-    all_circles = {}
+    all_circles: dict[int, list[Edge]] = {}
     # need to find next_edges before for bfs search of "out of entry move"
-    next_edges = {}
+    next_edges: dict[int, Edge] = {}
     for rotate_chain in move_list:
         edge_idc = memorygrid.ion_chains[rotate_chain]
         # if chain is needed again (is present in rest of sequence) -> move (only out of entry) towards exit instead of top left
@@ -198,10 +217,10 @@ def create_circles_for_moves(memorygrid, move_list, flat_seq, gate_execution_fin
         edge_idc, next_edge = memorygrid.find_ordered_edges(edge_idc, next_edge)
 
         # moves in pz
-        if get_idx_from_idc(memorygrid.idc_dict, next_edge) in [
+        if get_idx_from_idc(memorygrid.idc_dict, next_edge) in {
             *memorygrid.graph_creator.path_to_pz_idxs,
             get_idx_from_idc(memorygrid.idc_dict, memorygrid.graph_creator.parking_edge),
-        ]:
+        }:
             in_and_into_exit_moves[rotate_chain] = edge_idc
             all_circles[rotate_chain] = [edge_idc, next_edge]
             # block moves to pz if parking is full (now blocks if parking not open and chain moving in exit and its next edge is in state_idxs)
@@ -212,8 +231,7 @@ def create_circles_for_moves(memorygrid, move_list, flat_seq, gate_execution_fin
                 #         get_idx_from_idc(memorygrid.idc_dict, memorygrid.graph_creator.parking_edge),
                 #     ]
                 #     and
-                parking_open
-                is False
+                parking_open is False
             ) and (get_idx_from_idc(memorygrid.idc_dict, next_edge) in memorygrid.state_idxs):
                 all_circles[rotate_chain] = [edge_idc, edge_idc]
 
@@ -246,7 +264,7 @@ def create_circles_for_moves(memorygrid, move_list, flat_seq, gate_execution_fin
         # moves with circle
         else:
             # create circle (deleted in create_outer_circle: in parking circle is a "stop move")
-            all_circles[rotate_chain] = memorygrid.create_outer_circle(edge_idc, next_edge, next_edges.values())
+            all_circles[rotate_chain] = memorygrid.create_outer_circle(edge_idc, next_edge, list(next_edges.values()))
 
     # move chain out of parking edge if needed
     chains_in_parking = memorygrid.find_chains_in_parking()
@@ -275,10 +293,10 @@ def create_circles_for_moves(memorygrid, move_list, flat_seq, gate_execution_fin
                 for chain, edge_idc in in_and_into_exit_moves.items():
                     all_circles[chain] = [edge_idc, edge_idc]
                 # maybe already covered above
-                all_circles[chain_to_move_out_of_pz] = (
+                all_circles[chain_to_move_out_of_pz] = [
                     memorygrid.graph_creator.path_to_pz[-1],
                     memorygrid.graph_creator.path_to_pz[-1],
-                )
+                ]
             # else -> no new gate possible with only parking chains
             # -> but also chain can't move to parking since it is least important
             # -> should be rare edge case -> chain moves from exit to entry
@@ -304,7 +322,7 @@ def create_circles_for_moves(memorygrid, move_list, flat_seq, gate_execution_fin
     return all_circles, rotate_entry, chain_to_move_out_of_pz
 
 
-def find_movable_circles(memorygrid, all_circles, move_list):
+def find_movable_circles(memorygrid: MemoryZone, all_circles: dict[int, list[Edge]], move_list: list[int]) -> list[int]:
     # FIND CIRCLES THAT CAN MOVE #
     # find circles that can move while first seq ion is moving
     nonfree_circles = memorygrid.find_nonfree_and_free_circle_idxs(all_circles)
@@ -320,7 +338,13 @@ def find_movable_circles(memorygrid, all_circles, move_list):
     return free_circle_seq_idxs
 
 
-def rotate_free_circles(memorygrid, all_circles, free_circle_seq_idxs, rotate_entry, chain_to_move_out_of_pz):
+def rotate_free_circles(
+    memorygrid: MemoryZone,
+    all_circles: dict[int, list[Edge]],
+    free_circle_seq_idxs: list[int],
+    rotate_entry: bool,
+    chain_to_move_out_of_pz: int | None,
+) -> None:
     # ROTATE CIRCLES #
     # need circles given in idxs for rotate function
     free_circle_idxs = {}
@@ -329,24 +353,26 @@ def rotate_free_circles(memorygrid, all_circles, free_circle_seq_idxs, rotate_en
             get_idx_from_idc(memorygrid.idc_dict, edge_idc) for edge_idc in all_circles[seq_idx]
         ]
         # rotate chains
-        _new_state_dict = memorygrid.rotate(free_circle_idxs[seq_idx])
+        memorygrid.rotate(free_circle_idxs[seq_idx])
     if rotate_entry:
+        assert chain_to_move_out_of_pz is not None
         memorygrid.ion_chains[chain_to_move_out_of_pz] = memorygrid.graph_creator.path_from_pz[0]
 
 
 def update_sequence_and_process_gate(
-    memorygrid,
-    gate_execution_finished,
-    new_gate_starting,
-    dag_dep,
-    next_node,
-    timestep,
-    seq,
-    flat_seq,
-    time_in_pz_counter,
-    next_gate_is_two_qubit_gate,
-    show_plot,
-):
+    memorygrid: MemoryZone,
+    seq_length: int,
+    gate_execution_finished: bool,
+    new_gate_starting: bool,
+    dag_dep: DAGDependency | None,
+    next_node: DAGDepNode | None,
+    timestep: int,
+    seq: list[tuple[int, ...]],
+    flat_seq: list[int],
+    time_in_pz_counter: int,
+    next_gate_is_two_qubit_gate: bool,
+    show_plot: bool,
+) -> tuple[bool, bool, bool, list[tuple[int, ...]], list[int], int, DAGDependency | None, DAGDepNode | None, bool]:
     gate = seq[0]
     chains_in_parking = memorygrid.find_chains_in_parking()
     time_gate = memorygrid.time_2qubit_gate if next_gate_is_two_qubit_gate else memorygrid.time_1qubit_gate
@@ -362,7 +388,7 @@ def update_sequence_and_process_gate(
             memorygrid.graph,
             [get_idx_from_idc(memorygrid.idc_dict, edge_idc) for edge_idc in memorygrid.ion_chains.values()],
             labels=[
-                "time step %s" % timestep,
+                f"time step {timestep}",
                 f"seq elem {seq[0]} execution",
             ],
             show_plot=show_plot,
@@ -372,14 +398,14 @@ def update_sequence_and_process_gate(
 
         # print time step and gate (gate x out of y)
         print(
-            f"time step: {timestep}, execution of gate ({memorygrid.seq_length-len(seq)+1}/{memorygrid.seq_length}) on qubit(s) {seq[0]}"
+            f"time step: {timestep}, execution of gate ({seq_length - len(seq) + 1} / {seq_length}) on qubit(s) {seq[0]}"
         )
         time_gate = memorygrid.time_2qubit_gate if next_gate_is_two_qubit_gate else memorygrid.time_1qubit_gate
 
         if time_in_pz_counter == time_gate:
             # END IF SEQUENCE IS FINISHED #
             if len(seq) == 1:
-                print("\nCircuit successfully executed in %s time steps." % timestep)
+                print(f"\nCircuit successfully executed in {timestep} time steps.")
                 return (
                     True,
                     gate_execution_finished,
@@ -422,7 +448,7 @@ def update_sequence_and_process_gate(
         plot_state(
             memorygrid.graph,
             [get_idx_from_idc(memorygrid.idc_dict, edge_idc) for edge_idc in memorygrid.ion_chains.values()],
-            labels=["time step %s" % timestep, f"next seq elem: {seq[0]}"],
+            labels=[f"time step {timestep}", f"next seq elem: {seq[0]}"],
             show_plot=show_plot,
             save_plot=save_plot,
             filename=[plot_filename if save_plot else None][0],
@@ -441,7 +467,7 @@ def update_sequence_and_process_gate(
     )
 
 
-def check_duplicates(lst, memorygrid, parking_idc, max_number_parking):
+def check_duplicates(lst: list[int], memorygrid: MemoryZone, parking_idc: Edge, max_number_parking: int) -> None:
     parking_idx = get_idx_from_idc(memorygrid.idc_dict, parking_idc)
 
     # Count occurrences of each integer
@@ -458,7 +484,15 @@ def check_duplicates(lst, memorygrid, parking_idc, max_number_parking):
             raise AssertionError(message)
 
 
-def run_simulation(memorygrid, max_timesteps, seq, flat_seq, dag_dep, next_node_initial, max_length):
+def run_simulation(
+    memorygrid: MemoryZone,
+    max_timesteps: int,
+    seq: list[tuple[int, ...]],
+    flat_seq: list[int],
+    dag_dep: DAGDependency,
+    next_node_initial: DAGDepNode,
+    max_length: int,
+) -> int:
     time_in_pz_counter = 0
     next_gate_is_two_qubit_gate = len(seq[0]) == 2
     gate_execution_finished = True
@@ -467,7 +501,6 @@ def run_simulation(memorygrid, max_timesteps, seq, flat_seq, dag_dep, next_node_
     next_node = next_node_initial
 
     seq_length = len(seq)
-    memorygrid.seq_length = seq_length
 
     while timestep < max_timesteps:
         rotate_entry = False
@@ -503,6 +536,7 @@ def run_simulation(memorygrid, max_timesteps, seq, flat_seq, dag_dep, next_node_
             next_gate_is_two_qubit_gate,
         ) = update_sequence_and_process_gate(
             memorygrid,
+            seq_length,
             gate_execution_finished,
             new_gate_starting,
             dag_dep,
@@ -519,4 +553,6 @@ def run_simulation(memorygrid, max_timesteps, seq, flat_seq, dag_dep, next_node_
         timestep += 1
 
         state_idxs = memorygrid.get_state_idxs()
-    return None
+
+    msg = f"Maximum number of time steps {max_timesteps} reached"
+    raise RuntimeError(msg)

@@ -4,25 +4,35 @@ import pathlib
 import time
 
 import numpy as np
-from cycles import GraphCreator, MemoryZone
-from scheduling import create_initial_sequence, create_starting_config, run_simulation
+
+from .cycles import MemoryZone
+from .graph_utils import GraphCreator
+from .scheduling import create_initial_sequence, create_starting_config, run_simulation
 
 
 def run_simulation_for_architecture(
-    arch, seeds, pz, max_timesteps, time_1qubit_gate=1, time_2qubit_gate=3, max_chains_in_parking=3, compilation=True
-):
+    arch: list[int],
+    seeds: list[int],
+    pz: str,
+    max_timesteps: int,
+    time_1qubit_gate: int = 1,
+    time_2qubit_gate: int = 3,
+    max_chains_in_parking: int = 3,
+    compilation: bool = True,
+) -> tuple[list[int], list[float]]:
     """
     Runs simulations for the given architecture and seeds, logs the results.
 
     Args:
-        arch (list): Architecture parameters.
-        seeds (list): List of seed values.
-        pz (str): Position of Processing zone.
-        max_timesteps (int): Maximum timesteps.
-        compilation (bool): Compilation flag (Gate Selection Step).
+        arch: Architecture parameters.
+        seeds: List of seed values.
+        pz: Position of Processing zone.
+        max_timesteps: Maximum timesteps.
+        compilation: Compilation flag (Gate Selection Step).
 
     Returns:
-        tuple: (timestep_arr, cpu_time_arr, number_of_registers, n_of_traps, seq_length)
+        - List of time steps
+        - List of CPU times
     """
     timestep_arr = []
     cpu_time_arr = []
@@ -33,7 +43,7 @@ def run_simulation_for_architecture(
         graph = GraphCreator(m, n, v, h, pz).get_graph()
         try:
             ion_chains, number_of_registers = create_starting_config(num_ion_chains, graph, seed=seed)
-        except:
+        except Exception:
             continue
         print(f"ion chains: {ion_chains}, number of registers: {number_of_registers}")
         print(f"arch: {arch}, seed: {seed}, registers: {number_of_registers}\n")
@@ -69,7 +79,7 @@ if __name__ == "__main__":
     # parser.add_argument("--plot", action="store_true", help="plot grid")
     args = parser.parse_args()
 
-    with pathlib.Path(args.config_file).open("r") as f:
+    with pathlib.Path(args.config_file).open("r", encoding="utf-8") as f:
         config = json.load(f)
     arch = config["arch"]
     max_timesteps = config["max_timesteps"]

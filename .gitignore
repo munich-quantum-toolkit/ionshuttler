@@ -16,9 +16,9 @@ __pycache__/
 # Ignore macOS system files
 .DS_Store
 
-QASM_files/
-QASM_files/development/
-benchmarks/
+# Sphinx documentation
+docs/_build/
+docs/api/
 
 # Python packaging
 *.egg-info/
