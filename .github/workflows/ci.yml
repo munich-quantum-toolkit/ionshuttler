@@ -32,7 +32,6 @@ jobs:
     uses: munich-quantum-toolkit/workflows/.github/workflows/reusable-python-tests.yml@56cf3608b07dc10bda5b98d77ed6ad21ecf7ef5d # v1.17.0
     with:
       runs-on: ${{ matrix.runs-on }}
-      setup-z3: true
 
   python-coverage:
     name: 🐍 Coverage
@@ -48,8 +47,6 @@ jobs:
     needs: change-detection
     if: fromJSON(needs.change-detection.outputs.run-python-tests)
     uses: munich-quantum-toolkit/workflows/.github/workflows/reusable-python-linter.yml@56cf3608b07dc10bda5b98d77ed6ad21ecf7ef5d # v1.17.0
-    with:
-      setup-z3: true
 
   build-sdist:
     name: 🚀 CD
@@ -63,7 +60,8 @@ jobs:
     if: fromJSON(needs.change-detection.outputs.run-cd)
     uses: munich-quantum-toolkit/workflows/.github/workflows/reusable-python-packaging-wheel-build.yml@56cf3608b07dc10bda5b98d77ed6ad21ecf7ef5d # v1.17.0
 
-  required-checks-pass: # This job does nothing and is only used for branch protection
+  # this job does nothing and is only used for branch protection
+  required-checks-pass: 
     name: 🚦 Check
     if: always()
     needs:
