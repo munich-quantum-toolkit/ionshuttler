@@ -23,6 +23,7 @@ dependencies = [
     "numpy>=1.26; python_version >= '3.12'",
     "z3-solver>=4.15.3",
     "matplotlib>=3.7.1",
+    "matplotlib>=3.10.0; python_version >= '3.12'",
     "networkx>=3.0",
     "more_itertools>=10.1.0"
 ]
