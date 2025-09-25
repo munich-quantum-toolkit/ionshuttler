@@ -8,6 +8,7 @@ on:
       - .github/workflows/cd.yml
 
 permissions:
+  attestations: write
   contents: read
   id-token: write
 
