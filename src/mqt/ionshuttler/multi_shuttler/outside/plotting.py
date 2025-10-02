@@ -118,8 +118,8 @@ def plot_state(
     plt.plot([], [], label=labels1)
     plt.legend()
 
-    if show_plot is True:
-        plt.show()
+    # if show_plot is True:
+    #     plt.show()
 
     if save_plot is True:
         plt.savefig(filename)

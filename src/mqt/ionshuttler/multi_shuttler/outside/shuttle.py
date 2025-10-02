@@ -27,9 +27,8 @@ if TYPE_CHECKING:
 
     from .graph import Graph
     from .types import Edge
-
-
-def check_duplicates(graph: Graph) -> None:
+    
+def check_duplicates(graph, timestep):
     edge_idxs_occupied = []
     for edge_idc in graph.state.values():
         edge_idxs_occupied.append(get_idx_from_idc(graph.idc_dict, edge_idc))
