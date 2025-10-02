@@ -1,5 +1,5 @@
 import time
-import random
+
 from src.mqt.ionshuttler.single_shuttler.SAT import MemorySAT, create_graph
 
 
@@ -12,7 +12,7 @@ def simulate_single_shuttler(plot: bool, arch: list[int], max_timesteps: int, nu
     starting_traps = trap_edges[:num_ion_chains]  # deterministic version
 
     ions = list(range(num_ion_chains))
-    for ion, edge in zip(ions, starting_traps):
+    for ion, edge in zip(ions, starting_traps, strict=False):
         graph[edge[0]][edge[1]]["ion_chain"] = ion
 
     start = time.time()

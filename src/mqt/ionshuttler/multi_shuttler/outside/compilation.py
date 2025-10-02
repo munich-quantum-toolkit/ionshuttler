@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 def is_qasm_file(file_path: Path) -> bool:
     with file_path.open(encoding="utf-8") as file:
         # Read the first line of the file (7th line, specific to MQT Bench)
-        first_line = ''
+        first_line = ""
         for _f in range(7):
             prev_line = first_line
             first_line = file.readline()

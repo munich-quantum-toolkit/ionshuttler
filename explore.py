@@ -1,20 +1,26 @@
-from src.mqt.ionshuttler.multi_shuttler.Outside.graph_utils import GraphCreator, PZCreator, ProcessingZone, create_idc_dictionary, get_idx_from_idc
-from src.mqt.ionshuttler.multi_shuttler.Outside.cycles import create_starting_config, get_state_idxs
-from src.mqt.ionshuttler.multi_shuttler.Outside.scheduling import get_ions
-from src.mqt.ionshuttler.multi_shuttler.Outside.shuttle import main as run_shuttle_main
+import math
+
 from src.mqt.ionshuttler.multi_shuttler.Outside.compilation import (
-    create_initial_sequence,
     create_dag,
+    create_dist_dict,
+    create_initial_sequence,
     create_updated_sequence_destructive,
     get_front_layer_non_destructive,
     map_front_gates_to_pzs,
-    create_dist_dict,
     update_distance_map,
+)
+from src.mqt.ionshuttler.multi_shuttler.Outside.cycles import create_starting_config, get_state_idxs
+from src.mqt.ionshuttler.multi_shuttler.Outside.graph_utils import (
+    GraphCreator,
+    ProcessingZone,
+    PZCreator,
+    create_idc_dictionary,
+    get_idx_from_idc,
 )
 from src.mqt.ionshuttler.multi_shuttler.Outside.partition import get_partition
 from src.mqt.ionshuttler.multi_shuttler.Outside.plotting import plot_state
-import math
-import numpy as np
+from src.mqt.ionshuttler.multi_shuttler.Outside.scheduling import get_ions
+from src.mqt.ionshuttler.multi_shuttler.Outside.shuttle import main as run_shuttle_main
 
 
 def simulate_shuttling(plot: bool, arch: list[int], number_of_pzs: int) -> int:
@@ -26,18 +32,24 @@ def simulate_shuttling(plot: bool, arch: list[int], number_of_pzs: int) -> int:
     # Define processing zones
     height = -4.5
     pzs = [
-        ProcessingZone("pz1", [(float((m - 1) * v), float((n - 1) * h)),
-                               (float((m - 1) * v), float(0)),
-                               (float((m - 1) * v - height), float((n - 1) * h / 2))]),
-        ProcessingZone("pz2", [(0.0, 0.0),
-                               (0.0, float((n - 1) * h)),
-                               (float(height), float((n - 1) * h / 2))]),
-        ProcessingZone("pz3", [(float((m - 1) * v), float(0)),
-                               (0.0, 0.0),
-                               (float((m - 1) * v / 2), float(height))]),
-        ProcessingZone("pz4", [(0.0, float((n - 1) * h)),
-                               (float((m - 1) * v), float((n - 1) * h)),
-                               (float((m - 1) * v / 2), float((n - 1) * h - height))]),
+        ProcessingZone(
+            "pz1",
+            [
+                (float((m - 1) * v), float((n - 1) * h)),
+                (float((m - 1) * v), float(0)),
+                (float((m - 1) * v - height), float((n - 1) * h / 2)),
+            ],
+        ),
+        ProcessingZone("pz2", [(0.0, 0.0), (0.0, float((n - 1) * h)), (float(height), float((n - 1) * h / 2))]),
+        ProcessingZone("pz3", [(float((m - 1) * v), float(0)), (0.0, 0.0), (float((m - 1) * v / 2), float(height))]),
+        ProcessingZone(
+            "pz4",
+            [
+                (0.0, float((n - 1) * h)),
+                (float((m - 1) * v), float((n - 1) * h)),
+                (float((m - 1) * v / 2), float((n - 1) * h - height)),
+            ],
+        ),
     ][:number_of_pzs]
 
     basegraph_creator = GraphCreator(m, n, v, h, failing_junctions, pzs)
@@ -50,8 +62,11 @@ def simulate_shuttling(plot: bool, arch: list[int], number_of_pzs: int) -> int:
     G.pzs_name_map = {pz.name: pz for pz in pzs}
 
     G.parking_edges_idxs = [get_idx_from_idc(G.idc_dict, pz.parking_edge) for pz in pzs]
-    G.edge_to_pz_map = {idx: pz for pz in pzs for idx in
-                        pz.path_to_pz_idxs + [get_idx_from_idc(G.idc_dict, pz.parking_edge)] + pz.path_from_pz_idxs}
+    G.edge_to_pz_map = {
+        idx: pz
+        for pz in pzs
+        for idx in [*pz.path_to_pz_idxs, get_idx_from_idc(G.idc_dict, pz.parking_edge), *pz.path_from_pz_idxs]
+    }
     G.max_num_parking = 3
     for pz in pzs:
         pz.max_num_parking = G.max_num_parking
@@ -69,12 +84,12 @@ def simulate_shuttling(plot: bool, arch: list[int], number_of_pzs: int) -> int:
     create_starting_config(G, number_of_chains, seed)
     G.state = get_ions(G)
     G.sequence = create_initial_sequence(qasm_path)
-    partition = {pz.name: ions for pz, ions in zip(pzs, get_partition(qasm_path, len(pzs)))}
+    partition = {pz.name: ions for pz, ions in zip(pzs, get_partition(qasm_path, len(pzs)), strict=False)}
     G.map_to_pz = {ion: pz for pz, ions in partition.items() for ion in ions}
 
     dag = create_dag(qasm_path)
     front_layer_nodes = get_front_layer_non_destructive(dag, [])
-    pz_info_map = map_front_gates_to_pzs(G, front_layer_nodes)
+    map_front_gates_to_pzs(G, front_layer_nodes)
     G.dist_dict = create_dist_dict(G)
     G.dist_map = update_distance_map(G, get_state_idxs(G))
 

@@ -32,7 +32,7 @@ def plot_state(
     idc_dict = graph.idc_dict
     pos = {(x, y): (y, -x) for i, (x, y) in enumerate(list(graph.nodes()))}
     if plot_ions is True:
-        edge_labels = nx.get_edge_attributes(graph,'ions')
+        edge_labels = nx.get_edge_attributes(graph, "ions")
     else:
         edge_labels = {}
         for idc in graph.edges():

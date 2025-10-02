@@ -2,46 +2,46 @@
 # Create an HTML-player-friendly timeline JSON by piggybacking on the shuttler's plotting calls.
 
 from __future__ import annotations
-from pathlib import Path
+
 import json
 import math
 from datetime import datetime
-from typing import Dict, List, Tuple, Any
+from pathlib import Path
+from typing import Any
+
+from mqt.ionshuttler.multi_shuttler.outside import plotting as plotting_mod
+from mqt.ionshuttler.multi_shuttler.outside import shuttle as shuttle_mod
+from mqt.ionshuttler.multi_shuttler.outside.compilation import (
+    create_dag,
+    create_dist_dict,
+    create_initial_sequence,
+    create_updated_sequence_destructive,
+    get_front_layer_non_destructive,
+    map_front_gates_to_pzs,
+    update_distance_map,
+)
+from mqt.ionshuttler.multi_shuttler.outside.cycles import (
+    create_starting_config,
+    get_state_idxs,
+)
 
 # --- project imports (new layout) ---
 from mqt.ionshuttler.multi_shuttler.outside.graph_creator import (
     GraphCreator,
     PZCreator,
 )
-from mqt.ionshuttler.multi_shuttler.outside.processing_zone import ProcessingZone
-from mqt.ionshuttler.multi_shuttler.outside.cycles import (
-    create_starting_config,
-    get_state_idxs,
-)
-from mqt.ionshuttler.multi_shuttler.outside.scheduling import get_ions
-from mqt.ionshuttler.multi_shuttler.outside.compilation import (
-    create_initial_sequence,
-    create_dag,
-    create_updated_sequence_destructive,
-    get_front_layer_non_destructive,
-    map_front_gates_to_pzs,
-    create_dist_dict,
-    update_distance_map,
-)
-from mqt.ionshuttler.multi_shuttler.outside.partition import get_partition
 from mqt.ionshuttler.multi_shuttler.outside.graph_utils import (
-    create_idc_dictionary,
     get_idx_from_idc,
 )
+from mqt.ionshuttler.multi_shuttler.outside.partition import get_partition
+from mqt.ionshuttler.multi_shuttler.outside.processing_zone import ProcessingZone
+from mqt.ionshuttler.multi_shuttler.outside.scheduling import get_ions
 from mqt.ionshuttler.multi_shuttler.outside.shuttle import main as run_shuttle_main
-from mqt.ionshuttler.multi_shuttler.outside import plotting as plotting_mod
-from mqt.ionshuttler.multi_shuttler.outside import shuttle as shuttle_mod
-
 
 # ===========================
 # Config (mirrors run_benchmarks defaults)
 # ===========================
-PLOT_IMAGES = True       # we only capture frames; no PDFs
+PLOT_IMAGES = True  # we only capture frames; no PDFs
 SAVE_IMAGES = False
 USE_DAG = False
 PARTITIONING = True
@@ -55,9 +55,9 @@ CYCLE_OR_PATHS_STR = "Cycles"  # set to "Cycles"/"Paths" to switch behavior
 # ===========================
 # Helpers for conversion
 # ===========================
-def fmt_int_tuple(p: Tuple[float, float]) -> str:
+def fmt_int_tuple(p: tuple[float, float]) -> str:
     r, c = p
-    return f"({int(round(r))}, {int(round(c))})"
+    return f"({round(r)}, {round(c)})"
 
 
 def infer_pz_side(pz: ProcessingZone, maxR: int, maxC: int) -> str:
@@ -80,7 +80,7 @@ def infer_pz_side(pz: ProcessingZone, maxR: int, maxC: int) -> str:
     return min(dists, key=dists.get)
 
 
-def build_pz_index(G, idc_dict) -> Dict[str, Dict[str, Any]]:
+def build_pz_index(G, idc_dict) -> dict[str, dict[str, Any]]:
     """
     Build an index for mapping edge indices to PZ-related specs.
 
@@ -91,7 +91,7 @@ def build_pz_index(G, idc_dict) -> Dict[str, Dict[str, Any]]:
       2) Otherwise, split pz.pz_edges_idx around the parking edge index:
          everything BEFORE parking -> "into", everything AFTER -> "out".
     """
-    pzi: Dict[str, Dict[str, Any]] = {}
+    pzi: dict[str, dict[str, Any]] = {}
     maxR = (G.m * G.v) - G.v
     maxC = (G.n * G.h) - G.h
 
@@ -111,8 +111,8 @@ def build_pz_index(G, idc_dict) -> Dict[str, Dict[str, Any]]:
             all_idxs = list(getattr(pz, "pz_edges_idx", []))
             if all_idxs and parking_idx in all_idxs:
                 k = all_idxs.index(parking_idx)
-                into_idxs = all_idxs[:k]      # heading INTO the PZ core
-                out_idxs = all_idxs[k + 1:]   # heading OUT into the MZ
+                into_idxs = all_idxs[:k]  # heading INTO the PZ core
+                out_idxs = all_idxs[k + 1 :]  # heading OUT into the MZ
             else:
                 # Last resort: at least show "out" edges so exits appear
                 into_idxs = []
@@ -161,11 +161,11 @@ def edge_idx_to_spec(idx: int, G, pz_index):
     try:
         u, v = G._rev_idc[idx]
     except KeyError:
-        return (f"PZ(top):parking", None)  # harmless fallback
+        return ("PZ(top):parking", None)  # harmless fallback
     return (fmt_int_tuple(u), fmt_int_tuple(v))
 
 
-def make_q_ids(ions: List[str]) -> Dict[str, str]:
+def make_q_ids(ions: list[str]) -> dict[str, str]:
     ids = sorted(ions)
     return {ion: f"$q_{i}$" for i, ion in enumerate(ids)}
 
@@ -175,9 +175,9 @@ def make_q_ids(ions: List[str]) -> Dict[str, str]:
 # ===========================
 class FrameCollector:
     def __init__(self):
-        self.frames: List[Dict[str, Any]] = []
-        self.q_map: Dict[str, str] | None = None
-        self.pz_index: Dict[str, Dict[str, Any]] | None = None
+        self.frames: list[dict[str, Any]] = []
+        self.q_map: dict[str, str] | None = None
+        self.pz_index: dict[str, dict[str, Any]] | None = None
 
     def attach_to_graph(self, G):
         self.pz_index = build_pz_index(G, G.idc_dict)
@@ -200,20 +200,16 @@ class FrameCollector:
         # time index from graph (shuttler increments this)
         t = getattr(graph, "timesteps", len(self.frames))
 
-        ions_out: List[Dict[str, Any]] = []
+        ions_out: list[dict[str, Any]] = []
         for ion, edge_idc in state.items():
             try:
                 idx = get_idx_from_idc(graph.idc_dict, edge_idc)
                 a, b = edge_idx_to_spec(idx, graph, self.pz_index)
                 edge_spec = a if b is None else [a, b]
-                ions_out.append(
-                    {
-                        "id": self.q_map.get(
-                            ion, ion if str(ion).startswith("$q_") else f"${ion}$"
-                        ),
-                        "edge": edge_spec,
-                    }
-                )
+                ions_out.append({
+                    "id": self.q_map.get(ion, ion if str(ion).startswith("$q_") else f"${ion}$"),
+                    "edge": edge_spec,
+                })
             except Exception:
                 continue
 
@@ -224,6 +220,7 @@ class FrameCollector:
         save_plot = kwargs.get("save_plot", False)
         if show_plot or save_plot:
             return _REAL_PLOT_STATE(graph, *args, **kwargs)
+        return None
         # Otherwise, swallow the call.
 
 
@@ -239,9 +236,7 @@ def _patched_plot_state(graph, *args, **kwargs):
 # ===========================
 # Main runner (one configuration -> one timeline)
 # ===========================
-def run_single(
-    m: int, n: int, v: int, h: int, number_of_pz: int, seed: int = 0
-) -> Dict[str, Any]:
+def run_single(m: int, n: int, v: int, h: int, number_of_pz: int, seed: int = 0) -> dict[str, Any]:
     height = -4.5
 
     # Renamed for clarity; order preserved for ProcessingZone constructor compatibility.
@@ -298,17 +293,15 @@ def run_single(
     G.save = SAVE_IMAGES
     G.arch = str([m, n, v, h])
 
-    number_of_mz_edges = len(MZ_graph.edges())
-    number_of_chains = math.ceil(1.0 * len(MZ_graph.edges()))#50
+    len(MZ_graph.edges())
+    number_of_chains = math.ceil(1.0 * len(MZ_graph.edges()))  # 50
 
     # starting ions and state
     create_starting_config(G, number_of_chains, seed=seed)
     G.state = get_ions(G)
 
     # sequence + partitioning/DAG
-    qasm_file_path = Path(
-        f"QASM_files/development/{ALGORITHM}/{ALGORITHM}_{number_of_chains}.qasm"
-    )
+    qasm_file_path = Path(f"QASM_files/development/{ALGORITHM}/{ALGORITHM}_{number_of_chains}.qasm")
     assert qasm_file_path.is_file(), f"QASM file not found: {qasm_file_path}"
     G.sequence = create_initial_sequence(qasm_file_path)
 
@@ -316,11 +309,10 @@ def run_single(
         part = get_partition(str(qasm_file_path), len(G.pzs))
         partition = {pz.name: part[i] for i, pz in enumerate(G.pzs)}
     else:
-        raise NotImplementedError("Non-partitioning branch not implemented here.")
+        msg = "Non-partitioning branch not implemented here."
+        raise NotImplementedError(msg)
 
-    G.map_to_pz = {
-        element: pz for pz, elements in partition.items() for element in elements
-    }
+    G.map_to_pz = {element: pz for pz, elements in partition.items() for element in elements}
 
     dag = None
     if USE_DAG:
@@ -328,17 +320,13 @@ def run_single(
             pz.getting_processed = []
         dag = create_dag(qasm_file_path)
         G.locked_gates = {}
-        front_layer_nodes = get_front_layer_non_destructive(
-            dag, virtually_processed_nodes=[]
-        )
+        front_layer_nodes = get_front_layer_non_destructive(dag, virtually_processed_nodes=[])
         pz_info_map = map_front_gates_to_pzs(G, front_layer_nodes=front_layer_nodes)
         _ = {value: key for key, values in pz_info_map.items() for value in values}
         G.dist_dict = create_dist_dict(G)
         state_idxs = get_state_idxs(G)
         G.dist_map = update_distance_map(G, state_idxs)
-        sequence, _, dag = create_updated_sequence_destructive(
-            G, qasm_file_path, dag, use_dag=USE_DAG
-        )
+        sequence, _, dag = create_updated_sequence_destructive(G, qasm_file_path, dag, use_dag=USE_DAG)
         G.sequence = sequence
 
     # ---- Patch plotting: definition AND the symbol shuttle calls ----
@@ -359,7 +347,7 @@ def run_single(
     for s in ["top", "right", "bottom", "left"]:
         sides_present.setdefault(s, False)
 
-    out = {
+    return {
         "grid": {"rows": m, "cols": n},
         "sites": {"vertical": v, "horizontal": h},
         "pzs": sides_present,
@@ -371,7 +359,6 @@ def run_single(
         },
         "timeline": _COLLECTOR.frames,
     }
-    return out
 
 
 def main():
@@ -381,7 +368,7 @@ def main():
     seed = 0
 
     result = run_single(m, n, v, h, number_of_pz, seed)
-    with open(OUTPUT_JSON, "w") as f:
+    with Path(OUTPUT_JSON).open("w", encoding="utf-8") as f:
         json.dump(result, f, separators=(",", ":"), ensure_ascii=False)
     print(f"Wrote {OUTPUT_JSON} with {len(result['timeline'])} frames.")
 

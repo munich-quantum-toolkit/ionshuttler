@@ -27,7 +27,8 @@ if TYPE_CHECKING:
 
     from .graph import Graph
     from .types import Edge
-    
+
+
 def check_duplicates(graph, timestep):
     edge_idxs_occupied = []
     for edge_idc in graph.state.values():
@@ -91,9 +92,7 @@ def shuttle(
     for pz in graph.pzs:
         prio_queue = part_prio_queues[pz.name]
         move_list = create_move_list(graph, prio_queue, pz)
-        cycles, in_and_into_exit_moves = create_cycles_for_moves(
-            graph, move_list, cycle_or_paths, pz
-        )
+        cycles, in_and_into_exit_moves = create_cycles_for_moves(graph, move_list, cycle_or_paths, pz)
         # add cycles to all_cycles
         all_cycles = {**all_cycles, **cycles}
     out_of_entry_moves = find_out_of_entry_moves(graph, other_next_edges=[])
@@ -119,7 +118,7 @@ def shuttle(
         "Sequence: %s" % [graph.sequence if len(graph.sequence) < 8 else graph.sequence[:8]],
     )
 
-    if (graph.plot is True or graph.save is True):
+    if graph.plot is True or graph.save is True:
         plot_state(
             graph,
             labels,
