@@ -26,4 +26,9 @@ docs/api/
 __pycache__/
 *.pyc
 
+# development QASM files
+QASM_files/development
+benchmarks/
+
 run.py
+adapted_run_benchmarks.py
