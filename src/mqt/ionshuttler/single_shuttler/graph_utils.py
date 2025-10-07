@@ -58,7 +58,7 @@ def get_path_to_node(
 ) -> list[Edge]:
     edge_path: list[Edge] = []
     if exclude_first_entry_connection is True:
-        # lambda function to give path over processing zone huge weight -> doesn't take that path if not necessary - now only encludes entry edge -> can use exit (in MemGrid was != trap before and then to exit node -> not PZ node)
+        # lambda function to give path over processing zone huge weight -> doesn't take that path if not necessary - now only includes entry edge -> can use exit (in MemGrid was != trap before and then to exit node -> not PZ node)
         node_path = nx.shortest_path(
             nx_g,
             src,
