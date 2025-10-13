@@ -1412,7 +1412,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "matplotlib", specifier = ">=3.7.1" },
-    { name = "matplotlib", marker = "python_full_version >= '3.12'", specifier = ">=3.10.0" },
+    { name = "matplotlib", marker = "python_full_version >= '3.12'", specifier = ">=3.8" },
     { name = "matplotlib", marker = "python_full_version >= '3.13'", specifier = ">=3.10" },
     { name = "matplotlib", marker = "python_full_version >= '3.14'", specifier = ">=3.10.5" },
     { name = "more-itertools", specifier = ">=10.1.0" },
