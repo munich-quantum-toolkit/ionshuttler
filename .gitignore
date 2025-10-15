@@ -26,5 +26,16 @@ docs/api/
 __pycache__/
 *.pyc
 
-# VS Code
-.vscode/
+# development QASM files
+QASM_files/development
+benchmarks/
+paper_run_files/
+
+run.py
+adapted_run_benchmarks.py
+adapted_run_connecting.py
+adapted_run_log_telep.py
+make_timeline_dev.py
+make_timeline.py
+timeline.json
+runs/

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import random
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import networkx as nx
 from more_itertools import pairwise
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from .types import Edge, Node
 
 
-def create_starting_config(graph: Graph, n_of_chains: int, seed: int | dict | None = None) -> int:
+def create_starting_config(graph: Graph, n_of_chains: int, seed: int | dict[int, Any] | None = None) -> int:
     # Initialize ions on edges using an edge attribute
     nx.set_edge_attributes(graph, {edge: [] for edge in graph.edges}, "ions")
 

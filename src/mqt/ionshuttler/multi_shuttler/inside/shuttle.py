@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pathlib
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .cycles import get_ion_chains
 from .plotting import plot_state
@@ -24,15 +24,13 @@ if TYPE_CHECKING:
 
 import json
 
-from mqt.ionshuttler.multi_shuttler.inside.scheduling import get_ion_chains
 
-
-def _snapshot_state_for_json(G, t: int):
+def _snapshot_state_for_json(graph: Graph, t: int) -> dict[str, Any]:
     """
     Build one JSON frame:
     { "t": t, "ions": [ { "id": "$q_0$", "edge": ["(0, 0)", "(0, 1)"] }, ... ] }
     """
-    state = get_ion_chains(G)  # dict[int, ((y,x),(y,x))]; rebuilt from edge["ions"]
+    state = get_ion_chains(graph)  # dict[int, ((y,x),(y,x))]; rebuilt from edge["ions"]
     return {
         "t": t,
         "ions": [
