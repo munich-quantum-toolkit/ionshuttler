@@ -389,8 +389,13 @@ def find_conflict_cycle_idxs(graph: Graph, cycles_dict: dict[int, list[Edge]]) -
                 )
                 # if cycle is exit cycle -> skip completely (was node in exit or exit_connection before -> new: need to check if exit is really an exit move -> need to also check cycle[0][0] node)
                 if nx.get_node_attributes(graph, "node_type")[cycles_dict[cycle][0][1]] == "exit_connection_node" or (
-                    nx.get_node_attributes(graph, "node_type")[cycles_dict[cycle][0][1]] == "exit_node" and (
-                        nx.get_node_attributes(graph, "node_type")[cycles_dict[cycle][0][0]] == "exit_connection_node" or nx.get_node_attributes(graph, "node_type")[cycles_dict[cycle][0][0]] == "processing_zone_node")):
+                    nx.get_node_attributes(graph, "node_type")[cycles_dict[cycle][0][1]] == "exit_node"
+                    and (
+                        nx.get_node_attributes(graph, "node_type")[cycles_dict[cycle][0][0]] == "exit_connection_node"
+                        or nx.get_node_attributes(graph, "node_type")[cycles_dict[cycle][0][0]]
+                        == "processing_zone_node"
+                    )
+                ):
                     cycle_or_path = []
 
             # new if same edge twice is parking edge -> skip completely
