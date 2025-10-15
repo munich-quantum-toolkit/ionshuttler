@@ -357,6 +357,26 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool) -
 
         # Remove processed ions from the sequence (and dag if use_dag)
         if use_dag:
+            # expose processed_nodes for timeline collection
+            if processed_nodes:
+                execs = []
+                for pz_name, gate_node in processed_nodes.items():
+                    try:
+                        pz = graph.pzs_name_map[pz_name]
+                        gtype = getattr(getattr(gate_node, "op", None), "name", None) or getattr(gate_node, "name", None) or "OP"
+                        qubits = list(getattr(gate_node, "qindices", []))
+                        execs.append({
+                            "id": f"t{timestep}_{pz_name}",
+                            "type": gtype,
+                            "qubits": qubits,
+                            "pz": pz_name,
+                            "edge_idc": pz.parking_edge,  # for placement
+                        })
+                    except Exception:
+                        continue
+                graph.executed_gates_next = execs
+            else:
+                graph.executed_gates_next = []
             if processed_nodes:
                 remove_processed_gates(graph, dag, processed_nodes)
                 next_processable_gate_nodes = get_all_first_gates_and_update_sequence_non_destructive(graph, dag)

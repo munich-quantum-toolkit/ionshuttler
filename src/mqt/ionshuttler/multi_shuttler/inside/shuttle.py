@@ -22,6 +22,29 @@ if TYPE_CHECKING:
     from .types import Edge
 
 
+
+import json
+from mqt.ionshuttler.multi_shuttler.inside.scheduling import get_ion_chains
+
+def _snapshot_state_for_json(G, t: int):
+    """
+    Build one JSON frame:
+    { "t": t, "ions": [ { "id": "$q_0$", "edge": ["(0, 0)", "(0, 1)"] }, ... ] }
+    """
+    state = get_ion_chains(G)  # dict[int, ((y,x),(y,x))]; rebuilt from edge["ions"]
+    frame = {
+        "t": t,
+        "ions": [
+            {
+                "id": f"$q_{ion}$",
+                "edge": [str(state[ion][0]), str(state[ion][1])]
+            }
+            for ion in sorted(state.keys())
+        ]
+    }
+    return frame
+
+
 def find_pz_order(graph: Graph, gate_info_list: dict[str, list[int]]) -> list[str]:
     # find next processing zone that will execute a gate
     pz_order = []
@@ -141,8 +164,20 @@ def shuttle(
     )
 
 
-def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str) -> int:
+
+
+def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str, record_path: str | None = None) -> int:
+    """
+    If record_path is provided, writes:
+    { "timeline": [ { "t": 0, "ions": [...] }, { "t": 1, ... }, ... ] }
+    """
     timestep = 0
+    
+    timeline = []
+    if record_path is not None:
+        # initial state BEFORE any movement
+        timeline.append(_snapshot_state_for_json(graph, timestep))
+
     max_timesteps = 1e6
     graph.state = get_ion_chains(graph)
 
@@ -153,7 +188,7 @@ def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str) -> 
     plot_state(
         graph,
         labels=("Initial state", None),
-        plot_ions=True,
+        plot_ions=False,
         show_plot=graph.plot,
         save_plot=graph.save,
         plot_cycle=False,
@@ -273,5 +308,13 @@ def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str) -> 
             break
 
         timestep += 1
+
+        # when a timestep completes:
+        if record_path is not None:
+            timeline.append(_snapshot_state_for_json(graph, timestep))
+
+    if record_path is not None:
+        with open(record_path, "w") as f:
+            json.dump({"timeline": timeline}, f, separators=(",", ":"), ensure_ascii=False)
 
     return timestep

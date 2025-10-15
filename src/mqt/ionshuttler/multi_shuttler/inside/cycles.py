@@ -13,11 +13,11 @@ if TYPE_CHECKING:
     from .types import Edge, Node
 
 
-def create_starting_config(graph: Graph, n_of_chains: int, seed: int | None = None) -> int:
+def create_starting_config(graph: Graph, n_of_chains: int, seed: int | dict | None = None) -> int:
     # Initialize ions on edges using an edge attribute
     nx.set_edge_attributes(graph, {edge: [] for edge in graph.edges}, "ions")
 
-    if seed is not None:
+    if type(seed) is int:
         random.seed(seed)
         starting_traps = []
         traps = list(graph.edges())
@@ -26,6 +26,10 @@ def create_starting_config(graph: Graph, n_of_chains: int, seed: int | None = No
         random_starting_traps = random.sample(range(n_of_traps), (n_of_chains))
         for trap in random_starting_traps:
             starting_traps.append(traps[trap])
+    elif type(seed) is dict:
+        starting_traps = []
+        for ion in range(n_of_chains):
+            starting_traps.append(seed[ion])
     else:
         starting_traps = [
             edges for edges in graph.edges() if graph.get_edge_data(edges[0], edges[1])["edge_type"] == "trap"

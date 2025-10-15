@@ -61,15 +61,16 @@ def plot_state(
                 ion_holder[edge].append(ion)
             except KeyError:
                 ion_holder[edge] = [ion]
-
-    for edge in graph.edges:
-        if edge in ion_holder:
-            graph.add_edge(
-                edge[0],
-                edge[1],
-                ions=ion_holder[edge],
-                color=colors[ion_holder[edge][0]],
-            )
+    
+    if plot_ions is True:
+        for edge in graph.edges:
+            if edge in ion_holder:
+                graph.add_edge(
+                    edge[0],
+                    edge[1],
+                    ions=ion_holder[edge],
+                    color=colors[ion_holder[edge][0]],
+                )
 
     if plot_cycle is not False:
         assert isinstance(plot_cycle, list)
@@ -109,8 +110,8 @@ def plot_state(
     plt.plot([], [], label=labels1)
     # plt.legend()
 
-    if show_plot is True:
-        plt.show()
+    # if show_plot is True:
+    #     plt.show()
 
     if save_plot is True:
         plt.savefig(filename)
