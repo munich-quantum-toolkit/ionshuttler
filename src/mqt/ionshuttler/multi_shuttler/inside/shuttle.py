@@ -22,9 +22,10 @@ if TYPE_CHECKING:
     from .types import Edge
 
 
-
 import json
+
 from mqt.ionshuttler.multi_shuttler.inside.scheduling import get_ion_chains
+
 
 def _snapshot_state_for_json(G, t: int):
     """
@@ -32,17 +33,12 @@ def _snapshot_state_for_json(G, t: int):
     { "t": t, "ions": [ { "id": "$q_0$", "edge": ["(0, 0)", "(0, 1)"] }, ... ] }
     """
     state = get_ion_chains(G)  # dict[int, ((y,x),(y,x))]; rebuilt from edge["ions"]
-    frame = {
+    return {
         "t": t,
         "ions": [
-            {
-                "id": f"$q_{ion}$",
-                "edge": [str(state[ion][0]), str(state[ion][1])]
-            }
-            for ion in sorted(state.keys())
-        ]
+            {"id": f"$q_{ion}$", "edge": [str(state[ion][0]), str(state[ion][1])]} for ion in sorted(state.keys())
+        ],
     }
-    return frame
 
 
 def find_pz_order(graph: Graph, gate_info_list: dict[str, list[int]]) -> list[str]:
@@ -164,15 +160,13 @@ def shuttle(
     )
 
 
-
-
 def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str, record_path: str | None = None) -> int:
     """
     If record_path is provided, writes:
     { "timeline": [ { "t": 0, "ions": [...] }, { "t": 1, ... }, ... ] }
     """
     timestep = 0
-    
+
     timeline = []
     if record_path is not None:
         # initial state BEFORE any movement
@@ -314,7 +308,7 @@ def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str, rec
             timeline.append(_snapshot_state_for_json(graph, timestep))
 
     if record_path is not None:
-        with open(record_path, "w") as f:
+        with pathlib.Path(record_path).open("w", encoding="utf-8") as f:
             json.dump({"timeline": timeline}, f, separators=(",", ":"), ensure_ascii=False)
 
     return timestep

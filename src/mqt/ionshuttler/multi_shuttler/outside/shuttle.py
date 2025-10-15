@@ -363,7 +363,11 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool) -
                 for pz_name, gate_node in processed_nodes.items():
                     try:
                         pz = graph.pzs_name_map[pz_name]
-                        gtype = getattr(getattr(gate_node, "op", None), "name", None) or getattr(gate_node, "name", None) or "OP"
+                        gtype = (
+                            getattr(getattr(gate_node, "op", None), "name", None)
+                            or getattr(gate_node, "name", None)
+                            or "OP"
+                        )
                         qubits = list(getattr(gate_node, "qindices", []))
                         execs.append({
                             "id": f"t{timestep}_{pz_name}",
