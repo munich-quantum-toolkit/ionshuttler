@@ -1,17 +1,17 @@
 venv/
 .venv/
 .idea/
+.vscode/
 .ruff_cache/
 
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
 
 build/
 dist/
 *.egg-info/
-__pycache__/
-*.pyc
 
 # Ignore macOS system files
 .DS_Store
@@ -20,16 +20,11 @@ __pycache__/
 docs/_build/
 docs/api/
 
-# Python packaging
-*.egg-info/
-
-__pycache__/
-*.pyc
-
 # development QASM files
 QASM_files/development
 benchmarks/
 paper_run_files/
+runs/
 
 run.py
 adapted_run_benchmarks.py
@@ -38,4 +33,3 @@ adapted_run_log_telep.py
 make_timeline_dev.py
 make_timeline.py
 timeline.json
-runs/

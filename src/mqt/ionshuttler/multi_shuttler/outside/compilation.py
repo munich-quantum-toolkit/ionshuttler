@@ -95,7 +95,7 @@ def find_best_gate(
     """Find the best gate to execute based on distance."""
     min_gate_cost = math.inf
     for _, gate_node in enumerate(front_layer):
-        qubit_indices = gate_node.qindices
+        qubit_indices = [q._index for q in gate_node.qargs]
         pz_of_node = gate_info_map[gate_node]
         pz = graph.pzs_name_map[pz_of_node]
         if gate_node in pz.getting_processed:
@@ -175,7 +175,7 @@ def create_updated_sequence_destructive(
                     #     next_node = first_gate_to_execute
                     # first_flag = False
                     remove_node(working_dag, first_gate_to_execute)
-                    seq.append(tuple(first_gate_to_execute.qindices))
+                    seq.append(tuple(q._index for q in first_gate_to_execute.qargs))
 
     flat_seq = [item for sublist in seq for item in sublist]
 
@@ -195,6 +195,8 @@ def get_front_layer_non_destructive(dag: DAGDependency, virtually_processed_node
         predecessors = dag.direct_predecessors(node.node_id)
         if not predecessors or all(pred in virtually_processed_nodes for pred in predecessors):
             front_layer.append(node)
+    
+    print("Front layer nodes:", [q._index for node in front_layer for q in node.qargs])  # Debugging line
 
     return front_layer
 
@@ -203,7 +205,9 @@ def map_front_gates_to_pzs(graph: Graph, front_layer_nodes: list[DAGDepNode]) ->
     """Create list of all front layer gates at each processing zone."""
     gates_of_pz_info: dict[str, list[DAGDepNode]] = {pz.name: [] for pz in graph.pzs}
     for seq_node in front_layer_nodes:
-        seq_elem = tuple(seq_node.qindices)
+        # seq_elem = tuple(seq_node.qindices)
+        seq_elem = tuple([q._index for q in seq_node.qargs])
+
         if len(seq_elem) == 1:
             elem = seq_elem[0]
             pz = graph.map_to_pz[elem]
@@ -221,7 +225,7 @@ def map_front_gates_to_pzs(graph: Graph, front_layer_nodes: list[DAGDepNode]) ->
             # gates_of_pz_info[pz].append(seq_elem[0])
             # gates_of_pz_info[pz].append(seq_elem[1])
         else:
-            msg = "wrong gate type"
+            msg = f"wrong gate type in sequence: {seq_node.name}"
             raise ValueError(msg)
 
         gates_of_pz_info[pz].append(seq_node)
@@ -244,7 +248,10 @@ def remove_processed_gates(graph: Graph, dag: DAGDependency, removed_nodes: dict
     # Process each processing zone's first gate
     for _pz_name, first_gate in removed_nodes.items():
         # Remove the gate from the sequence
-        gate_indices = tuple(first_gate.qindices)
+        #gate_indices = tuple(first_gate.qindices)
+        gate_indices = tuple(q._index for q in first_gate.qargs)
+
+
         if gate_indices in graph.sequence:
             graph.sequence.remove(gate_indices)
             removed_gates.append(first_gate)
@@ -302,15 +309,16 @@ def get_all_first_gates_and_update_sequence_non_destructive(
                 round_processed_gates.append(best_gate)
 
                 # Update the ordered sequence
-                ordered_sequence.append(tuple(best_gate.qindices))
+                ordered_sequence.append(tuple(q._index for q in best_gate.qargs))
 
                 # Mark as processed
                 processed_nodes.add(best_gate.node_id)
 
         # Remove all processed gates from the original sequence
         for gate in round_processed_gates:
-            if tuple(gate.qindices) in graph.sequence:
-                graph.sequence.remove(tuple(gate.qindices))
+            gate_indices = tuple(q._index for q in gate.qargs)
+            if tuple(gate_indices) in graph.sequence:
+                graph.sequence.remove(tuple(gate_indices))
 
     # Update the final sequence
     graph.sequence = ordered_sequence + graph.sequence

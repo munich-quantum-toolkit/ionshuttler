@@ -5,6 +5,14 @@ from collections import Counter
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+# Ensure a headless backend for saving figures
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt  # for saving mpl figures
+except Exception:
+    plt = None
+
 from .compilation import get_all_first_gates_and_update_sequence_non_destructive, remove_processed_gates
 from .cycles import get_ions
 from .graph_utils import get_idc_from_idx, get_idx_from_idc
@@ -132,14 +140,113 @@ def shuttle(
         )
 
 
-def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool) -> int:
+def _save_dag_snapshot(dag: 'DAGDependency', out_path: pathlib.Path) -> None:
+    """Best-effort save of a DAG snapshot with detailed debug prints.
+    Tries, in order:
+      1) dag.draw(filename=...) if supported by Qiskit version
+      2) If draw() returns a Matplotlib figure, savefig
+      3) If draw() returns a Graphviz object, try render/write/pipe
+      4) Fallback to DOT/TEXT via attributes or str(dag)
+    """
+    print(f"[DAG SAVE] Attempting to save snapshot to {out_path}")
+    # 1) Try direct write via filename param (no unsupported 'output' kw)
+    try:
+        dag.draw(filename=str(out_path))
+        print(f"[DAG SAVE] Saved DAG snapshot via dag.draw(filename=...) to {out_path}")
+        return
+    except TypeError as e:
+        print(f"[DAG SAVE] dag.draw(filename=...) TypeError: {e}")
+    except Exception as e:
+        print(f"[DAG SAVE] dag.draw(filename=...) failed: {e}")
+
+    # 2) Try draw() and inspect the return
+    try:
+        obj = dag.draw()
+        print(f"[DAG SAVE] dag.draw() returned: {type(obj)}")
+        # Matplotlib figure
+        if hasattr(obj, 'savefig'):
+            try:
+                obj.savefig(str(out_path))
+                if plt is not None:
+                    try:
+                        plt.close(obj)
+                    except Exception as ce:
+                        print(f"[DAG SAVE] Warning closing figure: {ce}")
+                print(f"[DAG SAVE] Saved DAG snapshot via fig.savefig to {out_path}")
+                return
+            except Exception as e:
+                print(f"[DAG SAVE] fig.savefig failed: {e}")
+        # Graphviz API (graphviz.Digraph or pydot/Source-like)
+        # Try render
+        if hasattr(obj, 'render'):
+            try:
+                obj.render(filename=str(out_path), cleanup=True, format=out_path.suffix.lstrip('.'))
+                print(f"[DAG SAVE] Saved DAG snapshot via graphviz.render to {out_path}")
+                return
+            except Exception as e:
+                print(f"[DAG SAVE] graphviz.render failed: {e}")
+        # Try write
+        if hasattr(obj, 'write'):
+            try:
+                obj.write(str(out_path))
+                print(f"[DAG SAVE] Saved DAG snapshot via graphviz.write to {out_path}")
+                return
+            except Exception as e:
+                print(f"[DAG SAVE] graphviz.write failed: {e}")
+        # Try pipe to PNG bytes
+        if hasattr(obj, 'pipe'):
+            try:
+                data = obj.pipe(format='png')
+                out_path.write_bytes(data)
+                print(f"[DAG SAVE] Saved DAG snapshot via graphviz.pipe to {out_path}")
+                return
+            except Exception as e:
+                print(f"[DAG SAVE] graphviz.pipe failed: {e}")
+        # Try source -> DOT file
+        src = getattr(obj, 'source', None)
+        if isinstance(src, str):
+            try:
+                out_dot = out_path.with_suffix('.dot')
+                out_dot.write_text(src)
+                print(f"[DAG SAVE] Saved DAG DOT via .source to {out_dot}")
+                return
+            except Exception as e:
+                print(f"[DAG SAVE] writing DOT via .source failed: {e}")
+        # If it's a string and looks like DOT, save it
+        if isinstance(obj, str) and 'digraph' in obj:
+            try:
+                out_dot = out_path.with_suffix('.dot')
+                out_dot.write_text(obj)
+                print(f"[DAG SAVE] Saved DAG DOT (string) to {out_dot}")
+                return
+            except Exception as e:
+                print(f"[DAG SAVE] writing DOT string failed: {e}")
+    except Exception as e:
+        print(f"[DAG SAVE] dag.draw() call failed: {e}")
+
+    # 4) Last resort: save str(dag) to TXT
+    try:
+        out_txt = out_path.with_suffix('.txt')
+        out_txt.write_text(str(dag))
+        print(f"[DAG SAVE] Saved DAG TEXT (str(dag)) to {out_txt}")
+        return
+    except Exception as e:
+        print(f"[DAG SAVE] writing str(dag) failed: {e}")
+
+    print("[DAG SAVE] All snapshot save attempts failed.")
+
+
+def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, save_dag: bool = False) -> int:
     timestep = 0
     max_timesteps = 1e6
     graph.state = get_ions(graph)
 
     unique_folder = pathlib.Path("runs") / datetime.now().strftime("%Y%m%d_%H%M%S")
-    if graph.save is True:
-        unique_folder.mkdir(exist_ok=True, parents=True)
+    # Ensure folders exist even if graph.save is False (for plot_state outputs)
+    unique_folder.mkdir(exist_ok=True, parents=True)
+    dag_folder = unique_folder / "dags"
+    if save_dag:
+        dag_folder.mkdir(exist_ok=True, parents=True)
 
     if any([graph.plot, graph.save]):
         plot_state(
@@ -153,6 +260,13 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool) -
             filename=unique_folder / f"{graph.arch}_timestep_{timestep}.pdf",
         )
 
+    # Initial snapshot
+    if save_dag and use_dag and dag is not None:
+        try:
+            _save_dag_snapshot(dag, dag_folder / f"dag_timestep_{timestep}.png")
+        except Exception:
+            pass
+
     for pz in graph.pzs:
         pz.time_in_pz_counter = 0
         pz.gate_execution_finished = True
@@ -164,6 +278,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool) -
 
     locked_gates: dict[tuple[int, ...], str] = {}
     while timestep < max_timesteps:
+        print(f"Timestep {timestep}")
         for pz in graph.pzs:
             pz.rotate_entry = False
             pz.out_of_parking_cycle = None
@@ -172,7 +287,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool) -
         if use_dag:
             gate_info_list: dict[str, list[int]] = {pz.name: [] for pz in graph.pzs}
             for pz_name, node in next_processable_gate_nodes.items():
-                for ion in node.qindices:
+                for ion in [q._index for q in node.qargs]:
                     gate_info_list[pz_name].append(ion)
         else:
             # update gate_info_list (list of next gate at pz)
@@ -226,7 +341,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool) -
             processed_nodes = {}
             for pz_name, gate_node in next_processable_gate_nodes.items():
                 pz = graph.pzs_name_map[pz_name]
-                gate = tuple(ion for ion in gate_node.qindices)
+                gate = tuple(ion for ion in [q._index for q in gate_node.qargs])
                 if len(gate) == 1:
                     ion = gate[0]
                     if get_idx_from_idc(graph.idc_dict, graph.state[ion]) == get_idx_from_idc(
@@ -237,9 +352,9 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool) -
                         )
                         pz.getting_processed.append(gate_node)
                         pz.time_in_pz_counter += 1
-                        gate_time = 1
+                        gate_time_1q = 1
 
-                        if pz.time_in_pz_counter == gate_time:
+                        if pz.time_in_pz_counter == gate_time_1q:
                             processed_nodes[pz_name] = gate_node
                             pz.getting_processed.remove(gate_node)
                             # remove the processing zone from the list
@@ -265,8 +380,8 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool) -
                         pz.getting_processed.append(gate_node)
                         pz.time_in_pz_counter += 1
 
-                        gate_time = 3
-                        if pz.time_in_pz_counter == gate_time:
+                        gate_time_2q = 3
+                        if pz.time_in_pz_counter == gate_time_2q:
                             processed_nodes[pz_name] = gate_node
                             # remove the processing zone from the list
                             # (it can only process one gate)
@@ -309,8 +424,8 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool) -
                                 False  # set False, then check below if gate time is finished -> then True
                             )
                             pz.time_in_pz_counter += 1
-                            gate_time = 1
-                            if pz.time_in_pz_counter == gate_time:
+                            gate_time_1q = 1
+                            if pz.time_in_pz_counter == gate_time_1q:
                                 processed_ions.insert(0, (ion,))
                                 ion_processed = True
                                 # remove the processing zone from the list
@@ -336,8 +451,8 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool) -
                                 False  # set False, then check below if gate time is finished -> then True
                             )
                             pz.time_in_pz_counter += 1
-                            gate_time = 3
-                            if pz.time_in_pz_counter == gate_time:
+                            gate_time_2q = 3
+                            if pz.time_in_pz_counter == gate_time_2q:
                                 processed_ions.insert(0, (ion1, ion2))
                                 ion_processed = True
                                 # remove the processing zone from the list
@@ -368,13 +483,15 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool) -
                             or getattr(gate_node, "name", None)
                             or "OP"
                         )
-                        qubits = list(getattr(gate_node, "qindices", []))
+                        qubits = list(getattr(gate_node, "qindices", [q._index for q in getattr(gate_node, "qargs", [])]))
+                        duration = gate_time_2q if len(qubits) >= 2 else gate_time_1q
                         execs.append({
                             "id": f"t{timestep}_{pz_name}",
                             "type": gtype,
                             "qubits": qubits,
                             "pz": pz_name,
                             "edge_idc": pz.parking_edge,  # for placement
+                            "duration": duration,
                         })
                     except Exception:
                         continue
@@ -385,13 +502,41 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool) -
                 remove_processed_gates(graph, dag, processed_nodes)
                 next_processable_gate_nodes = get_all_first_gates_and_update_sequence_non_destructive(graph, dag)
                 for pz_name, node in next_processable_gate_nodes.items():
-                    locked_gates[tuple(node.qindices)] = pz_name
+                    locked_gates[tuple(q._index for q in node.qargs)] = pz_name
         else:
+            # publish processed_ions with duration to the timeline collector
+            if processed_ions:
+                execs = []
+                for i, g in enumerate(processed_ions):
+                    duration = 3 if len(g) >= 2 else 1  # match gate_time_2q / gate_time_1q
+                    execs.append({
+                        "id": f"t{timestep}_{i}",
+                        "type": "OP",
+                        "qubits": list(g),
+                        "duration": duration,
+                    })
+                graph.executed_gates_next = execs
+            else:
+                graph.executed_gates_next = []
             for gate in processed_ions:
                 graph.sequence.remove(gate)
 
         if len(graph.sequence) == 0:
+            # Save DAG snapshot for final state as well
+            try:
+                if save_dag and use_dag and dag is not None:
+                    _save_dag_snapshot(dag, dag_folder / f"dag_timestep_{timestep}.png")
+            except Exception:
+                pass
             break
+
+        # Save DAG snapshot at the end of this timestep
+        try:
+            if save_dag and use_dag and dag is not None:
+                _save_dag_snapshot(dag, dag_folder / f"dag_timestep_{timestep}.png")
+                print("Saved DAG snapshot.")
+        except Exception:
+            pass
 
         timestep += 1
 

@@ -179,7 +179,6 @@ def main(config: dict[str, Any]) -> None:
                 pz.getting_processed = []
             dag = create_dag(qasm_file_path)
             graph.locked_gates = {}
-            dag = create_dag(qasm_file_path)
             dag.copy()  # Keep a copy of the original DAG if needed later
             # Initial DAG-based sequence update
             sequence, _, dag = create_updated_sequence_destructive(graph, qasm_file_path, dag, use_dag=True)
