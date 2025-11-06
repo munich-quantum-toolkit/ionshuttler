@@ -28,15 +28,55 @@ import json
 def _snapshot_state_for_json(graph: Graph, t: int) -> dict[str, Any]:
     """
     Build one JSON frame:
-    { "t": t, "ions": [ { "id": "$q_0$", "edge": ["(0, 0)", "(0, 1)"] }, ... ] }
+    { "t": t,
+      "ions": [ { "id": "$q_0$", "edge": ["(0, 0)", "(0, 1)"] }, ... ],
+      "gates": [ { "id": "...", "type": "XX", "qubits": ["$q_0$","$q_1$"], "edge": ["(r,c)","(r2,c2)"], "duration": 3, "pz": "pz1" }, ... ]
+    }
     """
-    state = get_ion_chains(graph)  # dict[int, ((y,x),(y,x))]; rebuilt from edge["ions"]
-    return {
+    def _fmt_node(p):
+        return f"({p[0]}, {p[1]})"
+
+    state = get_ion_chains(graph)
+    frame: dict[str, Any] = {
         "t": t,
         "ions": [
             {"id": f"$q_{ion}$", "edge": [str(state[ion][0]), str(state[ion][1])]} for ion in sorted(state.keys())
         ],
     }
+    # Include executed gates buffered by main() for the previous step
+    pending = getattr(graph, "executed_gates_next", None)
+    if pending:
+        gates_out: list[dict[str, Any]] = []
+        for i, g in enumerate(pending):
+            try:
+                gid = str(g.get("id", f"g_{i}"))
+                gtype = str(g.get("type", "OP")).upper()
+                qubits = [f"$q_{q}$" if not str(q).startswith("$q_") else q for q in g.get("qubits", [])]
+                edge = None
+                if "edge" in g and g["edge"]:
+                    edge = g["edge"]
+                elif "edge_idc" in g and g["edge_idc"]:
+                    a, b = g["edge_idc"]
+                    edge = [_fmt_node(a), _fmt_node(b)]
+                duration = int(g.get("duration", 1))
+                pz_name = g.get("pz")
+                gates_out.append({
+                    "id": gid,
+                    "type": gtype,
+                    "qubits": qubits,
+                    **({"edge": edge} if edge else {}),
+                    "duration": duration,
+                    **({"pz": pz_name} if pz_name else {}),
+                })
+            except Exception:
+                continue
+        if gates_out:
+            frame["gates"] = gates_out
+        try:
+            graph.executed_gates_next = []
+        except Exception:
+            pass
+    return frame
 
 
 def find_pz_order(graph: Graph, gate_info_list: dict[str, list[int]]) -> list[str]:
@@ -96,7 +136,7 @@ def shuttle(
                     ion1_needed_in_pz = pz_name
                     break
 
-            # TODO ion1 swap also necessary?
+            # TODO ion1 swap also necessary? # new TODO
             if ion1_needed_in_pz is not None and ion1_needed_in_pz != pz.name:
                 # ion1 not in gate_info_list[pz.name]:
                 graph[pz.edge_idc[0]][pz.edge_idc[1]]["ions"].remove(ion1)
@@ -110,6 +150,11 @@ def shuttle(
             if ion1 in gate_info_list[pz.name] and ion2 in gate_info_list[pz.name]:
                 graph.stop_moves.append(ion1)
                 graph.stop_moves.append(ion2)
+
+        elif len(ions_at_pz) == 1:
+            ion1 = ions_at_pz[0]
+            if ion1 in gate_info_list[pz.name] and len(gate_info_list[pz.name]) == 1:
+                graph.stop_moves.append(ion1)
 
     preprocess(graph, priority_queue)
 
@@ -167,8 +212,17 @@ def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str, rec
 
     timeline = []
     if record_path is not None:
+        try:
+            pathlib.Path(record_path).parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
         # initial state BEFORE any movement
         timeline.append(_snapshot_state_for_json(graph, timestep))
+        try:
+            with open(record_path, 'w') as f:
+                json.dump({"timeline": timeline}, f, separators=(",", ":"), ensure_ascii=False)
+        except Exception:
+            pass
 
     max_timesteps = 1e6
     graph.state = get_ion_chains(graph)
@@ -230,6 +284,7 @@ def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str, rec
         # Check the state of each ion in the sequence
         graph.state = get_ion_chains(graph)
         processed_ions: list[tuple[int, ...]] = []
+        processed_execs: list[dict[str, Any]] = []  # NEW: gates executed this step
         previous_ion_processed = True
         pzs = graph.pzs.copy()
         # go through the first gates in the sequence (as many as pzs or sequence length)
@@ -249,6 +304,14 @@ def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str, rec
                     if graph.state[ion] == pz.edge_idc:
                         print(f"Ion {ion} at Processing Zone {pz.name}")
                         processed_ions.insert(0, (ion,))
+                        processed_execs.insert(0, {  # NEW
+                            "id": f"t{timestep}_{pz.name}",
+                            "type": "OP",
+                            "qubits": [ion],
+                            "edge_idc": pz.edge_idc,
+                            "pz": pz.name,
+                            "duration": 1,
+                        })
                         ion_processed = True
                         # remove the processing zone from the list
                         # (it can only process one ion)
@@ -277,6 +340,14 @@ def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str, rec
                     if state1 == pz.edge_idc and state2 == pz.edge_idc:
                         print(f"Ions {ion1} and {ion2} at Processing Zone {pz.name}")
                         processed_ions.insert(0, (ion1, ion2))
+                        processed_execs.insert(0, {  # NEW
+                            "id": f"t{timestep}_{pz.name}",
+                            "type": "OP",
+                            "qubits": [ion1, ion2],
+                            "edge_idc": pz.edge_idc,
+                            "pz": pz.name,
+                            "duration": 1,
+                        })
                         ion_processed = True
                         # remove the processing zone from the list
                         # (it can only process one gate)
@@ -295,6 +366,12 @@ def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str, rec
         for gate in processed_ions:
             sequence.remove(gate)
 
+        # Make executed gates available to the next snapshot
+        try:
+            graph.executed_gates_next = processed_execs
+        except Exception:
+            graph.executed_gates_next = []
+
         if len(sequence) == 0:
             print(f"All ions have arrived at their destination in {timestep} timesteps")
             break
@@ -304,6 +381,11 @@ def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str, rec
         # when a timestep completes:
         if record_path is not None:
             timeline.append(_snapshot_state_for_json(graph, timestep))
+            try:
+                with open(record_path, 'w') as f:
+                    json.dump({"timeline": timeline}, f, separators=(",", ":"), ensure_ascii=False)
+            except Exception:
+                pass
 
     if record_path is not None:
         with pathlib.Path(record_path).open("w", encoding="utf-8") as f:

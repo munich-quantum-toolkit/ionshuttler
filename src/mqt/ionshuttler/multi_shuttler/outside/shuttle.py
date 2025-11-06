@@ -36,7 +36,6 @@ if TYPE_CHECKING:
     from .graph import Graph
     from .types import Edge
 
-
 def check_duplicates(graph: Graph) -> None:
     edge_idxs_occupied = []
     for edge_idc in graph.state.values():
@@ -270,6 +269,9 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
     for pz in graph.pzs:
         pz.time_in_pz_counter = 0
         pz.gate_execution_finished = True
+        # NEW: track gate start time (t0) per PZ
+        if not hasattr(pz, 'active_start_t'):
+            pz.active_start_t = None
 
     graph.in_process = []
 
@@ -328,6 +330,10 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                     ):
                         graph.in_process.append(ion2)
 
+        # Remove executing ions from priority queue so they are not moved this step
+        if getattr(graph, 'in_process', None):
+            priority_queue = {ion: pz for ion, pz in priority_queue.items() if ion not in graph.in_process}
+
         # shuttle one timestep
         shuttle(graph, priority_queue, timestep, cycle_or_paths, unique_folder)
 
@@ -347,24 +353,22 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                     if get_idx_from_idc(graph.idc_dict, graph.state[ion]) == get_idx_from_idc(
                         graph.idc_dict, pz.parking_edge
                     ):
-                        pz.gate_execution_finished = (
-                            False  # set False, then check below if gate time is finished -> then True
-                        )
+                        pz.gate_execution_finished = False
+                        # NEW: set t0 on first tick and pin ion
+                        if pz.active_start_t is None:
+                            pz.active_start_t = timestep
+                        if ion not in graph.in_process:
+                            graph.in_process.append(ion)
                         pz.getting_processed.append(gate_node)
                         pz.time_in_pz_counter += 1
                         gate_time_1q = 1
 
                         if pz.time_in_pz_counter == gate_time_1q:
                             processed_nodes[pz_name] = gate_node
-                            pz.getting_processed.remove(gate_node)
-                            # remove the processing zone from the list
-                            # (it can only process one ion)
-                            # pzs.remove(pz)
-                            # graph.in_process.append(ion)
-
+                            if gate_node in pz.getting_processed:
+                                pz.getting_processed.remove(gate_node)
                             pz.time_in_pz_counter = 0
                             pz.gate_execution_finished = True
-                            # break
                 elif len(gate) == 2:
                     ion1, ion2 = gate
                     state1 = graph.state[ion1]
@@ -374,26 +378,26 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                     if get_idx_from_idc(graph.idc_dict, state1) == get_idx_from_idc(
                         graph.idc_dict, pz.parking_edge
                     ) and get_idx_from_idc(graph.idc_dict, state2) == get_idx_from_idc(graph.idc_dict, pz.parking_edge):
-                        pz.gate_execution_finished = (
-                            False  # set False, then check below if gate time is finished -> then True
-                        )
+                        pz.gate_execution_finished = False
+                        # NEW: set t0 on first tick and pin ions
+                        if pz.active_start_t is None:
+                            pz.active_start_t = timestep
+                        for ion in (ion1, ion2):
+                            if ion not in graph.in_process:
+                                graph.in_process.append(ion)
                         pz.getting_processed.append(gate_node)
                         pz.time_in_pz_counter += 1
 
                         gate_time_2q = 3
                         if pz.time_in_pz_counter == gate_time_2q:
                             processed_nodes[pz_name] = gate_node
-                            # remove the processing zone from the list
-                            # (it can only process one gate)
-                            # pzs.remove(pz)
-
                             # remove the locked pz of the processed two-qubit gate
                             if gate in graph.locked_gates and graph.locked_gates[gate] == pz.name:
                                 graph.locked_gates.pop(gate)
                             pz.time_in_pz_counter = 0
                             pz.gate_execution_finished = True
-                            pz.getting_processed.remove(gate_node)
-                            # break
+                            if gate_node in pz.getting_processed:
+                                pz.getting_processed.remove(gate_node)
                 else:
                     msg = "Invalid gate format"
                     raise ValueError(msg)
@@ -423,6 +427,12 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                             pz.gate_execution_finished = (
                                 False  # set False, then check below if gate time is finished -> then True
                             )
+
+                            # NEW: set t0 on first tick and pin ion
+                            if pz.active_start_t is None:
+                                pz.active_start_t = timestep
+                            if ion not in graph.in_process:
+                                graph.in_process.append(ion)
                             pz.time_in_pz_counter += 1
                             gate_time_1q = 1
                             if pz.time_in_pz_counter == gate_time_1q:
@@ -435,6 +445,8 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
 
                                 pz.time_in_pz_counter = 0
                                 pz.gate_execution_finished = True
+                                # NEW: clear start time
+                                pz.active_start_t = None
                                 break
                     elif len(gate) == 2:
                         ion1, ion2 = gate
@@ -450,6 +462,13 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                             pz.gate_execution_finished = (
                                 False  # set False, then check below if gate time is finished -> then True
                             )
+
+                            # NEW: set t0 first tick and pin ions
+                            if pz.active_start_t is None:
+                                pz.active_start_t = timestep
+                            for ion in (ion1, ion2):
+                                if ion not in graph.in_process:
+                                    graph.in_process.append(ion)
                             pz.time_in_pz_counter += 1
                             gate_time_2q = 3
                             if pz.time_in_pz_counter == gate_time_2q:
@@ -464,6 +483,8 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                                     graph.locked_gates.pop(gate)
                                 pz.time_in_pz_counter = 0
                                 pz.gate_execution_finished = True
+                                # NEW: clear start time
+                                pz.active_start_t = None
                                 break
                     else:
                         msg = "Invalid gate format"
@@ -484,7 +505,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                             or "OP"
                         )
                         qubits = list(getattr(gate_node, "qindices", [q._index for q in getattr(gate_node, "qargs", [])]))
-                        duration = gate_time_2q if len(qubits) >= 2 else gate_time_1q
+                        duration = 3 if len(qubits) >= 2 else 1
                         execs.append({
                             "id": f"t{timestep}_{pz_name}",
                             "type": gtype,
@@ -492,9 +513,14 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                             "pz": pz_name,
                             "edge_idc": pz.parking_edge,  # for placement
                             "duration": duration,
+                            # NEW: include t0 from PZ state
+                            "t0": int(pz.active_start_t) if isinstance(pz.active_start_t, int) else timestep - duration + 1,
                         })
                     except Exception:
                         continue
+                    finally:
+                        # NEW: reset start time after emitting
+                        pz.active_start_t = None
                 graph.executed_gates_next = execs
             else:
                 graph.executed_gates_next = []
@@ -504,17 +530,38 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                 for pz_name, node in next_processable_gate_nodes.items():
                     locked_gates[tuple(q._index for q in node.qargs)] = pz_name
         else:
-            # publish processed_ions with duration to the timeline collector
+            # publish processed_ions with duration and t0 to the timeline collector
             if processed_ions:
                 execs = []
                 for i, g in enumerate(processed_ions):
-                    duration = 3 if len(g) >= 2 else 1  # match gate_time_2q / gate_time_1q
+                    duration = 3 if len(g) >= 2 else 1
+                    # Find pz for this gate's ions (last used above)
+                    # We attach the first matching PZ where both ions (or single) are in parking
+                    pz_used = None
+                    for pz in graph.pzs:
+                        try:
+                            if len(g) == 1 and get_idx_from_idc(graph.idc_dict, graph.state[g[0]]) == get_idx_from_idc(graph.idc_dict, pz.parking_edge):
+                                pz_used = pz
+                                break
+                            if len(g) == 2:
+                                if all(get_idx_from_idc(graph.idc_dict, graph.state[q]) == get_idx_from_idc(graph.idc_dict, pz.parking_edge) for q in g):
+                                    pz_used = pz
+                                    break
+                        except Exception:
+                            continue
                     execs.append({
                         "id": f"t{timestep}_{i}",
                         "type": "OP",
                         "qubits": list(g),
                         "duration": duration,
+                        **({"pz": getattr(pz_used, 'name', None)} if pz_used else {}),
+                        **({"edge_idc": getattr(pz_used, 'parking_edge', None)} if pz_used else {}),
+                        # Use pz.active_start_t if available
+                        **({"t0": int(getattr(pz_used, 'active_start_t'))} if getattr(pz_used, 'active_start_t', None) is not None else {"t0": timestep - duration + 1}),
                     })
+                    # reset start time on the used PZ
+                    if pz_used is not None:
+                        pz_used.active_start_t = None
                 graph.executed_gates_next = execs
             else:
                 graph.executed_gates_next = []

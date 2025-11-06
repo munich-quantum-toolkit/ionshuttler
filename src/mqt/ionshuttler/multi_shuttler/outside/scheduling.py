@@ -35,8 +35,15 @@ if TYPE_CHECKING:
 
 def preprocess(graph: Graph, priority_queue: dict[int, str]) -> None:
     need_rotate = [False] * len(priority_queue)
+    pinned = set(getattr(graph, 'in_process', []))
     while sum(need_rotate) < len(priority_queue):
         for i, rotate_ion in enumerate(priority_queue):
+            if rotate_ion in pinned:
+                try:
+                    need_rotate[i] = True
+                except Exception:
+                    pass
+                continue
             pz_name = priority_queue[rotate_ion]
             pz_parking_edge = next(pz.parking_edge for pz in graph.pzs if pz.name == pz_name)
             edge_idc = graph.state[rotate_ion]
@@ -243,7 +250,10 @@ def create_move_list(graph: Graph, partitioned_priority_queue: list[int], pz: Pr
     ions_state = get_ions(graph)
     path_length_sequence = {}
     move_list: list[int] = []
+    pinned = set(getattr(graph, 'in_process', []))
     for i, rotate_ion in enumerate(partitioned_priority_queue):
+        if rotate_ion in pinned:
+            continue
         edge_idc = ions_state[rotate_ion]
         # shortest path is also 1 edge if already at pz -> set to 0
         # if edge_idc == pz.parking_edge:
@@ -542,14 +552,15 @@ def find_movable_cycles(
         nonfree_cycles = find_conflict_cycle_idxs(graph, all_cycles)
     else:
         nonfree_cycles = find_nonfree_paths(graph, all_cycles)
-    # start with first ion in priority queue
-    free_cycle_seq_idxs = [next(iter(priority_queue.keys()))]
+    pinned = set(getattr(graph, 'in_process', []))
+    free_cycle_seq_idxs = []
+    for first in priority_queue.keys():
+        if first not in pinned:
+            free_cycle_seq_idxs.append(first)
+            break
 
-    # check if ion can move while first ion is moving and so on
     for seq_cyc in list(priority_queue.keys())[1:]:
-        # skip ion of priority_queue if it is not in all_cycles
-        # -> was removed before in individual move_list
-        if seq_cyc not in all_cycles:
+        if seq_cyc in pinned or seq_cyc not in all_cycles:
             continue
         nonfree = False
         for mov_cyc in free_cycle_seq_idxs:
