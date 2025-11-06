@@ -61,7 +61,7 @@ def plot_state(
                 ion_holder[edge].append(ion)
             except KeyError:
                 ion_holder[edge] = [ion]
-
+    
     if plot_ions is True:
         for edge in graph.edges:
             if edge in ion_holder:
@@ -110,8 +110,8 @@ def plot_state(
     plt.plot([], [], label=labels1)
     # plt.legend()
 
-    # if show_plot is True:
-    #     plt.show()
+    if show_plot is True:
+        plt.show()
 
     if save_plot is True:
         plt.savefig(filename)
