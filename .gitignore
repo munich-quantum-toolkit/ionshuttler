@@ -33,4 +33,6 @@ runs/
 
 run.py
 adapted_run_benchmarks.py
+adapted_run_connecting.py
+make_timeline_dev.py
 timeline.json

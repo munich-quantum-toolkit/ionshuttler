@@ -13,7 +13,7 @@ ARCHS: list[list[int]] = [
     [4, 4, 1, 1],
 ]
 SEEDS = [0]
-NUM_PZS_LIST = [4]  # add 2,3,4 if you want to sweep
+NUM_PZS_LIST = [2]  # add 2,3,4 if you want to sweep
 USE_DAG = False
 USE_PATHS = False  # True -> "Paths", False -> "Cycles"
 FAILING_JUNCTIONS = 0
@@ -180,6 +180,7 @@ def main() -> None:
             for seed in SEEDS:
 
                 num_ions = 22#(m-1)*v*n + (n-1)*h*m  
+                print(f"max num_ions: {(m-1)*v*n + (n-1)*h*m}")
 
                 cfg = {
                     "arch": [m, n, v, h],        # [m, n, v, h]
@@ -226,3 +227,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# for connecting: place ions in pz, gate times to 1

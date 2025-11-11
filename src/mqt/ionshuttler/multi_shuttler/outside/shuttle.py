@@ -279,6 +279,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
         next_processable_gate_nodes = get_all_first_gates_and_update_sequence_non_destructive(graph, dag)
 
     locked_gates: dict[tuple[int, ...], str] = {}
+    graph.locked_gates = locked_gates
     while timestep < max_timesteps:
         print(f"Timestep {timestep}")
         for pz in graph.pzs:
@@ -330,9 +331,9 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                     ):
                         graph.in_process.append(ion2)
 
-        # Remove executing ions from priority queue so they are not moved this step
-        if getattr(graph, 'in_process', None):
-            priority_queue = {ion: pz for ion, pz in priority_queue.items() if ion not in graph.in_process}
+        # # bug? this should not be necessary nor logical: Remove executing ions from priority queue so they are not moved this step
+        # if getattr(graph, 'in_process', None):
+        #     priority_queue = {ion: pz for ion, pz in priority_queue.items() if ion not in graph.in_process}
 
         # shuttle one timestep
         shuttle(graph, priority_queue, timestep, cycle_or_paths, unique_folder)
@@ -353,7 +354,9 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                     if get_idx_from_idc(graph.idc_dict, graph.state[ion]) == get_idx_from_idc(
                         graph.idc_dict, pz.parking_edge
                     ):
-                        pz.gate_execution_finished = False
+                        pz.gate_execution_finished = (
+                            False  # set False, then check below if gate time is finished -> then True
+                        )
                         # NEW: set t0 on first tick and pin ion
                         if pz.active_start_t is None:
                             pz.active_start_t = timestep
@@ -466,9 +469,9 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                             # NEW: set t0 first tick and pin ions
                             if pz.active_start_t is None:
                                 pz.active_start_t = timestep
-                            for ion in (ion1, ion2):
-                                if ion not in graph.in_process:
-                                    graph.in_process.append(ion)
+                            # for ion in (ion1, ion2):
+                            #     if ion not in graph.in_process:
+                            #         graph.in_process.append(ion)
                             pz.time_in_pz_counter += 1
                             gate_time_2q = 3
                             if pz.time_in_pz_counter == gate_time_2q:
