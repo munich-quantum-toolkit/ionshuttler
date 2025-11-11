@@ -235,6 +235,21 @@ def _save_dag_snapshot(dag: 'DAGDependency', out_path: pathlib.Path) -> None:
     print("[DAG SAVE] All snapshot save attempts failed.")
 
 
+def _rehome_after_2q(graph: 'Graph', ion_a: int, ion_b: int, pz_name: str) -> None:
+    """Set the 'home' PZ of the ion that moved to the other ion's home PZ."""
+    home_a = graph.map_to_pz.get(ion_a)
+    home_b = graph.map_to_pz.get(ion_b)
+    # Only rehome if the executing PZ was one of the two homes
+    if pz_name not in (home_a, home_b):
+        return
+    # Rehome the one whose home != pz_name
+    if home_a == pz_name and home_b != pz_name:
+        graph.map_to_pz[ion_b] = pz_name
+    elif home_b == pz_name and home_a != pz_name:
+        graph.map_to_pz[ion_a] = pz_name
+    # else both already have same home -> nothing to do
+
+
 def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, save_dag: bool = False) -> int:
     timestep = 0
     max_timesteps = 1e6
@@ -394,6 +409,8 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                         gate_time_2q = 3
                         if pz.time_in_pz_counter == gate_time_2q:
                             processed_nodes[pz_name] = gate_node
+                            # rehome the moved ion to the executing PZ
+                            _rehome_after_2q(graph, ion1, ion2, pz.name)
                             # remove the locked pz of the processed two-qubit gate
                             if gate in graph.locked_gates and graph.locked_gates[gate] == pz.name:
                                 graph.locked_gates.pop(gate)
@@ -477,6 +494,8 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                             if pz.time_in_pz_counter == gate_time_2q:
                                 processed_ions.insert(0, (ion1, ion2))
                                 ion_processed = True
+                                # rehome the moved ion to the executing PZ
+                                _rehome_after_2q(graph, ion1, ion2, pz.name)
                                 # remove the processing zone from the list
                                 # (it can only process one gate)
                                 pzs.remove(pz)  # noqa: B909
