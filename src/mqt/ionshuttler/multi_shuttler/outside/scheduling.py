@@ -35,15 +35,8 @@ if TYPE_CHECKING:
 
 def preprocess(graph: Graph, priority_queue: dict[int, str]) -> None:
     need_rotate = [False] * len(priority_queue)
-    pinned = set(getattr(graph, 'in_process', []))
     while sum(need_rotate) < len(priority_queue):
         for i, rotate_ion in enumerate(priority_queue):
-            if rotate_ion in pinned:
-                try:
-                    need_rotate[i] = True
-                except Exception:
-                    pass
-                continue
             pz_name = priority_queue[rotate_ion]
             pz_parking_edge = next(pz.parking_edge for pz in graph.pzs if pz.name == pz_name)
             edge_idc = graph.state[rotate_ion]
@@ -250,10 +243,7 @@ def create_move_list(graph: Graph, partitioned_priority_queue: list[int], pz: Pr
     ions_state = get_ions(graph)
     path_length_sequence = {}
     move_list: list[int] = []
-    pinned = set(getattr(graph, 'in_process', []))
     for i, rotate_ion in enumerate(partitioned_priority_queue):
-        if rotate_ion in pinned:
-            continue
         edge_idc = ions_state[rotate_ion]
         # shortest path is also 1 edge if already at pz -> set to 0
         # if edge_idc == pz.parking_edge:
@@ -552,15 +542,16 @@ def find_movable_cycles(
         nonfree_cycles = find_conflict_cycle_idxs(graph, all_cycles)
     else:
         nonfree_cycles = find_nonfree_paths(graph, all_cycles)
-    pinned = set(getattr(graph, 'in_process', []))
-    free_cycle_seq_idxs = []
-    for first in priority_queue.keys():
-        if first not in pinned:
-            free_cycle_seq_idxs.append(first)
-            break
+    # start with first ion in priority queue
+    free_cycle_seq_idxs = [next(iter(priority_queue.keys()))]
 
+    ions_pos_dict = get_ions(graph)
+    prev_ions_of_priority_queue = free_cycle_seq_idxs.copy()
+    # check if ion can move while first ion is moving and so on
     for seq_cyc in list(priority_queue.keys())[1:]:
-        if seq_cyc in pinned or seq_cyc not in all_cycles:
+        # skip ion of priority_queue if it is not in all_cycles
+        # -> was removed before in individual move_list
+        if seq_cyc not in all_cycles:
             continue
         nonfree = False
         for mov_cyc in free_cycle_seq_idxs:
@@ -570,8 +561,17 @@ def find_movable_cycles(
             ) in nonfree_cycles:
                 nonfree = True
                 break
+            for prev_ion in prev_ions_of_priority_queue:
+                # check if a previous ion in priority queue is located on an edge of the current ion's cycle
+                edge_idc_of_prev_ion = ions_pos_dict[prev_ion]
+                if edge_idc_of_prev_ion in all_cycles[seq_cyc] or (edge_idc_of_prev_ion[1], edge_idc_of_prev_ion[0]) in all_cycles[seq_cyc]:
+                    nonfree = True
+                    print('did it')
+                    break
         if nonfree is False:
             free_cycle_seq_idxs.append(seq_cyc)
+        
+        prev_ions_of_priority_queue.append(seq_cyc)
 
     return free_cycle_seq_idxs
 
