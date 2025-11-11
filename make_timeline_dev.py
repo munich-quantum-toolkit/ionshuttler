@@ -45,7 +45,7 @@ PLOT_IMAGES = True       # we only capture frames; no PDFs
 SAVE_IMAGES = False
 USE_DAG = False
 PARTITIONING = True
-ALGORITHM = "full_register_access"#"full_register_access"  # or "transpiled_surface" "qft_no_swaps_nativegates_quantinuum_tket"
+ALGORITHM = "random_connecting"#"full_register_access"  # or "transpiled_surface" "qft_no_swaps_nativegates_quantinuum_tket"
 OUTPUT_JSON = "timeline.json"
 
 # Paths/Cycles mode string for new main signature
@@ -366,7 +366,7 @@ def run_single(
 
     number_of_mz_edges = len(MZ_graph.edges())
     print(f"Number of MZ edges: {number_of_mz_edges}")
-    number_of_chains = math.ceil(1.0 * len(MZ_graph.edges()))#50
+    number_of_chains = 22#math.ceil(1.0 * len(MZ_graph.edges()))#50
 
     # starting ions and state
     create_starting_config(G, number_of_chains, seed=seed)
@@ -443,7 +443,7 @@ def run_single(
 
 def main():
     # Example run
-    m, n, v, h = 3, 3, 1, 1
+    m, n, v, h = 4, 4, 1, 1
     number_of_pz = 2
     seed = 0
 
