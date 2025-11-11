@@ -82,7 +82,7 @@ def pick_pz_for_2_q_gate(graph: Graph, ion0: int, ion1: int) -> str:
             min_distance = distance
             closest_pz = pz_name
     return closest_pz
-
+    
 
 def create_priority_queue(
     graph: Graph,
@@ -566,7 +566,6 @@ def find_movable_cycles(
                 edge_idc_of_prev_ion = ions_pos_dict[prev_ion]
                 if edge_idc_of_prev_ion in all_cycles[seq_cyc] or (edge_idc_of_prev_ion[1], edge_idc_of_prev_ion[0]) in all_cycles[seq_cyc]:
                     nonfree = True
-                    print('did it')
                     break
         if nonfree is False:
             free_cycle_seq_idxs.append(seq_cyc)
