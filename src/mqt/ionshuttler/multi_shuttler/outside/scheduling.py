@@ -265,13 +265,13 @@ def create_move_list(graph: Graph, partitioned_priority_queue: list[int], pz: Pr
             path_length_sequence[rotate_ion] = len(path_to_go)
 
         # if first ion or all paths are 0 (all ions to move are in pz already) or current path is longer than all other paths
-        # or ion in exit (always pushes through now, to simplify movement in pz, but may be not optimal - may move more important ion out of pz)
+        # changed for now: or ion in exit (always pushes through now, to simplify movement in pz, but may be not optimal - may move more important ion out of pz)
         if (
             i == 0
             or sum(path_length_sequence.values()) == 0
             or sum(
                 np.array([path_length_sequence[rotate_ion]] * len(move_list))
-                > np.array([path_length_sequence[ion] for ion in move_list])
+                >= np.array([path_length_sequence[ion] for ion in move_list])
             )
             == len(move_list)
             or graph.get_edge_data(edge_idc[0], edge_idc[1])["edge_type"] == "exit"
@@ -543,6 +543,13 @@ def update_entry_and_exit_cycles(
                     if len(gate) == 2:
                         if gate in graph.locked_gates:
                             break
+                        all_cycles.pop(ion)
+                        break
+            # new: also block move to exit if other ion that is needed for next gate at this pz is not in exit or parking edge yet
+            for next_gate_ion in graph.next_gate_at_pz[pz.name]:
+                if next_gate_ion != ion:
+                    next_gate_ion_edge_idx = get_idx_from_idc(graph.idc_dict, graph.state[next_gate_ion])
+                    if next_gate_ion_edge_idx != get_idx_from_idc(graph.idc_dict, pz.parking_edge) and next_gate_ion_edge_idx not in pz.path_to_pz_idxs:
                         all_cycles.pop(ion)
                         break
 
