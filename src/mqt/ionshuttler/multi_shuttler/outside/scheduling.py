@@ -523,7 +523,8 @@ def update_entry_and_exit_cycles(
                         break
             # new: also block move to exit if other ion that is needed for next gate at this pz is not in exit or parking edge yet
             for next_gate_ion in graph.next_gate_at_pz[pz.name]:
-                if next_gate_ion != ion:
+                # only if that ion is not part of the next 2-qubit gate
+                if next_gate_ion != ion and ion not in gate:
                     next_gate_ion_edge_idx = get_idx_from_idc(graph.idc_dict, graph.state[next_gate_ion])
                     if next_gate_ion_edge_idx != get_idx_from_idc(graph.idc_dict, pz.parking_edge) and next_gate_ion_edge_idx not in pz.path_to_pz_idxs:
                         all_cycles.pop(ion)
