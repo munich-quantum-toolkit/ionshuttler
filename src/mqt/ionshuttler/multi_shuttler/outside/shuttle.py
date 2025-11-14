@@ -36,6 +36,12 @@ if TYPE_CHECKING:
     from .graph import Graph
     from .types import Edge
 
+
+# Gate time configuration (overridable from run scripts)
+GATE_TIME_1Q = 1
+GATE_TIME_2Q = 3
+
+
 def check_duplicates(graph: Graph) -> None:
     edge_idxs_occupied = []
     for edge_idc in graph.state.values():
@@ -379,7 +385,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                             graph.in_process.append(ion)
                         pz.getting_processed.append(gate_node)
                         pz.time_in_pz_counter += 1
-                        gate_time_1q = 1
+                        gate_time_1q = GATE_TIME_1Q
 
                         if pz.time_in_pz_counter == gate_time_1q:
                             processed_nodes[pz_name] = gate_node
@@ -406,7 +412,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                         pz.getting_processed.append(gate_node)
                         pz.time_in_pz_counter += 1
 
-                        gate_time_2q = 3
+                        gate_time_2q = GATE_TIME_2Q
                         if pz.time_in_pz_counter == gate_time_2q:
                             processed_nodes[pz_name] = gate_node
                             # rehome the moved ion to the executing PZ
@@ -454,7 +460,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                             if ion not in graph.in_process:
                                 graph.in_process.append(ion)
                             pz.time_in_pz_counter += 1
-                            gate_time_1q = 1
+                            gate_time_1q = GATE_TIME_1Q
                             if pz.time_in_pz_counter == gate_time_1q:
                                 processed_ions.insert(0, (ion,))
                                 ion_processed = True
@@ -490,7 +496,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                             #     if ion not in graph.in_process:
                             #         graph.in_process.append(ion)
                             pz.time_in_pz_counter += 1
-                            gate_time_2q = 3
+                            gate_time_2q = GATE_TIME_2Q
                             if pz.time_in_pz_counter == gate_time_2q:
                                 processed_ions.insert(0, (ion1, ion2))
                                 ion_processed = True
@@ -527,7 +533,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                             or "OP"
                         )
                         qubits = list(getattr(gate_node, "qindices", [q._index for q in getattr(gate_node, "qargs", [])]))
-                        duration = 3 if len(qubits) >= 2 else 1
+                        duration = GATE_TIME_2Q if len(qubits) >= 2 else GATE_TIME_1Q
                         execs.append({
                             "id": f"t{timestep}_{pz_name}",
                             "type": gtype,
@@ -556,7 +562,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
             if processed_ions:
                 execs = []
                 for i, g in enumerate(processed_ions):
-                    duration = 3 if len(g) >= 2 else 1
+                    duration = GATE_TIME_2Q if len(g) >= 2 else GATE_TIME_1Q
                     # Find pz for this gate's ions (last used above)
                     # We attach the first matching PZ where both ions (or single) are in parking
                     pz_used = None
