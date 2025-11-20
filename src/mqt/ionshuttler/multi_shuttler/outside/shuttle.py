@@ -101,21 +101,22 @@ def shuttle(
     # Iterate over all processing zones
     # create move list for each pz -> needed to get all cycles
     # priority queue later picks the cycles to rotate
-    in_and_into_exit_moves_of_pz = {}
+    all_in_and_into_exit_moves = {}
     for pz in graph.pzs:
         prio_queue = part_prio_queues[pz.name]
         move_list = create_move_list(graph, prio_queue, pz)
         cycles, in_and_into_exit_moves = create_cycles_for_moves(graph, move_list, cycle_or_paths, pz)
+        all_in_and_into_exit_moves[pz.name] = in_and_into_exit_moves
         # add cycles to all_cycles
-        all_cycles = {**all_cycles, **cycles}
+        all_cycles.update(cycles)
 
     out_of_entry_moves = find_out_of_entry_moves(graph, other_next_edges=[])
 
     for pz in graph.pzs:
         prio_queue = part_prio_queues[pz.name]
         out_of_entry_moves_of_pz = out_of_entry_moves.get(pz, None)
-        if pz.name in in_and_into_exit_moves:
-            in_and_into_exit_moves_of_pz = in_and_into_exit_moves[pz.name]
+        if pz.name in all_in_and_into_exit_moves:
+            in_and_into_exit_moves_of_pz = all_in_and_into_exit_moves[pz.name]
         update_entry_and_exit_cycles(
             graph, pz, all_cycles, in_and_into_exit_moves_of_pz, out_of_entry_moves_of_pz, prio_queue
         )
@@ -415,7 +416,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                         gate_time_2q = GATE_TIME_2Q
                         if pz.time_in_pz_counter == gate_time_2q:
                             processed_nodes[pz_name] = gate_node
-                            # rehome the moved ion to the executing PZ
+                            # # rehome the moved ion to the executing PZ - now done when selecting pz for 2-qubit gate in scheduling
                             _rehome_after_2q(graph, ion1, ion2, pz.name)
                             # remove the locked pz of the processed two-qubit gate
                             if gate in graph.locked_gates and graph.locked_gates[gate] == pz.name:
@@ -500,7 +501,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                             if pz.time_in_pz_counter == gate_time_2q:
                                 processed_ions.insert(0, (ion1, ion2))
                                 ion_processed = True
-                                # rehome the moved ion to the executing PZ
+                                # # rehome the moved ion to the executing PZ - now done when selecting pz for 2-qubit gate in scheduling
                                 _rehome_after_2q(graph, ion1, ion2, pz.name)
                                 # remove the processing zone from the list
                                 # (it can only process one gate)
