@@ -33,6 +33,20 @@ if TYPE_CHECKING:
     from .types import Edge, Node
 
 
+# def _rehome_after_2q(graph: 'Graph', ion_a: int, ion_b: int, pz_name: str) -> None:
+#     """Set the 'home' PZ of the ion that moved to the other ion's home PZ."""
+#     home_a = graph.map_to_pz.get(ion_a)
+#     home_b = graph.map_to_pz.get(ion_b)
+#     # Only rehome if the executing PZ was one of the two homes
+#     if pz_name not in (home_a, home_b):
+#         return
+#     # Rehome the one whose home != pz_name
+#     if home_a == pz_name and home_b != pz_name:
+#         graph.map_to_pz[ion_b] = pz_name
+#     elif home_b == pz_name and home_a != pz_name:
+#         graph.map_to_pz[ion_a] = pz_name
+#     # else both already have same home -> nothing to do
+
 def preprocess(graph: Graph, priority_queue: dict[int, str]) -> None:
     need_rotate = [False] * len(priority_queue)
     while sum(need_rotate) < len(priority_queue):
@@ -104,23 +118,28 @@ def create_priority_queue(
     """
     unique_sequence = OrderedDict()
     graph.next_gate_at_pz = {}
+    pzs_available = [pz.name for pz in graph.pzs]
     for seq_elem in graph.sequence:
         # 1-qubit gate
         if len(seq_elem) == 1:
             elem = seq_elem[0]
 
+            pz_gate = graph.map_to_pz[elem]
             # add first gate of pz to next_gate_at_pz (if not already there)
-            if graph.map_to_pz[elem] not in graph.next_gate_at_pz or graph.next_gate_at_pz[graph.map_to_pz[elem]] == ():
-                graph.next_gate_at_pz[graph.map_to_pz[elem]] = seq_elem
+            if pz_gate not in graph.next_gate_at_pz or graph.next_gate_at_pz[pz_gate] == ():
+                graph.next_gate_at_pz[pz_gate] = seq_elem
+                pzs_available.remove(pz_gate)
 
             # add ion to unique_sequence
-            if elem not in unique_sequence:
-                unique_sequence[elem] = graph.map_to_pz[elem]
-                if len(unique_sequence) == max_length:
-                    break
+            if elem not in unique_sequence and len(unique_sequence) <= max_length:
+                unique_sequence[elem] = pz_gate
+                # if len(unique_sequence) == max_length:
+                #     break
 
         # 2-qubit gate
         elif len(seq_elem) == 2:
+            ion1, ion2 = seq_elem
+
             if seq_elem not in graph.locked_gates:
                 # pick processing zone for 2-qubit gate
                 pz_for_2_q_gate = pick_pz_for_2_q_gate(graph, seq_elem[0], seq_elem[1])
@@ -136,21 +155,23 @@ def create_priority_queue(
                 # -> could result in a bug, if the very next iterations
                 # change state back to old pz
                 graph.locked_gates[seq_elem] = pz_for_2_q_gate
+                # rehome the moved ion to the executing PZ
+                #_rehome_after_2q(graph, ion1, ion2, pz_for_2_q_gate)
 
             # add ions to unique_sequence
             for elem in seq_elem:
                 if elem not in unique_sequence:
                     unique_sequence[elem] = pz_for_2_q_gate
-                    if len(unique_sequence) == max_length:
-                        break
+            if len(unique_sequence) == max_length:
+                break
         else:
             msg = "len gate 0 or > 2? - can only process 1 or 2-qubit gates"
             raise ValueError(msg)
 
-        # at the end fill all empty pzs with []
-        for pz in graph.pzs:
-            if pz.name not in graph.next_gate_at_pz:
-                graph.next_gate_at_pz[pz.name] = ()
+    # at the end fill all empty pzs with []
+    for pz in graph.pzs:
+        if pz.name not in graph.next_gate_at_pz:
+            graph.next_gate_at_pz[pz.name] = ()
 
     # add ions in connections to priority queue as below for in move_list
     ions_edges = get_ions(graph)
@@ -402,7 +423,7 @@ def create_cycles_for_moves(
                 *position_pz.path_to_pz_idxs,
                 get_idx_from_idc(graph.idc_dict, position_pz.parking_edge),
             }:
-                in_and_into_exit_moves[position_pz.name] = {rotate_ion: edge_idc}
+                in_and_into_exit_moves[rotate_ion] = edge_idc
                 all_cycles[rotate_ion] = [edge_idc, next_edge]
                 # block moves to pz if parking is full (now blocks if parking not open and ion moving in exit and its next edge is in state_idxs)
                 if parking_open is False and (
@@ -524,15 +545,16 @@ def update_entry_and_exit_cycles(
             # new: also block move to exit if other ion that is needed for next gate at this pz is not in exit or parking edge yet
             for next_gate_ion in graph.next_gate_at_pz[pz.name]:
                 # only if that ion is not part of the next 2-qubit gate
-                if next_gate_ion != ion and ion not in gate:
+                if next_gate_ion != ion and ion not in graph.next_gate_at_pz[pz.name]:
                     next_gate_ion_edge_idx = get_idx_from_idc(graph.idc_dict, graph.state[next_gate_ion])
                     if next_gate_ion_edge_idx != get_idx_from_idc(graph.idc_dict, pz.parking_edge) and next_gate_ion_edge_idx not in pz.path_to_pz_idxs:
-                        all_cycles.pop(ion)
+                        all_cycles[ion] = [edge_idc, edge_idc]
+                        #all_cycles.pop(ion)
                         break
 
     # if gate is being processed and all ions are present in that pz -> stop moving out of pz
     # (now hard clause here, could be double of clauses above, but if no ion is moving to parking, above clause are not executed -> need this one)
-    if not pz.gate_execution_finished and all(ion in ions_in_parking for ion in graph.next_gate_at_pz[pz.name]):
+    if not pz.gate_execution_finished and graph.next_gate_at_pz[pz.name] and all(ion in ions_in_parking for ion in graph.next_gate_at_pz[pz.name]):
         pz.rotate_entry = False
         for ion in ions_in_parking:
             all_cycles[ion] = [pz.parking_edge, pz.parking_edge]
@@ -557,6 +579,9 @@ def find_movable_cycles(
     prev_ions_of_priority_queue = free_cycle_seq_idxs.copy()
     # check if ion can move while first ion is moving and so on
     for seq_cyc in list(priority_queue.keys())[1:]:
+        # manually add the ion here since we skip ions not in all_cycles below (we later check prev_ions_of_priority_queue[:-1])
+        prev_ions_of_priority_queue.append(seq_cyc)
+
         # skip ion of priority_queue if it is not in all_cycles
         # -> was removed before in individual move_list
         if seq_cyc not in all_cycles:
@@ -569,12 +594,12 @@ def find_movable_cycles(
             ) in nonfree_cycles:
                 nonfree = True
                 break
-            for prev_ion in prev_ions_of_priority_queue:
-                # check if a previous ion in priority queue is located on an edge of the current ion's cycle
-                edge_idc_of_prev_ion = ions_pos_dict[prev_ion]
-                if edge_idc_of_prev_ion in all_cycles[seq_cyc] or (edge_idc_of_prev_ion[1], edge_idc_of_prev_ion[0]) in all_cycles[seq_cyc]:
-                    nonfree = True
-                    break
+        for prev_ion in prev_ions_of_priority_queue[:-1]:
+            # check if a previous ion in priority queue is located on an edge of the current ion's cycle
+            edge_idc_of_prev_ion = ions_pos_dict[prev_ion]
+            if edge_idc_of_prev_ion in all_cycles[seq_cyc] or (edge_idc_of_prev_ion[1], edge_idc_of_prev_ion[0]) in all_cycles[seq_cyc]:
+                nonfree = True
+                break
         if nonfree is False:
             free_cycle_seq_idxs.append(seq_cyc)
         
