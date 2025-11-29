@@ -46,9 +46,9 @@ def parse_qasm(filename: str | Path) -> list[tuple[int, ...]]:
     if not isinstance(filename, Path):
         filename = Path(filename)
     with Path.open(filename) as file:
-        for _line in file:
+        for line_ in file:
             # Check if line represents a gate operation
-            line = _line.strip()
+            line = line_.strip()
             if not line.startswith(("OPENQASM", "include", "qreg", "creg", "gate", "barrier", "measure")):
                 qubits = extract_qubits_from_gate(line)
                 if qubits:
