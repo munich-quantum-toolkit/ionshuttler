@@ -47,8 +47,8 @@ def parse_qasm(filename: Path) -> list[tuple[int, ...]]:
     preserving their order."""
     gates_and_qubits = []
     with filename.open(encoding="utf-8") as file:
-        for _line in file:
-            line = _line.strip()
+        for line_ in file:
+            line = line_.strip()
 
             # Check if line represents a gate operation
             if not line.startswith(("OPENQASM", "include", "qreg", "creg", "gate", "barrier", "measure")):
