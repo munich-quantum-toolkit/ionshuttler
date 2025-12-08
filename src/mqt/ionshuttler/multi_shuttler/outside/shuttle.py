@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 # Gate time configuration (overridable from run scripts)
 GATE_TIME_1Q = 1
 GATE_TIME_2Q = 3
-
+REHOME = True
 
 def check_duplicates(graph: Graph) -> None:
     edge_idxs_occupied = []
@@ -417,7 +417,8 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                         if pz.time_in_pz_counter == gate_time_2q:
                             processed_nodes[pz_name] = gate_node
                             # # rehome the moved ion to the executing PZ - now done when selecting pz for 2-qubit gate in scheduling
-                            _rehome_after_2q(graph, ion1, ion2, pz.name)
+                            if REHOME == True:
+                                _rehome_after_2q(graph, ion1, ion2, pz.name)
                             # remove the locked pz of the processed two-qubit gate
                             if gate in graph.locked_gates and graph.locked_gates[gate] == pz.name:
                                 graph.locked_gates.pop(gate)
@@ -502,7 +503,8 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                                 processed_ions.insert(0, (ion1, ion2))
                                 ion_processed = True
                                 # # rehome the moved ion to the executing PZ - now done when selecting pz for 2-qubit gate in scheduling
-                                _rehome_after_2q(graph, ion1, ion2, pz.name)
+                                if REHOME == True:
+                                    _rehome_after_2q(graph, ion1, ion2, pz.name)
                                 # remove the processing zone from the list
                                 # (it can only process one gate)
                                 pzs.remove(pz)  # noqa: B909

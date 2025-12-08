@@ -10,7 +10,7 @@ from .outside.partition import get_partition
 from .outside.processing_zone import ProcessingZone
 from .outside.shuttle import main as run_shuttle_main
 
-
+print('Importing main.py from multi_shuttler...')
 def main(config: dict[str, Any]) -> None:
     # --- Extract Parameters from Config ---
     arch = config.get("arch")
@@ -105,8 +105,6 @@ def main(config: dict[str, Any]) -> None:
     graph.save = save_flag
     graph.arch = str(arch)  # For plotting/logging
 
-    len(mz_graph.edges())
-
     print(f"Number of ions: {num_ions}")
 
     qasm_file_path = qasm_base_dir / algorithm_name / f"{algorithm_name}_{num_ions}.qasm"
@@ -128,6 +126,7 @@ def main(config: dict[str, Any]) -> None:
     partitions: dict[str, list[int]] = {}
     if partitioning:
         part = get_partition(qasm_file_path, len(graph.pzs))
+        #part = [[6, 9, 1, 16, 18], [10, 0, 13, 12, 20], [3, 8, 14, 15, 4, 19, 21], [5, 2, 7, 17, 11]]
         # Ensure partition list length matches num_pzs
         if len(part) != len(graph.pzs):
             print(f"Warning: Partitioning returned {len(part)} parts, but expected {len(graph.pzs)}. Adjusting...")
@@ -210,6 +209,9 @@ def main(config: dict[str, Any]) -> None:
 
     print(f"\nSimulation finished in {final_timesteps} timesteps.")
     print(f"Total CPU time: {cpu_time}")
+    print(sum([True for i, pz in graph.map_to_pz.items() if pz=='pz2']))
+
+    return final_timesteps
 
     # # --- Benchmarking Output ---
     # bench_filename = f"benchmarks/{start_time.strftime('%Y%m%d_%H%M%S')}_{algorithm_name}.txt"
