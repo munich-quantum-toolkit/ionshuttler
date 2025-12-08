@@ -48,6 +48,9 @@ PARTITIONING = True
 ALGORITHM = "random_connecting"#"full_register_access"  # or "transpiled_surface" "qft_no_swaps_nativegates_quantinuum_tket"
 OUTPUT_JSON = "timeline.json"
 
+GATE_TIME_1Q = 1
+GATE_TIME_2Q = 1
+
 # Paths/Cycles mode string for new main signature
 CYCLE_OR_PATHS_STR = "Cycles"  # set to "Cycles"/"Paths" to switch behavior
 
@@ -357,8 +360,13 @@ def run_single(
     G.max_num_parking = 2  # set before assigning pzs
     G.pzs = pzs
 
-    # G.gate_time_1_qubit = 1
-    # G.gate_time_2_qubit = 3
+    # Override gate times in outside shuttle module
+    try:
+        from mqt.ionshuttler.multi_shuttler.outside import shuttle as sh_out
+        sh_out.GATE_TIME_1Q = GATE_TIME_1Q
+        sh_out.GATE_TIME_2Q = GATE_TIME_2Q
+    except Exception:
+        pass
 
     G.plot = PLOT_IMAGES
     G.save = SAVE_IMAGES
@@ -414,8 +422,11 @@ def run_single(
     _COLLECTOR.attach_to_graph(G)
 
     # run the shuttler (new signature: graph, dag, cycle_or_paths_str, use_dag=...)
-    _ = run_shuttle_main(G, dag, CYCLE_OR_PATHS_STR, use_dag=USE_DAG)
-
+    try:
+        _ = run_shuttle_main(G, dag, CYCLE_OR_PATHS_STR, use_dag=USE_DAG)
+    except KeyboardInterrupt:
+        print("\nInterrupted by user. Saving partial timeline...")
+    
     # sides present (booleans for external PZs)
     maxR = (m - 1) * v
     maxC = (n - 1) * h
@@ -443,7 +454,7 @@ def run_single(
 
 def main():
     # Example run
-    m, n, v, h = 4, 4, 1, 1
+    m, n, v, h = 5, 4, 1, 1
     number_of_pz = 2
     seed = 0
 

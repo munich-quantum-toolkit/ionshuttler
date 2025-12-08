@@ -32,6 +32,8 @@ if TYPE_CHECKING:
     from .processing_zone import ProcessingZone
     from .types import Edge, Node
 
+EXIT = True
+ON_CYCLE = True
 
 # def _rehome_after_2q(graph: 'Graph', ion_a: int, ion_b: int, pz_name: str) -> None:
 #     """Set the 'home' PZ of the ion that moved to the other ion's home PZ."""
@@ -542,15 +544,16 @@ def update_entry_and_exit_cycles(
                             break
                         all_cycles.pop(ion)
                         break
-            # new: also block move to exit if other ion that is needed for next gate at this pz is not in exit or parking edge yet
-            for next_gate_ion in graph.next_gate_at_pz[pz.name]:
-                # only if that ion is not part of the next 2-qubit gate
-                if next_gate_ion != ion and ion not in graph.next_gate_at_pz[pz.name]:
-                    next_gate_ion_edge_idx = get_idx_from_idc(graph.idc_dict, graph.state[next_gate_ion])
-                    if next_gate_ion_edge_idx != get_idx_from_idc(graph.idc_dict, pz.parking_edge) and next_gate_ion_edge_idx not in pz.path_to_pz_idxs:
-                        all_cycles[ion] = [edge_idc, edge_idc]
-                        #all_cycles.pop(ion)
-                        break
+            if EXIT == True:
+                # new: also block move to exit if other ion that is needed for next gate at this pz is not in exit or parking edge yet
+                for next_gate_ion in graph.next_gate_at_pz[pz.name]:
+                    # only if that ion is not part of the next 2-qubit gate
+                    if next_gate_ion != ion and ion not in graph.next_gate_at_pz[pz.name]:
+                        next_gate_ion_edge_idx = get_idx_from_idc(graph.idc_dict, graph.state[next_gate_ion])
+                        if next_gate_ion_edge_idx != get_idx_from_idc(graph.idc_dict, pz.parking_edge) and next_gate_ion_edge_idx not in pz.path_to_pz_idxs:
+                            all_cycles[ion] = [edge_idc, edge_idc]
+                            #all_cycles.pop(ion)
+                            break
 
     # if gate is being processed and all ions are present in that pz -> stop moving out of pz
     # (now hard clause here, could be double of clauses above, but if no ion is moving to parking, above clause are not executed -> need this one)
@@ -594,12 +597,13 @@ def find_movable_cycles(
             ) in nonfree_cycles:
                 nonfree = True
                 break
-        for prev_ion in prev_ions_of_priority_queue[:-1]:
-            # check if a previous ion in priority queue is located on an edge of the current ion's cycle
-            edge_idc_of_prev_ion = ions_pos_dict[prev_ion]
-            if edge_idc_of_prev_ion in all_cycles[seq_cyc] or (edge_idc_of_prev_ion[1], edge_idc_of_prev_ion[0]) in all_cycles[seq_cyc]:
-                nonfree = True
-                break
+        if ON_CYCLE == True:
+            for prev_ion in prev_ions_of_priority_queue[:-1]:
+                # check if a previous ion in priority queue is located on an edge of the current ion's cycle
+                edge_idc_of_prev_ion = ions_pos_dict[prev_ion]
+                if edge_idc_of_prev_ion in all_cycles[seq_cyc] or (edge_idc_of_prev_ion[1], edge_idc_of_prev_ion[0]) in all_cycles[seq_cyc]:
+                    nonfree = True
+                    break
         if nonfree is False:
             free_cycle_seq_idxs.append(seq_cyc)
         

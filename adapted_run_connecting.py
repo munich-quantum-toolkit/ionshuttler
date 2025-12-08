@@ -10,7 +10,13 @@ from mqt.ionshuttler.multi_shuttler.main import main as run_main
 
 # ---- Experiment grid ----
 ARCHS: list[list[int]] = [
-    [4, 4, 1, 1],
+     [3, 3, 1, 1],
+    # [3, 3, 3, 3],
+    # [3, 3, 5, 5],
+    # [4, 4, 1, 1],
+    #[4, 4, 3, 3],
+    # [4, 4, 5, 5],
+    # [5, 5, 1, 1],
 ]
 SEEDS = [0]
 NUM_PZS_LIST = [2]  # add 2,3,4 if you want to sweep
@@ -26,7 +32,7 @@ if PLOT:
     matplotlib.use("MacOSX", force=True)
 
 # Algorithms live under: QASM_files/development/<algorithm>/<algorithm>_<num_ions>.qasm
-ALGORITHM = "random_connecting"#"qft_no_swaps_nativegates_quantinuum_tket"
+ALGORITHM = "ghz_nativegates_quantinuum_tket"#"qv_test_transpiled"#"random_connecting"#"qft_no_swaps_nativegates_quantinuum_tket"ghz_nativegates_quantinuum_tket
 
 # Base dir for the “development” QASM set
 QASM_BASE_DIR = pathlib.Path.cwd() / "QASM_files" / "development"
@@ -35,8 +41,11 @@ QASM_BASE_DIR = pathlib.Path.cwd() / "QASM_files" / "development"
 BENCH_DIR = pathlib.Path("benchmarks")
 BENCH_DIR.mkdir(exist_ok=True)
 STAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-BENCH_FILE = BENCH_DIR / f"{STAMP}_{ALGORITHM}.txt"
+BENCH_FILE = BENCH_DIR / f"exit_{STAMP}_{ALGORITHM}.txt"
 
+# Allow overriding gate times for 1q/2q gates in outside.shuttle
+GATE_TIME_1Q = 1
+GATE_TIME_2Q = 3
 
 # ---- Move counter monkey-patch ----
 class _MoveCounter:
@@ -163,15 +172,24 @@ def run_one(config: dict[str, Any]) -> float:
     counter = _MoveCounter()
     patched_plot = _patch_plotting(counter)
     patched_shuttle = _patch_shuttle(counter)
+
+    # Override gate times in outside shuttle module
+    try:
+        from mqt.ionshuttler.multi_shuttler.outside import shuttle as sh_out
+        sh_out.GATE_TIME_1Q = GATE_TIME_1Q
+        sh_out.GATE_TIME_2Q = GATE_TIME_2Q
+    except Exception:
+        pass
+
     t0 = time.perf_counter()
     try:
-        run_main(config)   # prints progress + results internally
+        timesteps = run_main(config)   # prints progress + results internally
     finally:
         t1 = time.perf_counter()
         _unpatch_plotting(patched_plot)
         _unpatch_shuttle(patched_shuttle)
         print(f"Total ion moves counted: {counter.moves}")
-    return t1 - t0
+    return t1 - t0, counter.moves, timesteps
 
 
 def main() -> None:
@@ -179,7 +197,7 @@ def main() -> None:
         for num_pzs in NUM_PZS_LIST:
             for seed in SEEDS:
 
-                num_ions = 22#(m-1)*v*n + (n-1)*h*m  
+                num_ions = int(((m-1)*v*n + (n-1)*h*m))
                 print(f"max num_ions: {(m-1)*v*n + (n-1)*h*m}")
 
                 cfg = {
@@ -207,7 +225,7 @@ def main() -> None:
                 )
                 print("=" * 80)
 
-                wall = run_one(cfg)
+                wall, moves_count, timesteps = run_one(cfg)
 
                 # Append a tiny row to a benchmarks file (runner already prints details)
                 try:
@@ -217,13 +235,18 @@ def main() -> None:
                             f"arch={cfg['arch']} pzs={num_pzs} seed={seed} "
                             f"algo={ALGORITHM} ions={num_ions} "
                             f"dag={USE_DAG} paths={USE_PATHS} "
-                            f"wall_s={wall:.2f}\n"
+                            f"wall_s={wall:.2f} "
+                            f"moves={moves_count} "
+                            f"time steps={timesteps}\n"
                         )
                 except Exception as e:
                     print(f"Warning: could not write {BENCH_FILE}: {e}")
 
     print(f"\nDone. Summary (wall time only) in: {BENCH_FILE}")
-
+    print("ran shuttle scheduling file: ")
+    import os
+    import mqt.ionshuttler.multi_shuttler.outside.scheduling
+    print(os.path.abspath(mqt.ionshuttler.multi_shuttler.outside.scheduling.__file__))
 
 if __name__ == "__main__":
     main()
