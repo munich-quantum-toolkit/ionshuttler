@@ -195,7 +195,7 @@ def get_front_layer_non_destructive(dag: DAGDependency, virtually_processed_node
         predecessors = dag.direct_predecessors(node.node_id)
         if not predecessors or all(pred in virtually_processed_nodes for pred in predecessors):
             front_layer.append(node)
-    
+
     print("Front layer nodes:", [q._index for node in front_layer for q in node.qargs])  # Debugging line
 
     return front_layer
@@ -206,7 +206,7 @@ def map_front_gates_to_pzs(graph: Graph, front_layer_nodes: list[DAGDepNode]) ->
     gates_of_pz_info: dict[str, list[DAGDepNode]] = {pz.name: [] for pz in graph.pzs}
     for seq_node in front_layer_nodes:
         # seq_elem = tuple(seq_node.qindices)
-        seq_elem = tuple([q._index for q in seq_node.qargs])
+        seq_elem = tuple(q._index for q in seq_node.qargs)
 
         if len(seq_elem) == 1:
             elem = seq_elem[0]
@@ -248,9 +248,8 @@ def remove_processed_gates(graph: Graph, dag: DAGDependency, removed_nodes: dict
     # Process each processing zone's first gate
     for _pz_name, first_gate in removed_nodes.items():
         # Remove the gate from the sequence
-        #gate_indices = tuple(first_gate.qindices)
+        # gate_indices = tuple(first_gate.qindices)
         gate_indices = tuple(q._index for q in first_gate.qargs)
-
 
         if gate_indices in graph.sequence:
             graph.sequence.remove(gate_indices)

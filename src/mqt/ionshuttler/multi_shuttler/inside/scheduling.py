@@ -279,12 +279,11 @@ def create_cycles_for_moves(
     def _free_neighbor_of_pz() -> Edge | None:
         pz_e = pz.edge_idc
         pz_nodes = set(pz_e)
-        for e in graph.edges.keys():
+        for e in graph.edges:
             if e == pz_e:
                 continue
-            if len(pz_nodes.intersection(set(e))) > 0:
-                if state_edges_idc.get(e, []) == []:
-                    return e
+            if len(pz_nodes.intersection(set(e))) > 0 and state_edges_idc.get(e, []) == []:
+                return e
         return None
 
     for rotate_chain in move_list:
@@ -318,7 +317,7 @@ def create_cycles_for_moves(
 
 def find_conflict_cycle_idxs(graph: Graph, cycles_dict: dict[int, list[Edge]]) -> list[tuple[int, int]]:
     combinations_of_cycles = list(distinct_combinations(cycles_dict.keys(), 2))
-    state_edges_idc = get_edge_state(graph)
+    get_edge_state(graph)
 
     def get_cycle_nodes(cycle: int) -> set[Node]:
         # if cycle is two edges
@@ -338,11 +337,11 @@ def find_conflict_cycle_idxs(graph: Graph, cycles_dict: dict[int, list[Edge]]) -
                 # else:
                 #     cycle_or_path = cycles_dict[cycle]
 
-                #raise ValueError("cycle is a stop move but not in stop moves?")
-                #if cycle == 1: #cycle in range(26, 27):
-                #cycle_or_path = cycles_dict[cycle]
-                #else:
-                    cycle_or_path = []  # [(cycles_dict[cycle][0][0], cycles_dict[cycle][0][0])]
+                # raise ValueError("cycle is a stop move but not in stop moves?")
+                # if cycle == 1: #cycle in range(26, 27):
+                # cycle_or_path = cycles_dict[cycle]
+                # else:
+                cycle_or_path = []  # [(cycles_dict[cycle][0][0], cycles_dict[cycle][0][0])]
         elif cycles_dict[cycle][0] == cycles_dict[cycle][-1]:
             cycle_or_path = cycles_dict[cycle]
         else:
@@ -364,12 +363,15 @@ def find_conflict_cycle_idxs(graph: Graph, cycles_dict: dict[int, list[Edge]]) -
         nodes2 = get_cycle_nodes(cycle2)
         # if share junction node or ending in same edge
         if (
-            len(nodes1.intersection(nodes2)) > 0 or (
-            get_idx_from_idc(graph.idc_dict, cycles_dict[cycle1][-1])
-            == (get_idx_from_idc(graph.idc_dict, cycles_dict[cycle2][-1])))
-        # and not starting in same edge
+            len(nodes1.intersection(nodes2)) > 0
+            or (
+                get_idx_from_idc(graph.idc_dict, cycles_dict[cycle1][-1])
+                == (get_idx_from_idc(graph.idc_dict, cycles_dict[cycle2][-1]))
+            )
+            # and not starting in same edge
         ) and (
-            get_idx_from_idc(graph.idc_dict, cycles_dict[cycle1][0]) != get_idx_from_idc(graph.idc_dict, cycles_dict[cycle2][0]) 
+            get_idx_from_idc(graph.idc_dict, cycles_dict[cycle1][0])
+            != get_idx_from_idc(graph.idc_dict, cycles_dict[cycle2][0])
         ):
             junction_shared_pairs.append((cycle1, cycle2))
     return junction_shared_pairs

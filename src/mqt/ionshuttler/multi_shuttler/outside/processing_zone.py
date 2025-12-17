@@ -15,6 +15,10 @@ class ProcessingZone:
         self.exit_node = info[0]
         self.entry_node = info[1]
         self.processing_zone = info[2]
+        # Initialize the attribute here
+        self._active_start_t: int | None = None
+
+    # ... existing properties ...
 
     @property
     def parking_node(self) -> Node:
@@ -191,3 +195,12 @@ class ProcessingZone:
     @num_edges.setter
     def num_edges(self, value: int) -> None:
         self._num_edges = value
+
+    # Explicitly define the property and setter
+    @property
+    def active_start_t(self) -> int | None:
+        return self._active_start_t
+
+    @active_start_t.setter
+    def active_start_t(self, value: int | None) -> None:
+        self._active_start_t = value
