@@ -10,8 +10,10 @@ from .outside.partition import get_partition
 from .outside.processing_zone import ProcessingZone
 from .outside.shuttle import main as run_shuttle_main
 
-print('Importing main.py from multi_shuttler...')
-def main(config: dict[str, Any]) -> None:
+print("Importing main.py from multi_shuttler...")
+
+
+def main(config: dict[str, Any]) -> int:
     # --- Extract Parameters from Config ---
     arch = config.get("arch")
     num_pzs_config = config.get("num_pzs", 1)
@@ -20,7 +22,7 @@ def main(config: dict[str, Any]) -> None:
     num_ions = config.get("num_ions")
     use_dag = config.get("use_dag", True)
     use_paths = config.get("use_paths", False)
-    config.get("max_timesteps", 100000)
+    config.get("max_timesteps", 1_000_00)
     plot_flag = config.get("plot", False)
     save_flag = config.get("save", False)
     failing_junctions = config.get("failing_junctions", 0)
@@ -126,7 +128,7 @@ def main(config: dict[str, Any]) -> None:
     partitions: dict[str, list[int]] = {}
     if partitioning:
         part = get_partition(qasm_file_path, len(graph.pzs))
-        #part = [[6, 9, 1, 16, 18], [10, 0, 13, 12, 20], [3, 8, 14, 15, 4, 19, 21], [5, 2, 7, 17, 11]]
+        # part = [[6, 9, 1, 16, 18], [10, 0, 13, 12, 20], [3, 8, 14, 15, 4, 19, 21], [5, 2, 7, 17, 11]]
         # Ensure partition list length matches num_pzs
         if len(part) != len(graph.pzs):
             print(f"Warning: Partitioning returned {len(part)} parts, but expected {len(graph.pzs)}. Adjusting...")
@@ -209,7 +211,7 @@ def main(config: dict[str, Any]) -> None:
 
     print(f"\nSimulation finished in {final_timesteps} timesteps.")
     print(f"Total CPU time: {cpu_time}")
-    print(sum([True for i, pz in graph.map_to_pz.items() if pz=='pz2']))
+    print(sum(True for i, pz in graph.map_to_pz.items() if pz == "pz2"))
 
     return final_timesteps
 
