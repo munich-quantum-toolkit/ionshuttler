@@ -164,8 +164,9 @@ def shortest_path_to_node(
                 nx_g,
                 src,
                 tar,
-                lambda _, __, edge_attr_dict: (edge_attr_dict["edge_type"] in {"first_entry_connection", "exit"}) * 1e8
-                + 1,
+                lambda _, __, edge_attr_dict: (
+                    (edge_attr_dict["edge_type"] in {"first_entry_connection", "exit"}) * 1e8 + 1
+                ),
             )
         return nx.shortest_path(
             nx_g,
