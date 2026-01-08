@@ -1,6 +1,7 @@
 MIT License
 
-Copyright (c) 2023 Daniel Schönberger
+Copyright (c) 2023 - 2026 Chair for Design Automation, TUM
+Copyright (c) 2023 - 2026 Daniel Schönberger
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
