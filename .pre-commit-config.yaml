@@ -138,3 +138,4 @@ repos:
           - nox
           - more_itertools
           - types-networkx
+        priority: 3
