@@ -27,6 +27,8 @@ def is_qasm_file(file_path: Path) -> bool:
         first_line = ""
         for _f in range(7):
             first_line = file.readline()
+            if "OPENQASM" in first_line:
+                break
         # Check if the first line contains the OPENQASM identifier
         return "OPENQASM" in first_line
 
