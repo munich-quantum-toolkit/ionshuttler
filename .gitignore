@@ -28,3 +28,12 @@ __pycache__/
 
 # VS Code
 .vscode/
+
+# development QASM files
+QASM_files/development
+benchmarks/
+runs/
+
+run.py
+adapted_run_benchmarks.py
+timeline.json
