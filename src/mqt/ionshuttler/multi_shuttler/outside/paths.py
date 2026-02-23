@@ -11,7 +11,7 @@ from .graph_utils import get_idc_from_idx, get_idx_from_idc
 
 if TYPE_CHECKING:
     from .graph import Graph
-    from .types import Edge, Node
+    from .ion_types import Edge, Node
 
 
 # BFS with direction based on a starting edge and a next edge

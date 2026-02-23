@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from qiskit.dagcircuit import DAGDepNode
 
-    from .types import Edge, Node
+    from .ion_types import Edge, Node
 
 
 class ProcessingZone:

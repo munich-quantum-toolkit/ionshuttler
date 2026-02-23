@@ -10,8 +10,6 @@ from .outside.partition import get_partition
 from .outside.processing_zone import ProcessingZone
 from .outside.shuttle import main as run_shuttle_main
 
-print("Importing main.py from multi_shuttler...")
-
 
 def main(config: dict[str, Any]) -> int:
     # --- Extract Parameters from Config ---
@@ -22,7 +20,8 @@ def main(config: dict[str, Any]) -> int:
     num_ions = config.get("num_ions")
     use_dag = config.get("use_dag", True)
     use_paths = config.get("use_paths", False)
-    config.get("max_timesteps", 1_000_00)
+    pz_assignment_policy = config.get("pz_assignment_policy", "legacy")
+    config.get("max_timesteps", 1_000_000)
     plot_flag = config.get("plot", False)
     save_flag = config.get("save", False)
     failing_junctions = config.get("failing_junctions", 0)
@@ -106,6 +105,8 @@ def main(config: dict[str, Any]) -> int:
     graph.plot = plot_flag
     graph.save = save_flag
     graph.arch = str(arch)  # For plotting/logging
+    graph.pz_assignment_policy = pz_assignment_policy
+    print(f"PZ assignment policy: {graph.pz_assignment_policy}")
 
     print(f"Number of ions: {num_ions}")
 
@@ -145,10 +146,12 @@ def main(config: dict[str, Any]) -> int:
         partitions = {pz.name: part[i] for i, pz in enumerate(graph.pzs)}
         print(f"Partitions: {partitions}")
     else:
-        # Fallback: Assign ions to closest PZ (example logic)
-        print("Disabling Partitioning has to be implemented.")
+        msg = "Disabling Partitioning has to be implemented. For now, only example for random_connecting 22 ions and 2 PZs."
+        raise NotImplementedError(msg)
         # TODO
         # ... (implement closest PZ assignment logic) ...
+        # for now example for random_connecting 22 ions and 2 PZs:
+        # partitions = {"pz1": [0, 1, 3, 6, 10, 12, 13, 15, 16, 17, 20], "pz2": [2, 4, 5, 7, 8, 9, 11, 14, 18, 19, 21]}
 
     # Create reverse map and validate partition
     map_to_pz: dict[int, str] = {}

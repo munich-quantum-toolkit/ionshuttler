@@ -10,8 +10,8 @@ from .graph import Graph
 from .graph_utils import convert_nodes_to_float, create_idc_dictionary, get_idx_from_idc
 
 if TYPE_CHECKING:
+    from .ion_types import Edge, Node
     from .processing_zone import ProcessingZone
-    from .types import Edge, Node
 
 
 class GraphCreator:
@@ -49,6 +49,7 @@ class GraphCreator:
         # if self.pz == 'mid':
         #     self._remove_mid_part(networkx_graph)
         self._remove_junctions(networkx_graph, self.failing_junctions)
+        print(f"{self.failing_junctions} failing junctions removed.")
         nx.set_edge_attributes(networkx_graph, values=dict.fromkeys(networkx_graph.edges(), "trap"), name="edge_type")
         nx.set_edge_attributes(networkx_graph, values=dict.fromkeys(networkx_graph.edges(), 1), name="weight")
 
@@ -91,23 +92,36 @@ class GraphCreator:
                         networkx_graph.remove_node(node)
 
     def _set_junction_nodes(self, networkx_graph: Graph) -> None:
-        for i in range(0, self.m_extended, self.ion_chain_size_vertical):
-            for j in range(0, self.n_extended, self.ion_chain_size_horizontal):
+        # how many junction positions exist in each dimension
+        num_i = ((self.m_extended - 1) // self.ion_chain_size_vertical) + 1
+        num_j = ((self.n_extended - 1) // self.ion_chain_size_horizontal) + 1
+
+        for ii, i in enumerate(range(0, self.m_extended, self.ion_chain_size_vertical)):
+            for jj, j in enumerate(range(0, self.n_extended, self.ion_chain_size_horizontal)):
                 float_node = (float(i), float(j))
-                networkx_graph.add_node(float_node, node_type="junction_node", color="g", node_size=200)
+
+                is_outer_ring = (ii == 0) or (ii == num_i - 1) or (jj == 0) or (jj == num_j - 1)
+
+                networkx_graph.add_node(
+                    float_node,
+                    node_type="junction_node",
+                    is_outer_ring=is_outer_ring,
+                    color="g",
+                    node_size=200,
+                )
                 networkx_graph.junction_nodes.append(float_node)
 
     def _remove_junctions(self, networkx_graph: Graph, num_nodes_to_remove: int) -> None:
-        """
-        Removes a specified number of nodes from the graph, excluding nodes of type 'exit_node' or 'entry_node'.
-        """
-        #  Filter out nodes that are of type 'exit_node' or 'entry_node'
         nodes_to_remove: list[Node] = [
             node
             for node, data in networkx_graph.nodes(data=True)
             if data.get("node_type")
             not in {"exit_node", "entry_node", "exit_connection_node", "entry_connection_node", "trap_node"}
+            and not data.get("is_outer_ring", False)
         ]
+        if len(nodes_to_remove) < num_nodes_to_remove:
+            msg = f"Not enough junction nodes to remove. Requested: {num_nodes_to_remove}, Available: {len(nodes_to_remove)}"
+            raise ValueError(msg)
 
         # Shuffle the list of nodes to remove
         random.seed(0)
@@ -132,9 +146,11 @@ class PZCreator(GraphCreator):
         ion_chain_size_horizontal: int,
         failing_junctions: int,
         pzs: list[ProcessingZone],
+        mid_side_pz_connections: bool = False,
     ):
         super().__init__(m, n, ion_chain_size_vertical, ion_chain_size_horizontal, failing_junctions, pzs)
         self.pzs = pzs
+        self.mid_side_pz_connections = mid_side_pz_connections
 
         for pz in pzs:
             self._set_processing_zone(self.networkx_graph, pz)
@@ -178,8 +194,36 @@ class PZCreator(GraphCreator):
 
         return None
 
+    def _get_mid_side_nodes(self, border: str) -> tuple[Node, Node]:
+        # Returns (exit_node, entry_node) on the given border.
+        # even count: two middle indices (e.g. 4 -> 1,2)
+        # odd count: middle + right/down neighbor if possible (e.g. 3 -> 1,2 ; 5 -> 2,3)
+        if border in {"top", "bottom"}:
+            count = self.n
+            fixed_x = 0.0 if border == "top" else float(self.m_extended - 1)
+            step = self.ion_chain_size_horizontal
+            if count % 2 == 0:
+                i1, i2 = count // 2 - 1, count // 2
+            else:
+                mid = count // 2
+                i1, i2 = mid, min(mid + 1, count - 1)
+            return (fixed_x, float(i1 * step)), (fixed_x, float(i2 * step))
+
+        count = self.m
+        fixed_y = 0.0 if border == "left" else float(self.n_extended - 1)
+        step = self.ion_chain_size_vertical
+        if count % 2 == 0:
+            i1, i2 = count // 2 - 1, count // 2
+        else:
+            mid = count // 2
+            i1, i2 = mid, min(mid + 1, count - 1)
+        return (float(i1 * step), fixed_y), (float(i2 * step), fixed_y)
+
     def _set_processing_zone(self, networkx_graph: Graph, pz: ProcessingZone) -> Graph:
         border = self.find_shared_border(pz.exit_node, pz.entry_node)
+
+        if self.mid_side_pz_connections and border is not None:
+            pz.exit_node, pz.entry_node = self._get_mid_side_nodes(border)
 
         # Define the parking edge (edge between processing zone and parking node)
         if border == "top":
@@ -193,7 +237,9 @@ class PZCreator(GraphCreator):
         pz.parking_edge = (pz.processing_zone, pz.parking_node)
 
         # Number of edges between exit/entry and processing zone (size of one-way connection)
-        if border in {"top", "bottom"}:
+        if self.mid_side_pz_connections:
+            pz.num_edges = 1
+        elif border in {"top", "bottom"}:
             pz.num_edges = math.ceil(
                 math.ceil(abs(pz.entry_node[1] - pz.exit_node[1]) / self.ion_chain_size_horizontal) / 2
             )  # Number of edges between exit/entry and processing zone

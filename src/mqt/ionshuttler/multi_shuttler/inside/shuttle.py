@@ -19,7 +19,7 @@ from .scheduling import (
 
 if TYPE_CHECKING:
     from .graph import Graph
-    from .types import Edge
+    from .ion_types import Edge
 
 
 import contextlib

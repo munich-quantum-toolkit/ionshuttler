@@ -10,7 +10,7 @@ from .graph_utils import get_idx_from_idc
 
 if TYPE_CHECKING:
     from .graph import Graph
-    from .types import Edge, Node
+    from .ion_types import Edge, Node
 
 
 def create_starting_config(graph: Graph, n_of_chains: int, seed: int | dict[int, Any] | None = None) -> int:

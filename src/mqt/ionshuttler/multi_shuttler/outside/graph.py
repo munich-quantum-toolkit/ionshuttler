@@ -7,14 +7,23 @@ import networkx as nx
 from .graph_utils import create_dist_dict, create_idc_dictionary, get_idx_from_idc
 
 if TYPE_CHECKING:
+    from .ion_types import Edge, Node
     from .processing_zone import ProcessingZone
-    from .types import Edge, Node
 
 
 class Graph(nx.Graph):  # type: ignore [type-arg]
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.executed_gates_next: list[dict[str, object]] = []
+        self._pz_assignment_policy: str = "legacy"  # default
+
+    @property
+    def pz_assignment_policy(self) -> str:
+        return self._pz_assignment_policy
+
+    @pz_assignment_policy.setter
+    def pz_assignment_policy(self, value: str) -> None:
+        self._pz_assignment_policy = value
 
     @property
     def mz_graph(self) -> Graph:

@@ -7,8 +7,8 @@ import networkx as nx
 from .graph_utils import create_idc_dictionary
 
 if TYPE_CHECKING:
+    from .ion_types import Edge, Node
     from .processing_zone import ProcessingZone
-    from .types import Edge, Node
 
 
 class Graph(nx.Graph):  # type: ignore [type-arg]
