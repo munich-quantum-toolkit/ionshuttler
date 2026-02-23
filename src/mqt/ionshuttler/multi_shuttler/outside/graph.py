@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import networkx as nx
 
@@ -10,8 +10,11 @@ if TYPE_CHECKING:
     from .processing_zone import ProcessingZone
     from .types import Edge, Node
 
-
-class Graph(nx.Graph):  # type: ignore [type-arg]
+class Graph(nx.Graph):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.executed_gates_next: list[dict[str, object]] = []
+    
     @property
     def mz_graph(self) -> Graph:
         return self._mz_graph
