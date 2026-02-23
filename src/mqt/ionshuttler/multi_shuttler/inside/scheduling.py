@@ -22,8 +22,8 @@ from .paths import create_path_via_bfs_directional, find_nonfree_paths
 
 if TYPE_CHECKING:
     from .graph import Graph
+    from .ion_types import Edge, Node
     from .processing_zone import ProcessingZone
-    from .types import Edge, Node
 
 
 def preprocess(graph: Graph, priority_queue: dict[int, str]) -> None:
@@ -42,7 +42,8 @@ def preprocess(graph: Graph, priority_queue: dict[int, str]) -> None:
             # if next_edge is free, not a stop move (same edge) and not at junction node
             # move the ion to the next edge
             if (
-                have_common_junction_node(graph, edge_idc, next_edge) is False
+                rotate_chain not in graph.in_process
+                and have_common_junction_node(graph, edge_idc, next_edge) is False
                 and state_edges_idc[next_edge] == []
                 and edge_idc != next_edge
             ):

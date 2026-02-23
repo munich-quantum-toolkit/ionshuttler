@@ -11,7 +11,7 @@ from .graph_utils import get_idx_from_idc
 
 if TYPE_CHECKING:
     from .graph import Graph
-    from .types import Edge
+    from .ion_types import Edge
 
 
 # Plotting function

@@ -37,8 +37,8 @@ if TYPE_CHECKING:
     from qiskit.dagcircuit import DAGDependency
 
     from .graph import Graph
+    from .ion_types import Edge
     from .processing_zone import ProcessingZone
-    from .types import Edge
 
 # Gate time configuration (overridable from run scripts)
 GATE_TIME_1Q = 1

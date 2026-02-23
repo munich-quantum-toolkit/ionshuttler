@@ -11,7 +11,7 @@ from qiskit.transpiler.passes import RemoveBarriers, RemoveFinalMeasurements
 
 from .cycles import get_state_idxs
 from .graph_utils import create_dist_dict, update_distance_map
-from .scheduling import pick_pz_for_2_q_gate
+from .scheduling import assign_gate_to_pz
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -157,6 +157,7 @@ def create_updated_sequence_destructive(
         graph.dist_dict = create_dist_dict(graph)
         state = get_state_idxs(graph)
         dist_map = update_distance_map(graph, state)
+        print("Initial distance map:", dist_map)  # Debugging line
 
         # first_flag = True
         while True:
@@ -206,31 +207,9 @@ def map_front_gates_to_pzs(graph: Graph, front_layer_nodes: list[DAGDepNode]) ->
     """Create list of all front layer gates at each processing zone."""
     gates_of_pz_info: dict[str, list[DAGDepNode]] = {pz.name: [] for pz in graph.pzs}
     for seq_node in front_layer_nodes:
-        # seq_elem = tuple(seq_node.qindices)
         seq_elem = tuple(q._index for q in seq_node.qargs)
-
-        if len(seq_elem) == 1:
-            elem = seq_elem[0]
-            pz = graph.map_to_pz[elem]
-            # if gates_of_pz_info[pz] == []:
-
-        elif len(seq_elem) == 2:
-            # only pick processing zone for 2-qubit gate if not already locked -> then lock it
-            # TODO 26.03. (2): seq_elem: [11, 10], in locked_gates: (11, 10) -> checked diese if clause nicht
-            if seq_elem not in graph.locked_gates:
-                pz = pick_pz_for_2_q_gate(graph, seq_elem[0], seq_elem[1])
-                graph.locked_gates[seq_elem] = pz
-            else:
-                pz = graph.locked_gates[seq_elem]
-            # if gates_of_pz_info[pz] == []:
-            # gates_of_pz_info[pz].append(seq_elem[0])
-            # gates_of_pz_info[pz].append(seq_elem[1])
-        else:
-            msg = f"wrong gate type in sequence: {seq_node.name}"
-            raise ValueError(msg)
-
+        pz = assign_gate_to_pz(graph, seq_elem)
         gates_of_pz_info[pz].append(seq_node)
-    # print('\ngates of pz info: ', {pz: [node.qindices for node in nodes] for pz, nodes in gates_of_pz_info.items()}, '\n')
     return gates_of_pz_info
 
 

@@ -7,11 +7,11 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 
-from .graph_utils import get_idc_from_idx, get_idx_from_idc
+from .graph_utils import get_idc_from_idx
 
 if TYPE_CHECKING:
     from .graph import Graph
-    from .types import Edge
+    from .ion_types import Edge
 
 
 # Plotting function
@@ -28,15 +28,11 @@ def plot_state(
     if filename is None:
         filename = Path("graph.pdf")
 
-    plot_paper = False
-    idc_dict = graph.idc_dict
+    plot_paper = True
+
     pos = {(x, y): (y, -x) for i, (x, y) in enumerate(list(graph.nodes()))}
     if plot_ions is True:
-        edge_labels = nx.get_edge_attributes(graph, "ions")
-    else:
-        edge_labels = {}
-        for idc in graph.edges():
-            edge_labels[idc] = f"$e_{{{get_idx_from_idc(idc_dict, idc)}}}$"
+        nx.get_edge_attributes(graph, "ions")
 
     for edge_idc in graph.edges():
         # color all edges black
@@ -81,14 +77,14 @@ def plot_state(
                 if nx.get_node_attributes(graph, "node_type")[node] != "junction_node":
                     graph.add_node(node, color="r")
 
-    if plot_pzs is True:
+    if plot_pzs:
         for pz in graph.pzs:
             graph.add_edge(pz.parking_edge[0], pz.parking_edge[1], color="r")
 
     edge_color = nx.get_edge_attributes(graph, "color").values()
     node_color = list(nx.get_node_attributes(graph, "color").values())
     if plot_paper is False:
-        edge_labels = nx.get_edge_attributes(graph, "ions")
+        nx.get_edge_attributes(graph, "ions")
     node_size = list(nx.get_node_attributes(graph, "node_size").values())
 
     plt.figure(figsize=(20, 9))  # figsize=(max(pos.keys())[1] * 2, max(pos.keys())[0] * 2))
@@ -106,8 +102,11 @@ def plot_state(
         font_size=8,
         font_color="white",
     )
-    if plot_paper is False:
-        nx.draw_networkx_edge_labels(graph, pos, edge_labels)
+    # if plot_paper:
+    # edge_labels = {}
+    # for idc in graph.edges():
+    #     edge_labels[idc] = f"$e_{{{get_idx_from_idc(idc_dict, idc)}}}$"
+    # nx.draw_networkx_edge_labels(graph, pos, edge_labels, font_size=18)
 
     # # reset edge labels for following iterations?
     # for edge in graph.edges:
