@@ -6,7 +6,7 @@ from mqt.ionshuttler.multi_shuttler.outside import scheduling
 from mqt.ionshuttler.multi_shuttler.outside.graph import Graph
 
 if TYPE_CHECKING:
-    from mqt.ionshuttler.multi_shuttler.outside.ion_types import Edge
+    from mqt.ionshuttler.multi_shuttler.outside.types import Edge
 
 
 def test_cost_function_hybrid_first_example() -> None:
