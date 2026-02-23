@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from .types import Edge, Node
 
 
-class Graph(nx.Graph):
+class Graph(nx.Graph): # type: ignore [type-arg]
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.executed_gates_next: list[dict[str, object]] = []
