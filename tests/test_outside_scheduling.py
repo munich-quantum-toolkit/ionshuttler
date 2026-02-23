@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 
 def test_cost_function_hybrid_first_example() -> None:
-    g: Graph = Graph()  # type: ignore[no-untyped-call]
+    g: Graph = Graph()
     g.add_node((0.0, 0.0), node_type="junction_node")
     g.add_node((0.0, 1.0), node_type="junction_node")
     g.add_node((1.0, 1.0), node_type="junction_node")
@@ -33,7 +33,7 @@ def test_cost_function_hybrid_first_example() -> None:
 
 
 def test_cost_function_hybrid_prefers_cycle_when_cheaper() -> None:
-    g: Graph = Graph()  # type: ignore[no-untyped-call]
+    g: Graph = Graph()
     g.add_node((0.0, 0.0), node_type="junction_node")
     g.add_node((0.0, 1.0), node_type="trap_node")
     g.add_node((1.0, 1.0), node_type="trap_node")
@@ -50,7 +50,7 @@ def test_cost_function_hybrid_prefers_cycle_when_cheaper() -> None:
 
 
 def test_cost_function_hybrid_prefers_path_when_cheaper() -> None:
-    g: Graph = Graph()  # type: ignore[no-untyped-call]
+    g: Graph = Graph()
     g.add_node((0.0, 0.0), node_type="junction_node")
     g.add_node((0.0, 1.0), node_type="trap_node")
     g.add_node((1.0, 1.0), node_type="trap_node")
@@ -67,7 +67,7 @@ def test_cost_function_hybrid_prefers_path_when_cheaper() -> None:
 
 
 def test_cost_function_hybrid_returns_0_on_tie() -> None:
-    g: Graph = Graph()  # type: ignore[no-untyped-call]
+    g: Graph = Graph()
     g.add_node((0.0, 0.0), node_type="junction_node")
     g.add_node((0.0, 1.0), node_type="trap_node")
 
