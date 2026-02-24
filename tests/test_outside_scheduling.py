@@ -54,7 +54,6 @@ def test_cost_function_hybrid_prefers_path_when_cheaper() -> None:
     g.add_node((0.0, 0.0), node_type="junction_node")
     g.add_node((0.0, 1.0), node_type="trap_node")
     g.add_node((1.0, 1.0), node_type="trap_node")
-    g.add_node((1.0, 2.0), node_type="trap_node")
 
     cycle: list[Edge] = [((0.0, 0.0), (0.0, 1.0)), ((0.0, 1.0), (1.0, 1.0))]
     path: list[Edge] = [((0.0, 1.0), (1.0, 1.0))]
