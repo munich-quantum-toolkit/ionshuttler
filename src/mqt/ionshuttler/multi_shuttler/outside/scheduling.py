@@ -28,6 +28,8 @@ from .graph_utils import get_idc_from_idx, get_idx_from_idc
 from .paths import create_path_via_bfs_directional, find_nonfree_paths
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from .graph import Graph
     from .processing_zone import ProcessingZone
     from .types import Edge, Node
@@ -432,6 +434,28 @@ def create_cycles_for_moves(
                 all_cycles[rotate_ion] = create_path_via_bfs_directional(graph, edge_idc, next_edge)
 
     return all_cycles, in_and_into_exit_moves
+
+
+def cost_function_hybrid(
+    graph: Graph,
+    parameters: Sequence[float],
+    cycle: Sequence[Edge],
+    path: Sequence[Edge],
+) -> int:
+    """Cost function for hybrid approach. Decide based on cycle length and path length whether to use cycle or path.
+    parameters: alpha (float): weight of Move(π), Move(π) denotes the number of ions displaced
+                beta (float): weight of Junc(π), Junc(π) the number of distinct junctions involved
+    """
+
+    alpha, beta = parameters
+
+    def junc_count(edges: Sequence[Edge]) -> int:
+        return len({node for edge in edges for node in edge if graph.nodes[node].get("node_type") == "junction_node"})
+
+    cycle_cost = alpha * len(cycle) + beta * junc_count(cycle)
+    path_cost = alpha * len(path) + beta * junc_count(path)
+
+    return 0 if cycle_cost <= path_cost else 1
 
 
 def update_entry_and_exit_cycles(
