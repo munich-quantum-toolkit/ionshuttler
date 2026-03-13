@@ -206,12 +206,12 @@ convention = "google"
 
 [tool.check-sdist]
 git-only = [
-    ".gitignore",
-    ".license-tools-config.json",
-    ".readthedocs.yaml",
     "docs/*",
-    "sitecustomize.py",
     "tests/*",
+    ".gitignore",
+    ".readthedocs.yaml",
+    "AGENTS.md",
+    "sitecustomize.py",
     "uv.lock",
 ]
 
