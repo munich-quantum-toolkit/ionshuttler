@@ -198,8 +198,6 @@ def get_front_layer_non_destructive(dag: DAGDependency, virtually_processed_node
         if not predecessors or all(pred in virtually_processed_nodes for pred in predecessors):
             front_layer.append(node)
 
-    print("Front layer nodes:", [q._index for node in front_layer for q in node.qargs])  # Debugging line
-
     return front_layer
 
 
@@ -234,13 +232,11 @@ def remove_processed_gates(graph: Graph, dag: DAGDependency, removed_nodes: dict
         if gate_indices in graph.sequence:
             graph.sequence.remove(gate_indices)
             removed_gates.append(first_gate)
-            # print(f"Removed gate {gate_indices} from sequence for PZ {pz_name}")
 
         # Remove the gate from the DAG
         node_id = first_gate.node_id
         if dag.get_node(node_id):
             dag._multi_graph.remove_node(node_id)
-            # print(f"Removed node {node_id} from DAG for PZ {pz_name}")
 
 
 def get_all_first_gates_and_update_sequence_non_destructive(

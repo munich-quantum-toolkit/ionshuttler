@@ -54,14 +54,11 @@ def construct_interaction_graph(circuit: QuantumCircuit) -> nx.Graph[int]:
 #     #assert n != len(graph.nodes), "Number of partitions must
 # be less than the number of nodes in the graph TODO: handle this case?"
 #     while len(subgraphs) < n:
-#         print('new iteration')
 #         new_subgraphs = []
 #         for subgraph in subgraphs:
 #             #print(f"Start subgraph nodes: {list(subgraph.nodes)}",
 # len(subgraph)+len(new_subgraphs),
 # [list(new_subg.nodes) for new_subg in new_subgraphs])
-#             print('len(subgraph):', len(subgraph))
-#             print('len(new_subgraphs):', len(new_subgraphs),'\n')
 #             if len(subgraphs) + len(new_subgraphs) - 1 < n:
 #                 # handle cases where the subgraph has less
 # than 2 nodes (happens if n = # of nodes)

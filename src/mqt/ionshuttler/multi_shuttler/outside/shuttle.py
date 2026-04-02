@@ -17,10 +17,12 @@ except Exception:  # pragma: no cover
     plt = None  # type: ignore[assignment]
 
 from .compilation import get_all_first_gates_and_update_sequence_non_destructive, remove_processed_gates
-from .cycles import get_ions
+from .cycles import get_ions, precompute_all_paths
+from .graph import RunStats
 from .graph_utils import get_idc_from_idx, get_idx_from_idc
 from .plotting import plot_state
 from .scheduling import (
+    calculate_next_edges_for_moves,
     create_cycles_for_moves,
     create_gate_info_list,
     create_move_list,
@@ -44,6 +46,25 @@ if TYPE_CHECKING:
 GATE_TIME_1Q = 1
 GATE_TIME_2Q = 3
 REHOME = True
+
+
+# @dataclass
+# class RunStats:
+#     pre_selected_cycles_total: int = 0
+#     pre_selected_paths_total: int = 0
+#     selected_cycles_total: int = 0
+#     selected_paths_total: int = 0
+#     per_timestep: list[dict[str, int]] = field(default_factory=list)
+
+#     def record_selection_stats(self, timestep: int, cycles: int, paths: int) -> None:
+#         self.pre_selected_cycles_total += cycles
+#         self.pre_selected_paths_total += paths
+#         self.per_timestep.append({"timestep": timestep, "cycles": cycles, "paths": paths})
+
+#     def record_move_stats(self, timestep: int, cycles: int, paths: int) -> None:
+#         self.selected_cycles_total += cycles
+#         self.selected_paths_total += paths
+#         self.per_timestep.append({"timestep": timestep, "cycles": cycles, "paths": paths})
 
 
 def check_duplicates(graph: Graph) -> None:
@@ -106,14 +127,21 @@ def shuttle(
     # create move list for each pz -> needed to get all cycles
     # priority queue later picks the cycles to rotate
     all_in_and_into_exit_moves = {}
+    all_move_lists = {}
+    next_edges_for_moves: dict[int, tuple[Edge, Edge]] = {}
     for pz in graph.pzs:
         prio_queue = part_prio_queues[pz.name]
         move_list = create_move_list(graph, prio_queue, pz)
-        cycles, in_and_into_exit_moves = create_cycles_for_moves(graph, move_list, cycle_or_paths, pz)
+        all_move_lists[pz.name] = move_list
+        next_edges_for_moves.update(calculate_next_edges_for_moves(graph, move_list, pz))
+
+    for pz in graph.pzs:
+        cycles, in_and_into_exit_moves = create_cycles_for_moves(
+            graph, all_move_lists[pz.name], cycle_or_paths, next_edges_for_moves, pz
+        )
         all_in_and_into_exit_moves[pz.name] = in_and_into_exit_moves
         # add cycles to all_cycles
         all_cycles.update(cycles)
-
     out_of_entry_moves = find_out_of_entry_moves(graph, other_next_edges=[])
 
     for pz in graph.pzs:
@@ -125,8 +153,59 @@ def shuttle(
             graph, pz, all_cycles, in_and_into_exit_moves_of_pz, out_of_entry_moves_of_pz, prio_queue
         )
 
+    # track stats of pre-selected moves for scheduling, to choose the correct comparing logic of movable "cycles"
+    pre_selected_cycles = 0
+    pre_selected_paths = 0
+    for ion in all_cycles:
+        move = all_cycles.get(ion)
+        if move is None:
+            continue
+
+        # ignore stops and direct one-step moves
+        if len(move) <= 2:
+            continue
+
+        # count only real reroutes: cycle vs path
+        if move[0] == move[-1]:
+            pre_selected_cycles += 1
+        else:
+            pre_selected_paths += 1
+
+    graph.pre_last_selected_move_stats = {
+        "timestep": timestep,
+        "cycles": pre_selected_cycles,
+        "paths": pre_selected_paths,
+    }
+
     # now general priority queue picks cycles to rotate
     chains_to_rotate = find_movable_cycles(graph, all_cycles, priority_queue, cycle_or_paths)
+
+    moved_cycles = 0
+    moved_paths = 0
+    for ion in chains_to_rotate:
+        move = all_cycles.get(ion)
+        if move is None:
+            continue
+
+        # ignore stops and direct one-step moves
+        if len(move) <= 2:
+            continue
+
+        # count only real reroutes: cycle vs path
+        if move[0] == move[-1]:
+            moved_cycles += 1
+        else:
+            moved_paths += 1
+
+    graph.last_selected_move_stats = {
+        "timestep": timestep,
+        "cycles": moved_cycles,
+        "paths": moved_paths,
+    }
+
+    graph.run_stats.record_selection_stats(timestep, pre_selected_cycles, pre_selected_paths)
+    graph.run_stats.record_move_stats(timestep, moved_cycles, moved_paths)
+
     rotate_free_cycles(graph, all_cycles, chains_to_rotate)
 
     # Update ions after rotate
@@ -137,7 +216,7 @@ def shuttle(
         "Sequence: %s" % [graph.sequence if len(graph.sequence) < 8 else graph.sequence[:8]],
     )
 
-    if graph.plot is True or graph.save is True:
+    if (graph.plot is True or graph.save is True) and timestep > 717:
         plot_state(
             graph,
             labels,
@@ -263,7 +342,6 @@ def _rehome_after_2q(graph: Graph, ion_a: int, ion_b: int, pz_name: str) -> None
 
 def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, save_dag: bool = False) -> int:
     timestep = 0
-    max_timesteps = 1_000_000
     graph.state = get_ions(graph)
 
     unique_folder = pathlib.Path("runs") / datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -278,7 +356,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
         # NEW: track gate start time (t0) per PZ
         pz.active_start_t = None
 
-    graph.in_process = []
+    graph.in_process = {pz.name: [] for pz in graph.pzs}
 
     if any([graph.plot, graph.save]):
         plot_state(
@@ -303,15 +381,16 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
         # Removed redundant hasattr check since class definition now ensures it
         pz.active_start_t = None
 
-    graph.in_process = []
+    graph.in_process = {pz.name: [] for pz in graph.pzs}
 
     if use_dag:
         next_processable_gate_nodes = get_all_first_gates_and_update_sequence_non_destructive(graph, dag)
 
     locked_gates: dict[tuple[int, ...], str] = {}
     graph.locked_gates = locked_gates
-    while timestep < max_timesteps:
-        print(f"Timestep {timestep}")
+    graph.run_stats = RunStats()
+    graph.path_cache = precompute_all_paths(graph)
+    while timestep < graph.max_timesteps:
         for pz in graph.pzs:
             pz.rotate_entry = False
             pz.out_of_parking_cycle = None
@@ -342,17 +421,17 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                         and ion1 in next_gate_at_pz_dict[pz.name]
                         and ion2 in next_gate_at_pz_dict[pz.name]
                     ):
-                        graph.in_process.append(ion1)
+                        graph.in_process[pz.name].append(ion1)
                     if (
                         state2 == pz.parking_edge
                         and ion1 in next_gate_at_pz_dict[pz.name]
                         and ion2 in next_gate_at_pz_dict[pz.name]
                     ):
-                        graph.in_process.append(ion2)
+                        graph.in_process[pz.name].append(ion2)
 
         shuttle(graph, priority_queue, timestep, cycle_or_paths, unique_folder)
 
-        graph.in_process = []
+        graph.in_process = {pz.name: [] for pz in graph.pzs}
         graph.state = get_ions(graph)
 
         if use_dag:
@@ -368,8 +447,8 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                         pz.gate_execution_finished = False
                         if pz.active_start_t is None:
                             pz.active_start_t = timestep
-                        if ion not in graph.in_process:
-                            graph.in_process.append(ion)
+                        if ion not in graph.in_process[pz.name]:
+                            graph.in_process[pz.name].append(ion)
                         pz.getting_processed.append(gate_node)
                         pz.time_in_pz_counter += 1
                         gate_time_1q = GATE_TIME_1Q
@@ -392,8 +471,8 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                         if pz.active_start_t is None:
                             pz.active_start_t = timestep
                         for ion in (ion1, ion2):
-                            if ion not in graph.in_process:
-                                graph.in_process.append(ion)
+                            if ion not in graph.in_process[pz.name]:
+                                graph.in_process[pz.name].append(ion)
                         pz.getting_processed.append(gate_node)
                         pz.time_in_pz_counter += 1
 
@@ -406,6 +485,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                                 graph.locked_gates.pop(gate)
                             pz.time_in_pz_counter = 0
                             pz.gate_execution_finished = True
+                            print(f"[GATE EXECUTED] t={timestep} gate={gate} at PZ={pz.name}")
                             if gate_node in pz.getting_processed:
                                 pz.getting_processed.remove(gate_node)
                 else:
@@ -433,8 +513,8 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
 
                             if pz.active_start_t is None:
                                 pz.active_start_t = timestep
-                            if ion not in graph.in_process:
-                                graph.in_process.append(ion)
+                            if ion not in graph.in_process[pz.name]:
+                                graph.in_process[pz.name].append(ion)
                             pz.time_in_pz_counter += 1
                             gate_time_1q = GATE_TIME_1Q
                             if pz.time_in_pz_counter == gate_time_1q:
