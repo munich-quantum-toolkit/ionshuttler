@@ -25,11 +25,10 @@ QASM_files/development
 benchmarks/
 paper_run_files/
 runs/
+paper_run_files/
 
 run.py
 adapted_run_benchmarks.py
-adapted_run_connecting.py
-make_timeline_dev.py
 adapted_run_connecting.py
 adapted_run_log_telep.py
 make_timeline_dev.py
