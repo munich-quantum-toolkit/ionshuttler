@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import pathlib
 import sys
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import networkx as nx
 
@@ -11,6 +13,40 @@ from .outside.graph_creator import GraphCreator, PZCreator
 from .outside.partition import get_partition
 from .outside.processing_zone import ProcessingZone
 from .outside.shuttle import main as run_shuttle_main
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+
+def validate_conflict_resolution_mode(config: Mapping[str, Any]) -> str:
+    """Validate and normalize the conflict-resolution mode from config.
+
+    Args:
+        config: Parsed user configuration.
+
+    Returns:
+        Normalized mode string (`"cycles"`, `"paths"`, or `"hybrid"`).
+
+    Raises:
+        TypeError: If the value is present but not a string.
+        ValueError: If the value is a string but unsupported.
+    """
+    allowed_modes = {"cycles", "paths", "hybrid"}
+
+    if "use_cycle_or_paths" not in config:
+        return "cycles"
+
+    raw_mode = config["use_cycle_or_paths"]
+    if not isinstance(raw_mode, str):
+        msg = "Config parameter 'use_cycle_or_paths' must be a string and one of: 'cycles', 'paths', or 'hybrid'."
+        raise TypeError(msg)
+
+    mode = raw_mode.strip().lower()
+    if mode not in allowed_modes:
+        msg = f"Invalid value for 'use_cycle_or_paths': {raw_mode!r}. Allowed values are: 'cycles', 'paths', 'hybrid'."
+        raise ValueError(msg)
+
+    return mode
 
 
 def main(config: dict[str, Any]) -> int:
@@ -44,7 +80,7 @@ def main(config: dict[str, Any]) -> int:
         raise ValueError(msg)
 
     use_dag = config.get("use_dag", True)
-    use_cycle_or_paths = config.get("use_cycle_or_paths", False)
+    use_cycle_or_paths = validate_conflict_resolution_mode(config)
     pz_assignment_policy = config.get("pz_assignment_policy", "legacy")
     max_timesteps = config.get("max_timesteps", 1_000_000)
     plot_flag = config.get("plot", False)
