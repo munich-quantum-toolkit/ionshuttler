@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -65,7 +66,7 @@ def plot_state(
                         else:
                             dx, dy = (0.0, 0.0)
 
-                        if dx == 0.0 and dy == 0.0:
+                        if math.isclose(dx, 0.0, abs_tol=1e-12) and math.isclose(dy, 0.0, abs_tol=1e-12):
                             h = hash(node) % 4
                             if h == 0:
                                 dx, dy = (1.0, 0.0)
