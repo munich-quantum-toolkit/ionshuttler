@@ -98,10 +98,6 @@ def create_starting_config(graph: Graph, n_of_ions: int, seed: int | None = None
             msg = f"Cannot place {n_of_ions} ions on only {n_of_traps} trap edges."
             raise ValueError(msg)
 
-        chosen = random.sample(traps, n_of_ions)
-        bridge_set = {tuple(sorted(e)) for e in nx.bridges(graph)}
-        [e for e in chosen if tuple(sorted(e)) in bridge_set]
-
         starting_traps = []
         traps = [
             (u, v)

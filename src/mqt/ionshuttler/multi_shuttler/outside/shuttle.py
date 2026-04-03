@@ -48,25 +48,6 @@ GATE_TIME_2Q = 3
 REHOME = True
 
 
-# @dataclass
-# class RunStats:
-#     pre_selected_cycles_total: int = 0
-#     pre_selected_paths_total: int = 0
-#     selected_cycles_total: int = 0
-#     selected_paths_total: int = 0
-#     per_timestep: list[dict[str, int]] = field(default_factory=list)
-
-#     def record_selection_stats(self, timestep: int, cycles: int, paths: int) -> None:
-#         self.pre_selected_cycles_total += cycles
-#         self.pre_selected_paths_total += paths
-#         self.per_timestep.append({"timestep": timestep, "cycles": cycles, "paths": paths})
-
-#     def record_move_stats(self, timestep: int, cycles: int, paths: int) -> None:
-#         self.selected_cycles_total += cycles
-#         self.selected_paths_total += paths
-#         self.per_timestep.append({"timestep": timestep, "cycles": cycles, "paths": paths})
-
-
 def check_duplicates(graph: Graph) -> None:
     edge_idxs_occupied = []
     for edge_idc in graph.state.values():
@@ -216,7 +197,7 @@ def shuttle(
         "Sequence: %s" % [graph.sequence if len(graph.sequence) < 8 else graph.sequence[:8]],
     )
 
-    if (graph.plot is True or graph.save is True) and timestep > 717:
+    if graph.plot is True or graph.save is True:
         plot_state(
             graph,
             labels,

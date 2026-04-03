@@ -157,7 +157,6 @@ def create_updated_sequence_destructive(
         graph.dist_dict = create_dist_dict(graph)
         state = get_state_idxs(graph)
         dist_map = update_distance_map(graph, state)
-        print("Initial distance map:", dist_map)  # Debugging line
 
         # first_flag = True
         while True:
