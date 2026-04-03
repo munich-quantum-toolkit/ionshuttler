@@ -23,7 +23,6 @@ docs/api/
 # development QASM files
 QASM_files/development
 benchmarks/
-paper_run_files/
 runs/
 paper_run_files/
 
