@@ -11,7 +11,7 @@ from .graph_utils import get_idc_from_idx, get_idx_from_idc
 
 if TYPE_CHECKING:
     from .graph import Graph
-    from .types import Edge, Node
+    from .ion_types import Edge, Node
 
 
 # BFS with direction based on a starting edge and a next edge
@@ -65,8 +65,10 @@ def create_path_via_bfs_directional(
             if neighbor not in visited:
                 queue.append((neighbor, [*path, current_node]))
 
-    msg = f"No path found for edge {current_edge}"
-    raise RuntimeError(msg)
+    # msg = f"No path found for edge {current_edge}"
+    # raise RuntimeError(msg)
+    # now instead if no free edge found -> stop move
+    return [current_edge, current_edge]
 
 
 def find_nonfree_paths(graph: Graph, paths_idcs_dict: dict[int, list[Edge]]) -> list[tuple[int, int]]:
@@ -98,7 +100,6 @@ def find_nonfree_paths(graph: Graph, paths_idcs_dict: dict[int, list[Edge]]) -> 
 
     # Compare junction nodes (with edge_IDC)
     junction_nodes = [*graph.junction_nodes]  # , graph.pzgraph_creator.processing_zone]
-    # TODO: check why path is blocked by pz move
     for path_ion_1, path_ion_2 in combinations_of_paths:
         if len(paths_idcs_dict[path_ion_1]) == 2:
             # if same edge twice -> skip (no edge if twice parking edge, otherwise only first node)
@@ -146,15 +147,15 @@ def find_nonfree_paths(graph: Graph, paths_idcs_dict: dict[int, list[Edge]]) -> 
         else:
             nodes2 = {node for edge in paths_idcs_dict[path_ion_2][1:-1] for node in edge}
 
-        # new: exclude processing zone node -> if pz node in circles -> can both be executed -> now not in junction_nodes and also not checked in first check above
-        # extra: if both end in same edge -> don't execute (scenario where path out of pz ends in same edge as next edge for other)
-        # new from CYCLES: -> new exclude parking edge (can end both in parking edge, since stop moves in parking edge also end in parking edge)
+        # exclude processing zone node -> if pz node in circles -> can both be executed -> now not in junction_nodes and also not checked in first check above
+        # if both end in same edge -> don't execute (scenario where path out of pz ends in same edge as next edge for other)
+        # from cycles: -> new exclude parking edge (can end both in parking edge, since stop moves in parking edge also end in parking edge)
         if len(nodes1.intersection(nodes2).intersection(junction_nodes)) > 0 or (  # noqa: SIM102
             get_idx_from_idc(graph.idc_dict, paths_idcs_dict[path_ion_1][-1])
             == (get_idx_from_idc(graph.idc_dict, paths_idcs_dict[path_ion_2][-1]))
             and (get_idx_from_idc(graph.idc_dict, paths_idcs_dict[path_ion_1][-1]) not in graph.parking_edges_idxs)
         ):
-            # new from CYCLES: also exclude cases in which a stop move would block a junction (should only block moves into stop move, but not the whole junction)
+            # from cycles: also exclude cases in which a stop move would block a junction (should only block moves into stop move, but not the whole junction)
             # -> do not append if path_ion_1 is stop move and path_ion_2 does not move into stop move and vice versa
             if not (
                 (

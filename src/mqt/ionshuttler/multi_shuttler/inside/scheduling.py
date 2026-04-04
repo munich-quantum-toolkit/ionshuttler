@@ -22,8 +22,8 @@ from .paths import create_path_via_bfs_directional, find_nonfree_paths
 
 if TYPE_CHECKING:
     from .graph import Graph
+    from .ion_types import Edge, Node
     from .processing_zone import ProcessingZone
-    from .types import Edge, Node
 
 
 def preprocess(graph: Graph, priority_queue: dict[int, str]) -> None:
@@ -42,7 +42,8 @@ def preprocess(graph: Graph, priority_queue: dict[int, str]) -> None:
             # if next_edge is free, not a stop move (same edge) and not at junction node
             # move the ion to the next edge
             if (
-                have_common_junction_node(graph, edge_idc, next_edge) is False
+                rotate_chain not in graph.in_process
+                and have_common_junction_node(graph, edge_idc, next_edge) is False
                 and state_edges_idc[next_edge] == []
                 and edge_idc != next_edge
             ):
@@ -214,7 +215,22 @@ def create_move_list(graph: Graph, partitioned_priority_queue: list[int], pz: Pr
     ion_chains = get_ion_chains(graph)
     path_length_sequence = {}
     move_list: list[int] = []
-    for i, rotate_chain in enumerate(partitioned_priority_queue):
+
+    # Determine which ions are needed next at this PZ
+    try:
+        gate_info = create_gate_info_list(graph)
+        needed_set = set(gate_info.get(pz.name, []))
+    except Exception:
+        needed_set = set()
+
+    # Ions currently on the PZ edge
+    ions_on_pz = [ion for ion in partitioned_priority_queue if ion_chains.get(ion) == pz.edge_idc]
+
+    # Those on the PZ but not needed next are deprioritized to the end
+    trailing = [ion for ion in ions_on_pz if ion not in needed_set]
+    base_order = [ion for ion in partitioned_priority_queue if ion not in trailing]
+
+    for i, rotate_chain in enumerate(base_order):
         edge_idc = ion_chains[rotate_chain]
         # shortest path is also 1 edge if already at pz -> set to 0
         if edge_idc == pz.edge_idc:
@@ -235,6 +251,11 @@ def create_move_list(graph: Graph, partitioned_priority_queue: list[int], pz: Pr
         ):
             move_list.append(rotate_chain)
 
+    # Append deprioritized ions (in PZ but not needed next) to the end
+    for ion in trailing:
+        if ion not in move_list:
+            move_list.append(ion)
+
     return move_list
 
 
@@ -246,8 +267,43 @@ def create_cycles_for_moves(
 ) -> dict[int, list[Edge]]:
     all_cycles = {}
     ion_chains = graph.state
+    state_edges_idc = get_edge_state(graph)
+
+    # Determine ions needed next at this PZ; keep those in the PZ
+    try:
+        gate_info = create_gate_info_list(graph)
+        needed_set = set(gate_info.get(pz.name, []))
+    except Exception:
+        needed_set = set()
+
+    # Helper to find a free neighboring edge of the PZ edge
+    def _free_neighbor_of_pz() -> Edge | None:
+        pz_e = pz.edge_idc
+        pz_nodes = set(pz_e)
+        for e in graph.edges:
+            if e == pz_e:
+                continue
+            if len(pz_nodes.intersection(set(e))) > 0 and state_edges_idc.get(e, []) == []:
+                return e
+        return None
+
     for rotate_chain in move_list:
         edge_idc = ion_chains[rotate_chain]
+
+        # If the ion is currently in the PZ, only push it out if it is NOT needed next here
+        if edge_idc == pz.edge_idc:
+            if rotate_chain in needed_set:
+                # Keep needed ions in the PZ
+                all_cycles[rotate_chain] = [edge_idc, edge_idc]
+                continue
+            free_e = _free_neighbor_of_pz()
+            if free_e is None:
+                # No space to push out; skip this ion for this step
+                continue
+            e1, e2 = find_ordered_edges(graph, edge_idc, free_e)
+            all_cycles[rotate_chain] = [e1, e2]
+            continue
+
         next_edge = find_next_edge(graph, edge_idc, pz.edge_idc)
         edge_idc, next_edge = find_ordered_edges(graph, edge_idc, next_edge)
         if not check_if_edge_is_filled(graph, next_edge) or edge_idc == next_edge:
@@ -262,6 +318,7 @@ def create_cycles_for_moves(
 
 def find_conflict_cycle_idxs(graph: Graph, cycles_dict: dict[int, list[Edge]]) -> list[tuple[int, int]]:
     combinations_of_cycles = list(distinct_combinations(cycles_dict.keys(), 2))
+    get_edge_state(graph)
 
     def get_cycle_nodes(cycle: int) -> set[Node]:
         # if cycle is two edges
@@ -276,6 +333,15 @@ def find_conflict_cycle_idxs(graph: Graph, cycles_dict: dict[int, list[Edge]]) -
             elif cycle in graph.stop_moves:
                 cycle_or_path = cycles_dict[cycle]
             else:
+                # if len(state_edges_idc.get(cycle, [])) == 1:
+                #     cycle_or_path = []
+                # else:
+                #     cycle_or_path = cycles_dict[cycle]
+
+                # raise ValueError("cycle is a stop move but not in stop moves?")
+                # if cycle == 1: #cycle in range(26, 27):
+                # cycle_or_path = cycles_dict[cycle]
+                # else:
                 cycle_or_path = []  # [(cycles_dict[cycle][0][0], cycles_dict[cycle][0][0])]
         elif cycles_dict[cycle][0] == cycles_dict[cycle][-1]:
             cycle_or_path = cycles_dict[cycle]
@@ -296,9 +362,17 @@ def find_conflict_cycle_idxs(graph: Graph, cycles_dict: dict[int, list[Edge]]) -
     for cycle1, cycle2 in combinations_of_cycles:
         nodes1 = get_cycle_nodes(cycle1)
         nodes2 = get_cycle_nodes(cycle2)
-        if len(nodes1.intersection(nodes2)) > 0 or (
-            get_idx_from_idc(graph.idc_dict, cycles_dict[cycle1][-1])
-            == (get_idx_from_idc(graph.idc_dict, cycles_dict[cycle2][-1]))
+        # if share junction node or ending in same edge
+        if (
+            len(nodes1.intersection(nodes2)) > 0
+            or (
+                get_idx_from_idc(graph.idc_dict, cycles_dict[cycle1][-1])
+                == (get_idx_from_idc(graph.idc_dict, cycles_dict[cycle2][-1]))
+            )
+            # and not starting in same edge
+        ) and (
+            get_idx_from_idc(graph.idc_dict, cycles_dict[cycle1][0])
+            != get_idx_from_idc(graph.idc_dict, cycles_dict[cycle2][0])
         ):
             junction_shared_pairs.append((cycle1, cycle2))
     return junction_shared_pairs

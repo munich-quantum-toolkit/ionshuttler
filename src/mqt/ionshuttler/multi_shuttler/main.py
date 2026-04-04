@@ -1,7 +1,11 @@
+from __future__ import annotations
+
 import pathlib
 import sys
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+import networkx as nx
 
 from .outside.compilation import create_dag, create_initial_sequence, create_updated_sequence_destructive
 from .outside.cycles import create_starting_config, get_ions
@@ -10,20 +14,79 @@ from .outside.partition import get_partition
 from .outside.processing_zone import ProcessingZone
 from .outside.shuttle import main as run_shuttle_main
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
-def main(config: dict[str, Any]) -> None:
+
+def validate_conflict_resolution_mode(config: Mapping[str, Any]) -> str:
+    """Validate and normalize the conflict-resolution mode from config.
+
+    Args:
+        config: Parsed user configuration.
+
+    Returns:
+        Normalized mode string (`"cycles"`, `"paths"`, or `"hybrid"`).
+
+    Raises:
+        TypeError: If the value is present but not a string.
+        ValueError: If the value is a string but unsupported.
+    """
+    allowed_modes = {"cycles", "paths", "hybrid"}
+
+    if "use_cycle_or_paths" not in config:
+        return "cycles"
+
+    raw_mode = config["use_cycle_or_paths"]
+    if not isinstance(raw_mode, str):
+        msg = "Config parameter 'use_cycle_or_paths' must be a string and one of: 'cycles', 'paths', or 'hybrid'."
+        raise TypeError(msg)
+
+    mode = raw_mode.strip().lower()
+    if mode not in allowed_modes:
+        msg = f"Invalid value for 'use_cycle_or_paths': {raw_mode!r}. Allowed values are: 'cycles', 'paths', 'hybrid'."
+        raise ValueError(msg)
+
+    return mode
+
+
+def main(config: dict[str, Any]) -> int:
     # --- Extract Parameters from Config ---
     arch = config.get("arch")
     num_pzs_config = config.get("num_pzs", 1)
     seed = config.get("seed", 0)
     algorithm_name = config.get("algorithm_name")
-    num_ions = config.get("num_ions")
+
+    # Extract Ion Count Parameters
+    perc_num_ions_raw = config.get("perc_num_ions")
+    abs_num_ions_raw = config.get("abs_num_ions")
+
+    perc_num_ions: float | None
+    abs_num_ions: int | None
+
+    if perc_num_ions_raw is None:
+        perc_num_ions = None
+    elif isinstance(perc_num_ions_raw, (int, float)):
+        perc_num_ions = float(perc_num_ions_raw)
+    else:
+        msg = "Config parameter 'perc_num_ions' must be a number."
+        raise ValueError(msg)
+
+    if abs_num_ions_raw is None:
+        abs_num_ions = None
+    elif isinstance(abs_num_ions_raw, int):
+        abs_num_ions = abs_num_ions_raw
+    else:
+        msg = "Config parameter 'abs_num_ions' must be an integer."
+        raise ValueError(msg)
+
     use_dag = config.get("use_dag", True)
-    use_paths = config.get("use_paths", False)
-    config.get("max_timesteps", 100000)
+    use_cycle_or_paths = validate_conflict_resolution_mode(config)
+    pz_assignment_policy = config.get("pz_assignment_policy", "legacy")
+    max_timesteps = config.get("max_timesteps", 1_000_000)
     plot_flag = config.get("plot", False)
     save_flag = config.get("save", False)
     failing_junctions = config.get("failing_junctions", 0)
+    parameter = config.get("parameter", 1)  # For hybrid cost function, if used
 
     # Define base path for QASM files if needed
     qasm_base_dir_string = config.get("qasm_base_dir")
@@ -41,8 +104,11 @@ def main(config: dict[str, Any]) -> None:
         msg = "Config parameter 'algorithm_name' is required but not set"
         raise ValueError(msg)
 
-    if num_ions is None:
-        msg = "Config parameter 'num_ions' is required but not set"
+    # Validate Mutual Exclusivity of Ion Count Parameters
+    if perc_num_ions is None and abs_num_ions is None:
+        perc_num_ions = 0.5
+    elif perc_num_ions is not None and abs_num_ions is not None:
+        msg = "Config must specify exactly one of: 'perc_num_ions' or 'abs_num_ions'."
         raise ValueError(msg)
 
     if not isinstance(arch, list) or len(arch) != 4:
@@ -51,7 +117,7 @@ def main(config: dict[str, Any]) -> None:
 
     # --- Setup ---
     start_time = datetime.now()
-    cycle_or_paths_str = "Paths" if use_paths else "Cycles"
+
     m, n, v, h = arch
 
     # --- PZ Definitions ---
@@ -87,27 +153,41 @@ def main(config: dict[str, Any]) -> None:
 
     print(f"Using {len(pzs_to_use)} PZs: {[pz.name for pz in pzs_to_use]}")
     print(f"Architecture: {arch}, Seed: {seed}")
-    print(f"Algorithm: {algorithm_name}, ions: {num_ions}")
-    print(f"DAG-Compilation: {use_dag}, Conflict Resolution: {cycle_or_paths_str}")
+    print(f"Algorithm: {algorithm_name}")
+    print(f"DAG-Compilation: {use_dag}, Conflict Resolution: {use_cycle_or_paths}")
 
     # --- Graph Creation ---
-    basegraph_creator = GraphCreator(m, n, v, h, failing_junctions, pzs_to_use)
+    basegraph_creator = GraphCreator(m, n, v, h, failing_junctions, pzs_to_use, seed)
     mz_graph = basegraph_creator.get_graph()
-    pzgraph_creator = PZCreator(m, n, v, h, failing_junctions, pzs_to_use)
+    pzgraph_creator = PZCreator(m, n, v, h, failing_junctions, pzs_to_use, seed)
     graph = pzgraph_creator.get_graph()
     graph.mz_graph = mz_graph  # Attach MZ graph for BFS lookups if needed by Cycles/Paths
 
     graph.seed = seed
     graph.max_num_parking = 2
     graph.pzs = pzs_to_use  # List of ProcessingZone objects
+    graph.max_timesteps = max_timesteps
 
     graph.plot = plot_flag
     graph.save = save_flag
     graph.arch = str(arch)  # For plotting/logging
+    graph.pz_assignment_policy = pz_assignment_policy
+    print(f"PZ assignment policy: {graph.pz_assignment_policy}")
 
-    len(mz_graph.edges())
+    graph.parameter = parameter  # For hybrid cost function, if used
 
-    print(f"Number of ions: {num_ions}")
+    # --- Calculate Absolute Number of Ions ---
+    if abs_num_ions is not None:
+        num_ions = abs_num_ions
+        print(f"Targeting absolute number of ions: {num_ions}")
+    else:
+        # here perc_num_ions is guaranteed not None by earlier validation logic
+        assert perc_num_ions is not None
+        trap_edges = [edges for edges in graph.edges() if nx.get_edge_attributes(graph, "edge_type")[edges] == "trap"]
+        num_ions = round(perc_num_ions * len(trap_edges))
+        print(f"Targeting percentage: {perc_num_ions * 100}% -> {num_ions} ions")
+
+    print(f"Number of edges in current graph: {len(graph.edges())}")
 
     qasm_file_path = qasm_base_dir / algorithm_name / f"{algorithm_name}_{num_ions}.qasm"
 
@@ -131,11 +211,8 @@ def main(config: dict[str, Any]) -> None:
         # Ensure partition list length matches num_pzs
         if len(part) != len(graph.pzs):
             print(f"Warning: Partitioning returned {len(part)} parts, but expected {len(graph.pzs)}. Adjusting...")
-            # Simple fix: assign remaining qubits to the last partition, or distribute evenly.
-            # This might need a more sophisticated balancing strategy.
             if len(part) < len(graph.pzs):
                 print("Error: Partitioning failed to produce enough parts.")
-                # Handle error appropriately, maybe fall back to non-partitioned approach or exit.
                 sys.exit(1)
             else:  # More parts than PZs, merge extra parts into the last ones
                 merged = [qubit for sublist in part[len(graph.pzs) - 1 :] for qubit in sublist]
@@ -144,10 +221,8 @@ def main(config: dict[str, Any]) -> None:
         partitions = {pz.name: part[i] for i, pz in enumerate(graph.pzs)}
         print(f"Partitions: {partitions}")
     else:
-        # Fallback: Assign ions to closest PZ (example logic)
-        print("Disabling Partitioning has to be implemented.")
-        # TODO
-        # ... (implement closest PZ assignment logic) ...
+        msg = "Disabling Partitioning has to be implemented. For now, only example for random_connecting 22 ions and 2 PZs."
+        raise NotImplementedError(msg)
 
     # Create reverse map and validate partition
     map_to_pz: dict[int, str] = {}
@@ -167,9 +242,7 @@ def main(config: dict[str, Any]) -> None:
     missing_qubits = unique_sequence_qubits - set(all_partition_elements)
     if missing_qubits:
         print(f"Error: Qubits {missing_qubits} from sequence are not in any partition.")
-        # This indicates a problem with partitioning or qubit indexing.
         sys.exit(1)
-    # Check for overlaps if needed (already done within map_to_pz creation loop)
 
     # --- DAG-Compilation Setup (if enabled) ---
     dag = None
@@ -179,7 +252,6 @@ def main(config: dict[str, Any]) -> None:
                 pz.getting_processed = []
             dag = create_dag(qasm_file_path)
             graph.locked_gates = {}
-            dag = create_dag(qasm_file_path)
             dag.copy()  # Keep a copy of the original DAG if needed later
             # Initial DAG-based sequence update
             sequence, _, dag = create_updated_sequence_destructive(graph, qasm_file_path, dag, use_dag=True)
@@ -202,8 +274,23 @@ def main(config: dict[str, Any]) -> None:
 
     print("\nStarted shuttling simulation...")
 
+    def _assert_idc_consistency(graph: Any) -> None:
+        missing: list[tuple[Any, Any]] = []
+        for u, v in graph.edges():
+            if (u, v) not in graph.idc_dict and (v, u) not in graph.idc_dict:
+                missing.append((u, v))
+                if len(missing) >= 5:
+                    break
+
+        if missing:
+            print("IDC MISSING EDGES (showing up to 5):", missing)
+            msg = "idc_dict does not cover current graph edges."
+            raise RuntimeError(msg)
+
+    _assert_idc_consistency(graph)
+
     # Run the main shuttling logic
-    final_timesteps = run_shuttle_main(graph, dag, cycle_or_paths_str, use_dag=use_dag)
+    final_timesteps = run_shuttle_main(graph, dag, use_cycle_or_paths, use_dag=use_dag)
 
     # --- Results ---
     end_time = datetime.now()
@@ -212,18 +299,4 @@ def main(config: dict[str, Any]) -> None:
     print(f"\nSimulation finished in {final_timesteps} timesteps.")
     print(f"Total CPU time: {cpu_time}")
 
-    # # --- Benchmarking Output ---
-    # bench_filename = f"benchmarks/{start_time.strftime('%Y%m%d_%H%M%S')}_{algorithm_name}.txt"
-    # pathlib.Path("benchmarks").mkdir(exist_ok=True)
-    # benchmark_output = (
-    #     f"{arch}, ions{num_ions}/pos{number_of_mz_edges}: {num_ions/number_of_mz_edges if number_of_mz_edges > 0 else 0:.2f}, "
-    #     f"#pzs: {len(pzs_to_use)}, ts: {final_timesteps}, cpu_time: {cpu_time.total_seconds():.2f}, "
-    #     f"gates: {seq_length}, baseline: {None}, DAG-Compilation: {use_dag}, paths: {use_paths}, "
-    #     f"seed: {seed}, failing_jcts: {failing_junctions}\n"
-    # )
-    # try:
-    #     with open(bench_filename, "a") as f:
-    #         f.write(benchmark_output)
-    #     print(f"Benchmark results appended to {bench_filename}")
-    # except Exception as e:
-    #     print(f"Warning: Could not write benchmark file: {e}")
+    return final_timesteps

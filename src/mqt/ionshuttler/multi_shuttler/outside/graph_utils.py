@@ -6,7 +6,7 @@ import networkx as nx
 
 if TYPE_CHECKING:
     from .graph import Graph
-    from .types import Edge, Node
+    from .ion_types import Edge, Node
 
 
 # create dictionary to swap from idx to idc and vice versa
@@ -41,8 +41,12 @@ def create_dist_dict(graph: Graph) -> dict[str, dict[Edge, list[Node]]]:
             edge_idx = get_idx_from_idc(graph.idc_dict, edge_idc)
             # for pz_path_idx in pz.path_to_pz_idxs:
             #     if edge_idx == pz.path_to_pz:
-            path = find_path_edge_to_edge(graph, edge_idc, pz.parking_edge)
-            assert path is not None
+
+            path = find_path_edge_to_edge(graph, edge_idc, pz.parking_edge, find_any_path=True)
+            # assert path is not None, f"No path from edge {edge_idc} to parking edge {pz.parking_edge} for pz {pz.name}"
+            if path is None:
+                print(f"Warning: No path from edge {edge_idc} to parking edge {pz.parking_edge} for pz {pz.name}")
+                continue
             pz_dict[get_idc_from_idx(graph.idc_dict, edge_idx)] = path
 
         dist_dict[pz.name] = pz_dict

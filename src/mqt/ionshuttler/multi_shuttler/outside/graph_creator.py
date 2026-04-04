@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import math
 import random
-from typing import TYPE_CHECKING
+from collections import deque
+from typing import TYPE_CHECKING, Any
 
 import networkx as nx
 
@@ -10,8 +11,8 @@ from .graph import Graph
 from .graph_utils import convert_nodes_to_float, create_idc_dictionary, get_idx_from_idc
 
 if TYPE_CHECKING:
+    from .ion_types import Edge, Node
     from .processing_zone import ProcessingZone
-    from .types import Edge, Node
 
 
 class GraphCreator:
@@ -23,6 +24,7 @@ class GraphCreator:
         ion_chain_size_horizontal: int,
         failing_junctions: int,
         pz_info: list[ProcessingZone],
+        seed: int,
     ):
         self.m = m
         self.n = n
@@ -32,6 +34,7 @@ class GraphCreator:
         self.pz_info = pz_info
         self.m_extended = self.m + (self.ion_chain_size_vertical - 1) * (self.m - 1)
         self.n_extended = self.n + (self.ion_chain_size_horizontal - 1) * (self.n - 1)
+        self.seed = seed
         self.networkx_graph = self.create_graph()
 
     def create_graph(self) -> Graph:
@@ -46,9 +49,10 @@ class GraphCreator:
         self._remove_nodes(networkx_graph)
         networkx_graph.junction_nodes = []
         self._set_junction_nodes(networkx_graph)
-        # if self.pz == 'mid':
+        # legacy functionality
+        # if self.pz == "mid":
         #     self._remove_mid_part(networkx_graph)
-        self._remove_junctions(networkx_graph, self.failing_junctions)
+        self._remove_junctions(networkx_graph, self.failing_junctions, self.seed)
         nx.set_edge_attributes(networkx_graph, values=dict.fromkeys(networkx_graph.edges(), "trap"), name="edge_type")
         nx.set_edge_attributes(networkx_graph, values=dict.fromkeys(networkx_graph.edges(), 1), name="weight")
 
@@ -91,32 +95,209 @@ class GraphCreator:
                         networkx_graph.remove_node(node)
 
     def _set_junction_nodes(self, networkx_graph: Graph) -> None:
-        for i in range(0, self.m_extended, self.ion_chain_size_vertical):
-            for j in range(0, self.n_extended, self.ion_chain_size_horizontal):
+        # how many junction positions exist in each dimension
+        num_i = ((self.m_extended - 1) // self.ion_chain_size_vertical) + 1
+        num_j = ((self.n_extended - 1) // self.ion_chain_size_horizontal) + 1
+
+        for ii, i in enumerate(range(0, self.m_extended, self.ion_chain_size_vertical)):
+            for jj, j in enumerate(range(0, self.n_extended, self.ion_chain_size_horizontal)):
                 float_node = (float(i), float(j))
-                networkx_graph.add_node(float_node, node_type="junction_node", color="g", node_size=200)
+
+                is_outer_ring = (ii == 0) or (ii == num_i - 1) or (jj == 0) or (jj == num_j - 1)
+
+                networkx_graph.add_node(
+                    float_node,
+                    node_type="junction_node",
+                    is_outer_ring=is_outer_ring,
+                    color="g",
+                    node_size=200,
+                )
                 networkx_graph.junction_nodes.append(float_node)
 
-    def _remove_junctions(self, networkx_graph: Graph, num_nodes_to_remove: int) -> None:
-        """
-        Removes a specified number of nodes from the graph, excluding nodes of type 'exit_node' or 'entry_node'.
-        """
-        #  Filter out nodes that are of type 'exit_node' or 'entry_node'
-        nodes_to_remove: list[Node] = [
+    def _remove_junctions(self, networkx_graph: Graph, num_nodes_to_remove: int, seed: int | None = None) -> None:
+        pz_anchor_nodes = {pz.exit_node for pz in self.pz_info} | {pz.entry_node for pz in self.pz_info}
+        nodes_to_remove = [
             node
             for node, data in networkx_graph.nodes(data=True)
-            if data.get("node_type") not in {"exit_node", "entry_node", "exit_connection_node", "entry_connection_node"}
+            if data.get("node_type")
+            not in {
+                "exit_node",
+                "entry_node",
+                "exit_connection_node",
+                "entry_connection_node",
+                "trap_node",
+            }  # does not work here since PZ is set later
+            and node not in pz_anchor_nodes
         ]
+        if len(nodes_to_remove) < num_nodes_to_remove:
+            msg = f"Not enough junction nodes to remove. Requested: {num_nodes_to_remove}, Available: {len(nodes_to_remove)}"
+            raise ValueError(msg)
 
-        # Shuffle the list of nodes to remove
-        random.seed(0)
-        random.shuffle(nodes_to_remove)
+        rng = random.Random(seed)
+        rng.shuffle(nodes_to_remove)
 
-        # Remove the specified number of nodes
-        for node in nodes_to_remove[:num_nodes_to_remove]:
-            networkx_graph.remove_node(node)
+        set(networkx_graph.nodes)
+        stub_x = -1000
+        stub_y = -1
 
-        random.seed()
+        removed = 0
+        for j in nodes_to_remove:
+            if removed >= num_nodes_to_remove:
+                break
+
+            g_try = networkx_graph.copy()
+            neighbors = [u for u in g_try.neighbors(j) if not g_try.nodes[u].get("is_stub", False)]
+
+            local_used = set(g_try.nodes)
+            local_stub_y = stub_y
+
+            for u in neighbors:
+                edata: dict[str, Any] = dict(g_try.get_edge_data(j, u) or {})
+                stub = (stub_x, local_stub_y)
+                while stub in local_used:
+                    local_stub_y -= 1
+                    stub = (stub_x, local_stub_y)
+
+                local_used.add(stub)
+                local_stub_y -= 1
+
+                g_try.add_node(
+                    stub,
+                    node_type="trap_node",
+                    is_outer_ring=False,
+                    is_stub=True,
+                    failed_parent=j,
+                    stub_neighbor=u,
+                )
+                g_try.add_edge(stub, u, **edata)
+
+            g_try.remove_node(j)
+
+            # prevent islands -> require full graph connectivity
+            if nx.is_connected(g_try) and self._all_nodes_reach_any_pz_anchor(g_try):
+                networkx_graph.clear()
+                networkx_graph.add_nodes_from(g_try.nodes(data=True))
+                networkx_graph.add_edges_from(g_try.edges(data=True))
+                set(networkx_graph.nodes)
+                stub_y = local_stub_y
+                removed += 1
+
+        if removed < num_nodes_to_remove:
+            msg = f"Could only remove {removed}/{num_nodes_to_remove} junctions while preserving PZ reachability."
+            raise ValueError(msg)
+
+    def _pz_anchor_nodes(self) -> set[Node]:
+        anchors: set[Node] = set()
+        for pz in self.pz_info:
+            anchors.add(pz.exit_node)
+            anchors.add(pz.entry_node)
+        return anchors
+
+    def _all_nodes_reach_any_pz_anchor(self, g: Graph) -> bool:
+        anchors = self._pz_anchor_nodes()
+        if not anchors:
+            return False
+
+        components = list(nx.connected_components(g))
+        comp_idx: dict[Node, int] = {}
+        for i, comp in enumerate(components):
+            for n in comp:
+                comp_idx[n] = i
+
+        good_components = {comp_idx[a] for a in anchors if a in comp_idx}
+        if not good_components:
+            return False
+
+        return all(comp_idx[n] in good_components for n in g.nodes())
+
+    # legacy functionality for qsw paper - remove junctions in a crater-like pattern starting from the center of the grid
+    def _remove_junctions_crater(
+        self,
+        networkx_graph: Graph,
+        num_nodes_to_remove: int,
+        _seed: int | None = None,
+    ) -> None:
+        pz_anchor_nodes = {pz.exit_node for pz in self.pz_info} | {pz.entry_node for pz in self.pz_info}
+
+        candidates = [
+            node
+            for node, data in networkx_graph.nodes(data=True)
+            if data.get("node_type") == "junction_node" and node not in pz_anchor_nodes
+        ]
+        if len(candidates) < num_nodes_to_remove:
+            msg = f"Not enough junction nodes to remove. Requested: {num_nodes_to_remove}, Available: {len(candidates)}"
+            raise ValueError(msg)
+
+        # center of extended grid
+        center = ((self.m_extended - 1) / 2.0, (self.n_extended - 1) / 2.0)
+
+        # candidate closest to center
+        start = min(
+            candidates,
+            key=lambda n: (n[0] - center[0]) ** 2 + (n[1] - center[1]) ** 2,
+        )
+
+        queue: deque[Node] = deque([start])
+        seen: set[Node] = set()
+
+        stub_x = -1000
+        stub_y = -1
+        removed = 0
+
+        while queue and removed < num_nodes_to_remove:
+            j = queue.popleft()
+            if j in seen:
+                continue
+            seen.add(j)
+
+            if j not in networkx_graph.nodes:
+                continue
+            if j in pz_anchor_nodes:
+                continue
+            if networkx_graph.nodes[j].get("node_type") != "junction_node":
+                continue
+
+            g_try = networkx_graph.copy()
+            nbrs = [u for u in g_try.neighbors(j) if not g_try.nodes[u].get("is_stub", False)]
+
+            local_used = set(g_try.nodes)
+            local_stub_y = stub_y
+
+            for u in nbrs:
+                edata: dict[str, Any] = dict(g_try.get_edge_data(j, u) or {})
+                stub = (stub_x, local_stub_y)
+                while stub in local_used:
+                    local_stub_y -= 1
+                    stub = (stub_x, local_stub_y)
+
+                local_used.add(stub)
+                local_stub_y -= 1
+
+                g_try.add_node(
+                    stub,
+                    node_type="trap_node",
+                    is_outer_ring=False,
+                    is_stub=True,
+                    failed_parent=j,
+                    stub_neighbor=u,
+                )
+                g_try.add_edge(stub, u, **edata)
+
+            g_try.remove_node(j)
+
+            networkx_graph.clear()
+            networkx_graph.add_nodes_from(g_try.nodes(data=True))
+            networkx_graph.add_edges_from(g_try.edges(data=True))
+            stub_y = local_stub_y
+            removed += 1
+            # expand crater: enqueue neighboring junctions in current graph
+            for u in nbrs:
+                if u in networkx_graph.nodes and networkx_graph.nodes[u].get("node_type") == "junction_node":
+                    queue.append(u)
+
+        if removed < num_nodes_to_remove:
+            msg = f"Could only remove {removed}/{num_nodes_to_remove} junctions with crater attack while preserving constraints."
+            raise ValueError(msg)
 
     def get_graph(self) -> Graph:
         return self.networkx_graph
@@ -131,9 +312,12 @@ class PZCreator(GraphCreator):
         ion_chain_size_horizontal: int,
         failing_junctions: int,
         pzs: list[ProcessingZone],
+        seed: int,
+        mid_side_pz_connections: bool = False,
     ):
-        super().__init__(m, n, ion_chain_size_vertical, ion_chain_size_horizontal, failing_junctions, pzs)
+        super().__init__(m, n, ion_chain_size_vertical, ion_chain_size_horizontal, failing_junctions, pzs, seed)
         self.pzs = pzs
+        self.mid_side_pz_connections = mid_side_pz_connections
 
         for pz in pzs:
             self._set_processing_zone(self.networkx_graph, pz)
@@ -177,8 +361,36 @@ class PZCreator(GraphCreator):
 
         return None
 
+    def _get_mid_side_nodes(self, border: str) -> tuple[Node, Node]:
+        # Returns (exit_node, entry_node) on the given border.
+        # even count: two middle indices (e.g. 4 -> 1,2)
+        # odd count: middle + right/down neighbor if possible (e.g. 3 -> 1,2 ; 5 -> 2,3)
+        if border in {"top", "bottom"}:
+            count = self.n
+            fixed_x = 0.0 if border == "top" else float(self.m_extended - 1)
+            step = self.ion_chain_size_horizontal
+            if count % 2 == 0:
+                i1, i2 = count // 2 - 1, count // 2
+            else:
+                mid = count // 2
+                i1, i2 = mid, min(mid + 1, count - 1)
+            return (fixed_x, float(i1 * step)), (fixed_x, float(i2 * step))
+
+        count = self.m
+        fixed_y = 0.0 if border == "left" else float(self.n_extended - 1)
+        step = self.ion_chain_size_vertical
+        if count % 2 == 0:
+            i1, i2 = count // 2 - 1, count // 2
+        else:
+            mid = count // 2
+            i1, i2 = mid, min(mid + 1, count - 1)
+        return (float(i1 * step), fixed_y), (float(i2 * step), fixed_y)
+
     def _set_processing_zone(self, networkx_graph: Graph, pz: ProcessingZone) -> Graph:
         border = self.find_shared_border(pz.exit_node, pz.entry_node)
+
+        if self.mid_side_pz_connections and border is not None:
+            pz.exit_node, pz.entry_node = self._get_mid_side_nodes(border)
 
         # Define the parking edge (edge between processing zone and parking node)
         if border == "top":
@@ -192,7 +404,9 @@ class PZCreator(GraphCreator):
         pz.parking_edge = (pz.processing_zone, pz.parking_node)
 
         # Number of edges between exit/entry and processing zone (size of one-way connection)
-        if border in {"top", "bottom"}:
+        if self.mid_side_pz_connections:
+            pz.num_edges = 1
+        elif border in {"top", "bottom"}:
             pz.num_edges = math.ceil(
                 math.ceil(abs(pz.entry_node[1] - pz.exit_node[1]) / self.ion_chain_size_horizontal) / 2
             )  # Number of edges between exit/entry and processing zone
@@ -218,7 +432,6 @@ class PZCreator(GraphCreator):
             )
 
             if i == 0:
-                # networkx_graph.add_node(exit_node, node_type="exit_node", color="y") # will get overwritten by exit_connection_node
                 previous_exit_node = pz.exit_node
                 pz.exit_edge = (previous_exit_node, exit_node)
 
@@ -266,8 +479,6 @@ class PZCreator(GraphCreator):
         networkx_graph.add_node(pz.parking_node, node_type="parking_node", color="r", node_size=200)
         networkx_graph.add_edge(pz.parking_edge[0], pz.parking_edge[1], edge_type="parking_edge", color="r")
         networkx_graph.junction_nodes.append(pz.parking_node)
-        # add new info to pz
-        # not needed? already done above? pz.parking_node =
 
         return networkx_graph
 

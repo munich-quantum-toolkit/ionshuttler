@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import networkx as nx
@@ -7,14 +8,53 @@ import networkx as nx
 from .graph_utils import create_dist_dict, create_idc_dictionary, get_idx_from_idc
 
 if TYPE_CHECKING:
+    from .ion_types import Edge, Node
     from .processing_zone import ProcessingZone
-    from .types import Edge, Node
+
+
+@dataclass
+class RunStats:
+    pre_selected_cycles_total: int = 0
+    pre_selected_paths_total: int = 0
+    selected_cycles_total: int = 0
+    selected_paths_total: int = 0
+    per_timestep: list[dict[str, int]] = field(default_factory=list)
+
+    def record_selection_stats(self, timestep: int, cycles: int, paths: int) -> None:
+        self.selected_cycles_total += cycles
+        self.selected_paths_total += paths
+        self.per_timestep.append({"timestep": timestep, "cycles": cycles, "paths": paths})
+
+    def record_move_stats(self, timestep: int, cycles: int, paths: int) -> None:
+        self.pre_selected_cycles_total += cycles
+        self.pre_selected_paths_total += paths
+        self.per_timestep.append({"timestep": timestep, "cycles": cycles, "paths": paths})
 
 
 class Graph(nx.Graph):  # type: ignore [type-arg]
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self.executed_gates_next: list[dict[str, Any]] = []
+        self.executed_gates_next: list[dict[str, object]] = []
+        self._pz_assignment_policy: str = "legacy"  # default
+        self.run_stats: RunStats = RunStats()
+        self.path_cache: dict[Any, Any] = {}
+        self.max_timesteps: int = 1_000_000
+        self.parameter: float = 1.0
+
+        # typed dynamic attrs used across scheduling/cycles/shuttle
+        self.pre_last_selected_move_stats: dict[str, int] = {"cycles": 0, "paths": 0}
+        self.last_selected_move_stats: dict[str, int] = {"cycles": 0, "paths": 0}
+        self.rotated_ions: list[int] = []
+        self._bridge_set_cache: Any = None
+        self.in_process: dict[str, list[int]] = {}
+
+    @property
+    def pz_assignment_policy(self) -> str:
+        return self._pz_assignment_policy
+
+    @pz_assignment_policy.setter
+    def pz_assignment_policy(self, value: str) -> None:
+        self._pz_assignment_policy = value
 
     @property
     def mz_graph(self) -> Graph:
@@ -123,11 +163,11 @@ class Graph(nx.Graph):  # type: ignore [type-arg]
         self._locked_gates = value
 
     @property
-    def in_process(self) -> list[int]:
+    def in_process(self) -> dict[str, list[int]]:
         return self._in_process
 
     @in_process.setter
-    def in_process(self, value: list[int]) -> None:
+    def in_process(self, value: dict[str, list[int]]) -> None:
         self._in_process = value
 
     @property

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .types import Edge
+    from .ion_types import Edge
 
 
 @dataclass

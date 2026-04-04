@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import random
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import networkx as nx
 from more_itertools import distinct_combinations, pairwise
@@ -9,9 +9,11 @@ from more_itertools import distinct_combinations, pairwise
 from .graph_utils import get_idx_from_idc
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .graph import Graph
+    from .ion_types import Edge, Node
     from .processing_zone import ProcessingZone
-    from .types import Edge, Node
 
 
 def get_ions_in_pz_and_connections(graph: Graph, pz: ProcessingZone) -> int:
@@ -79,24 +81,81 @@ def create_starting_config(graph: Graph, n_of_ions: int, seed: int | None = None
     # Initialize ions on edges using an edge attribute
     nx.set_edge_attributes(graph, {key: [] for key in graph.edges()}, "ions")
 
-    if seed is not None:
+    if seed is not None and seed != -1:
         random.seed(seed)
+        # starting traps are traps which have access to a path to an edge of the outer_ring
+        # Find all nodes reachable FROM any outer ring node
+        reachable_from_outer = set()
+
+        outer_ring_nodes = [node for node, data in graph.nodes(data=True) if data.get("is_outer_ring")]
+        for outer in outer_ring_nodes:
+            reachable_from_outer.update(nx.node_connected_component(graph, outer))
+
+        # Candidate trap edges: DO NOT FILTER by reachability
+        traps = [(u, v) for u, v, data in graph.edges(data=True) if data.get("edge_type") == "trap"]
+        n_of_traps = len(traps)
+        if n_of_ions > n_of_traps:
+            msg = f"Cannot place {n_of_ions} ions on only {n_of_traps} trap edges."
+            raise ValueError(msg)
+
         starting_traps = []
-        traps = [edges for edges in graph.edges() if graph.get_edge_data(edges[0], edges[1])["edge_type"] == "trap"]
+        traps = [
+            (u, v)
+            for u, v, data in graph.edges(data=True)
+            if data.get("edge_type") == "trap" and (u in reachable_from_outer or v in reachable_from_outer)
+        ]
         n_of_traps = len(traps)
 
         random_starting_traps = random.sample(range(n_of_traps), (n_of_ions))
         for trap in random_starting_traps:
             starting_traps.append(traps[trap])
+    elif seed == -1:
+        starting_traps = []
+        start_ions_in_pzs = 2
+        pz_counter = 0
+        traps = [
+            edges
+            for edges in graph.edges()
+            if (
+                graph.get_edge_data(edges[0], edges[1])["edge_type"] == "trap"
+                or graph.get_edge_data(edges[0], edges[1])["edge_type"] == "parking_edge"
+            )
+        ]
+        for edges in traps:
+            if graph.get_edge_data(edges[0], edges[1])["edge_type"] == "parking_edge":
+                starting_traps.append(edges)
+                pz_counter += 1
+        for edges in traps:
+            if (
+                graph.get_edge_data(edges[0], edges[1])["edge_type"] == "trap"
+                and len(starting_traps) < n_of_ions - pz_counter
+            ):
+                starting_traps.append(edges)
     else:
         starting_traps = [
             edges for edges in graph.edges() if graph.get_edge_data(edges[0], edges[1])["edge_type"] == "trap"
         ][:n_of_ions]
     number_of_registers = len(starting_traps)
 
-    # place ions onto traps (ion0 on starting_trap0)
-    for ion, idc in enumerate(starting_traps):
-        graph.edges[idc]["ions"] = [ion]
+    if seed == -1:
+        specific_ions = True
+        if specific_ions:
+            ions = [0, 1, 2, 4, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+        else:
+            ions = list(range(n_of_ions))
+
+        edge_idx = 0
+        while edge_idx < len(starting_traps):
+            edge_idc = starting_traps[edge_idx]
+            if graph.get_edge_data(edge_idc[0], edge_idc[1])["edge_type"] == "parking_edge":
+                graph.edges[edge_idc]["ions"] = [ions.pop(0) for _ in range(start_ions_in_pzs)]
+            else:
+                graph.edges[edge_idc]["ions"] = [ions.pop(0)]
+            edge_idx += 1
+    else:
+        # place ions onto traps (ion0 on starting_trap0)
+        for ion, idc in enumerate(starting_traps):
+            graph.edges[idc]["ions"] = [ion]
 
     return number_of_registers
 
@@ -151,7 +210,68 @@ def check_if_edge_is_filled(graph: Graph, edge_idc: Edge) -> bool:
     return len(ion) > 0  # == 1
 
 
+PENALTY = 10**8
+
+
+def edge_weight_factory(
+    exclude_exit: bool,
+    exclude_first_entry_connection: bool,
+) -> Callable[[Node, Node, dict[str, Any]], float]:
+    def weight(_, __, edge_attr_dict):
+        edge_type = edge_attr_dict["edge_type"]
+        penalty = 0
+        if exclude_first_entry_connection and edge_type == "first_entry_connection":
+            penalty += PENALTY
+        if exclude_exit and edge_type == "exit":
+            penalty += PENALTY
+        return penalty + 1
+
+    return weight
+
+
+def precompute_all_paths(
+    nx_g: Graph,
+) -> dict[tuple[bool, bool], dict[Node, dict[Node, list[Node]]]]:
+    configs = [
+        (False, False),
+        (True, False),
+        (False, True),
+        (True, True),
+    ]
+
+    cache = {}
+    for exclude_exit, exclude_first_entry_connection in configs:
+        weight = edge_weight_factory(
+            exclude_exit=exclude_exit,
+            exclude_first_entry_connection=exclude_first_entry_connection,
+        )
+        cache[exclude_exit, exclude_first_entry_connection] = dict(nx.all_pairs_dijkstra_path(nx_g, weight=weight))
+    return cache
+
+
 def shortest_path_to_node(
+    nx_g: Graph,
+    src: Node,
+    tar: Node,
+    exclude_exit: bool = False,
+    exclude_first_entry_connection: bool = True,
+) -> list[Node] | None:
+    key = (exclude_exit, exclude_first_entry_connection)
+
+    cache = cast(
+        "dict[tuple[bool, bool], dict[Node, dict[Node, list[Node]]]] | None",
+        getattr(nx_g, "path_cache", None),
+    )
+    if cache is not None and key in cache and src in cache[key] and tar in cache[key][src]:
+        return cache[key][src][tar]
+
+    try:
+        return nx.shortest_path(nx_g, source=src, target=tar, weight="weight")
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
+        return None
+
+
+def shortest_path_to_node_no_cache(
     nx_g: Graph,
     src: Node,
     tar: Node,
@@ -198,9 +318,16 @@ def find_path_node_to_edge(
         # set weight of goal edge to inf (so it can't move past the edge)
         graph[goal_edge[0]][goal_edge[1]]["weight"] = float("inf")
 
+    shortest_path_to_node_func: Callable[[Graph, Node, Node, bool, bool], list[Node] | None]
+    # if graph has graph_cache
+    if hasattr(graph, "path_cache"):
+        shortest_path_to_node_func = shortest_path_to_node
+    else:
+        shortest_path_to_node_func = shortest_path_to_node_no_cache
+
     # find shortest path towards both sides (nodes of goal edge)
     try:
-        path0 = shortest_path_to_node(
+        path0 = shortest_path_to_node_func(
             graph,
             node,
             goal_edge[0],
@@ -210,7 +337,7 @@ def find_path_node_to_edge(
     except (nx.NetworkXNoPath, nx.NodeNotFound):
         path0 = None
     try:
-        path1 = shortest_path_to_node(
+        path1 = shortest_path_to_node_func(
             graph,
             node,
             goal_edge[1],
@@ -243,6 +370,7 @@ def find_path_edge_to_edge(
     goal_edge: Edge,
     exclude_exit: bool = False,
     exclude_first_entry_connection: bool = True,
+    find_any_path: bool = False,
 ) -> list[Node] | None:
     # Find path from edge_idc to goal_edge
     # does not include the target edge itself
@@ -268,7 +396,10 @@ def find_path_edge_to_edge(
         exclude_exit=exclude_exit,
         exclude_first_entry_connection=exclude_first_entry_connection,
     )
-    assert path0 is not None
+    if find_any_path:
+        pass
+    else:
+        assert path0 is not None, f"No path from node {edge_idc[0]} to goal edge {goal_edge}"
 
     path1 = find_path_node_to_edge(
         graph,
@@ -277,7 +408,18 @@ def find_path_edge_to_edge(
         exclude_exit=exclude_exit,
         exclude_first_entry_connection=exclude_first_entry_connection,
     )
-    assert path1 is not None
+    if find_any_path:
+        pass
+    else:
+        assert path1 is not None, f"No path from node {edge_idc[1]} to goal edge {goal_edge}"
+
+    # if one path is None return the other one, if both are None return None
+    if path0 is None:
+        if path1 is not None:
+            return path1
+        return None
+    if path1 is None and path0 is not None:
+        return path0
 
     # return min path
     if len(path1) < len(path0):
@@ -312,18 +454,62 @@ def find_next_edge(
     ):
         for node in goal_edge:
             if node in edge_idc:
-                return goal_edge
+                candidate = goal_edge
+                # strict stub rule below
+                break
+        else:
+            candidate = None
+    else:
+        candidate = None
 
-    node_path = find_path_edge_to_edge(
-        graph,
-        edge_idc,
-        goal_edge,
-        exclude_exit=exclude_exit,
-        exclude_first_entry_connection=exclude_first_entry_connection,
-    )
-    assert node_path is not None
+    if candidate is None:
+        node_path = find_path_edge_to_edge(
+            graph,
+            edge_idc,
+            goal_edge,
+            exclude_exit=exclude_exit,
+            exclude_first_entry_connection=exclude_first_entry_connection,
+        )
+        assert node_path is not None
+        candidate = (node_path[0], node_path[1])
 
-    return (node_path[0], node_path[1])
+    # -------- strict stub rule --------
+    def is_stub_node(n: Node) -> bool:
+        return bool(graph.nodes[n].get("is_stub", False))
+
+    def edge_touches_stub(e: Edge) -> bool:
+        return is_stub_node(e[0]) or is_stub_node(e[1])
+
+    current_on_stub = edge_touches_stub(edge_idc)
+    next_touches_stub = edge_touches_stub(candidate)
+
+    # Disallow entering stub edges from normal edges.
+    # Allow moves while already on a stub edge (to get out / move along escape path).
+    if next_touches_stub and not current_on_stub:
+        # try to find a non-stub alternative by temporarily banning stub edges
+        g_tmp = graph.copy()
+        for u, v in list(g_tmp.edges()):
+            if is_stub_node(u) or is_stub_node(v):
+                g_tmp[u][v]["weight"] = float("inf")
+
+        node_path2 = find_path_edge_to_edge(
+            g_tmp,
+            edge_idc,
+            goal_edge,
+            exclude_exit=exclude_exit,
+            exclude_first_entry_connection=exclude_first_entry_connection,
+            find_any_path=True,
+        )
+
+        if node_path2 is not None and len(node_path2) >= 2:
+            candidate2 = (node_path2[0], node_path2[1])
+            if not edge_touches_stub(candidate2):
+                return candidate2
+
+        # no safe alternative: stay in place (stop move)
+        return edge_idc
+
+    return candidate
 
 
 def find_ordered_edges(graph: Graph, edge1: Edge, edge2: Edge) -> tuple[Edge, Edge]:
@@ -351,29 +537,35 @@ def find_ordered_edges(graph: Graph, edge1: Edge, edge2: Edge) -> tuple[Edge, Ed
     return edge1_in_order, edge2_in_order
 
 
-def create_cycle(graph: Graph, edge_idc: Edge, next_edge: Edge) -> list[Edge]:
+def create_cycle(graph: Graph, edge_idc: Edge, next_edge: Edge) -> list[Edge] | None:
+    bridge_set = getattr(graph, "_bridge_set_cache", None)
+    if bridge_set is None:
+        bridge_set = {tuple(sorted(e)) for e in nx.bridges(graph)}
+        graph._bridge_set_cache = bridge_set
+
+    if tuple(sorted(edge_idc)) in bridge_set:
+        return None
+
     idc_dict = graph.idc_dict
+    blocked = {
+        get_idx_from_idc(idc_dict, edge_idc),
+        get_idx_from_idc(idc_dict, next_edge),
+    }
 
-    # cycles within memory zone
-    node_path = nx.shortest_path(
-        graph,
-        next_edge[1],
-        edge_idc[0],
-        lambda node0, node1, _: [
-            1e8
-            if (
-                get_idx_from_idc(idc_dict, (node0, node1)) == get_idx_from_idc(idc_dict, edge_idc)
-                or get_idx_from_idc(idc_dict, (node0, node1)) == get_idx_from_idc(idc_dict, next_edge)
-                or graph.get_edge_data(node0, node1)["edge_type"] == "entry"
-                or graph.get_edge_data(node0, node1)["edge_type"] == "first_entry_connection"
-            )
-            else 1
-        ][0],
-    )
-    edge_path = []
-    for edge in pairwise(node_path):
-        edge_path.append(edge)
+    def edge_ok(u: Node, v: Node) -> bool:
+        data = graph.get_edge_data(u, v)
+        if data["edge_type"] in {"entry", "first_entry_connection"}:
+            return False
+        return get_idx_from_idc(idc_dict, (u, v)) not in blocked
 
+    g_view = nx.subgraph_view(graph, filter_edge=edge_ok)
+
+    try:
+        node_path = nx.shortest_path(g_view, next_edge[1], edge_idc[0])
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
+        return None
+
+    edge_path = list(pairwise(node_path))
     return [edge_idc, next_edge, *edge_path, edge_idc]
 
 
@@ -429,8 +621,8 @@ def find_conflict_cycle_idxs(graph: Graph, cycles_dict: dict[int, list[Edge]]) -
         nodes1 = get_cycle_nodes(cycle1, graph)
         nodes2 = get_cycle_nodes(cycle2, graph)
 
-        # new: exclude processing zone node -> if pz node in circles -> can both be executed (TODO check again for moves out of pz)
-        # extra: if both end in same edge -> don't execute (scenario where path out of pz ends in same edge as next edge for other)
+        # exclude processing zone node -> if pz node in circles -> can both be executed
+        # if both end in same edge -> don't execute (scenario where path out of pz ends in same edge as next edge for other)
         # -> new exclude parking edge (can end both in parking edge, since stop moves in parking edge also end in parking edge)
         if len(nodes1.intersection(nodes2)) > 0 or (  # noqa: SIM102
             get_idx_from_idc(graph.idc_dict, cycles_dict[cycle1][-1])
@@ -458,5 +650,4 @@ def find_conflict_cycle_idxs(graph: Graph, cycles_dict: dict[int, list[Edge]]) -
                 )
             ):
                 junction_shared_pairs.append((cycle1, cycle2))
-
     return junction_shared_pairs

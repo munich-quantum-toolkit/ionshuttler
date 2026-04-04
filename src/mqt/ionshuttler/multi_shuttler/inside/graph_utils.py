@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .graph import Graph
-    from .types import Edge
+    from .ion_types import Edge
 
 
 def create_idc_dictionary(graph: Graph) -> dict[int, Edge]:
