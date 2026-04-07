@@ -25,18 +25,18 @@ class TestCreateGraph:
         pz_nodes = [n for n in g.nodes() if g.nodes[n].get("node_type") == "processing_zone_node"]
         assert len(pz_nodes) == 1
 
-    def test_graph_has_entry_and_exit(self, small_grid_graph):
+    def test_graph_has_entry_and_exit(self, medium_grid_graph):
         """The graph must have exactly one entry and one exit edge."""
-        g = small_grid_graph
+        g = medium_grid_graph
         edge_types = nx.get_edge_attributes(g, "edge_type")
         entries = [e for e, t in edge_types.items() if t == "entry"]
         exits = [e for e, t in edge_types.items() if t == "exit"]
         assert len(entries) == 1
         assert len(exits) == 1
 
-    def test_graph_has_trap_edges(self, small_grid_graph):
+    def test_graph_has_trap_edges(self, medium_grid_graph):
         """The graph should contain trap edges."""
-        g = small_grid_graph
+        g = medium_grid_graph
         edge_types = nx.get_edge_attributes(g, "edge_type")
         traps = [e for e, t in edge_types.items() if t == "trap"]
         assert len(traps) > 0
@@ -160,16 +160,17 @@ class TestGraphUtils:
         with pytest.raises(ValueError, match="pz must be"):
             GraphCreator(3, 3, 1, 1, "invalid")
 
-    def test_get_path_to_node(self, small_grid_graph):
+    def test_get_path_to_node(self, medium_grid_graph):
         """get_path_to_node should return a non-empty path between connected nodes."""
         from mqt.ionshuttler.single_shuttler.memory_sat import get_path_to_node
 
-        nodes = list(small_grid_graph.nodes())
-        trap_nodes = [n for n in nodes if small_grid_graph.nodes[n].get("node_type") in {"trap_node", "junction_node"}]
-        if len(trap_nodes) >= 2:
-            path = get_path_to_node(small_grid_graph, trap_nodes[0], trap_nodes[1])
-            assert isinstance(path, list)
-            assert len(path) >= 1
+        g = medium_grid_graph
+        trap_edge = next(
+            edge for edge, edge_type in nx.get_edge_attributes(g, "edge_type").items() if edge_type == "trap"
+        )
+        path = get_path_to_node(g, trap_edge[0], trap_edge[1])
+        assert isinstance(path, list)
+        assert len(path) >= 1
 
     def test_find_connected_edges(self):
         """GraphCreator.find_connected_edges should return non-empty list."""
@@ -279,18 +280,19 @@ class TestCompilation:
 class TestMemorySAT:
     """Tests for the SAT-based exact solver."""
 
-    def test_trivial_single_qubit_sequence(self):
-        """A trivial 1-qubit sequence on a 2x2 grid should be satisfiable."""
-        from mqt.ionshuttler.single_shuttler.memory_sat import MemorySAT, create_graph
+    def test_trivial_single_qubit_sequence(self, medium_grid_graph):
+        """A trivial sequence on a small connected grid should be satisfiable."""
+        from mqt.ionshuttler.single_shuttler.memory_sat import MemorySAT
 
-        g = create_graph(2, 2, 1, 1)
+        g = medium_grid_graph
         starting_traps = [e for e in g.edges() if g.get_edge_data(*e)["edge_type"] == "trap"][:2]
+        assert len(starting_traps) == 2
         ions = [0, 1]
         sat_solver = MemorySAT(g, 1, 1, ions, timesteps=4)
-        sat_solver.create_constraints(starting_traps)
+
         # Sequence: bring ion 0 then ion 1 to PZ
         result = sat_solver.evaluate([0, 1], num_of_registers=2)
-        assert isinstance(result, bool)
+        assert result is True
 
     def test_sat_solver_with_full_register_config(self, exact_config_full_register):
         """The exact solver should find a solution for the full_register_access config."""

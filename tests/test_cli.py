@@ -31,6 +31,7 @@ class TestCLISmoke:
             capture_output=True,
             text=True,
             check=False,
+            timeout=30,
         )
         assert result.returncode == 0
         assert "config_file" in result.stdout.lower() or "usage" in result.stdout.lower()
@@ -42,6 +43,7 @@ class TestCLISmoke:
             capture_output=True,
             text=True,
             check=False,
+            timeout=30,
         )
         assert result.returncode == 0
         assert "config_file" in result.stdout.lower() or "usage" in result.stdout.lower()
@@ -53,6 +55,7 @@ class TestCLISmoke:
             capture_output=True,
             text=True,
             check=False,
+            timeout=30,
         )
         assert result.returncode != 0
 
@@ -63,6 +66,7 @@ class TestCLISmoke:
             capture_output=True,
             text=True,
             check=False,
+            timeout=30,
         )
         assert result.returncode != 0
 

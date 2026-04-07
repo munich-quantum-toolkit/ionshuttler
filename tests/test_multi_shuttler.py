@@ -413,7 +413,7 @@ class TestMultiMainValidation:
             main({"arch": [3, 3, 1, 1], "abs_num_ions": 6})
 
     def test_missing_num_ions_raises(self):
-        """Without ion-count fields, main defaults and later exits on missing QASM."""
+        """Without ion-count fields, main defaults and exits when QASM is missing."""
         from mqt.ionshuttler.multi_shuttler.main import main
 
         with pytest.raises(SystemExit) as exc_info:
