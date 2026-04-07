@@ -7,12 +7,14 @@ runs so that the coverage tool can track the ``__main__`` code paths.
 
 from __future__ import annotations
 
+import importlib
 import json
 import subprocess
 import sys
+from typing import Any, cast
 
-import pytest
-
+# Keep string-literal cast for Ruff TC006 in this repo.
+pytest = cast("Any", importlib.import_module("pytest"))
 
 # ===================================================================
 # Subprocess smoke tests (--help, missing args)
@@ -22,41 +24,45 @@ import pytest
 class TestCLISmoke:
     """Subprocess smoke tests that the CLIs are installed and respond."""
 
-    def test_exact_cli_help(self):
+    def test_exact_cli_help(self) -> None:
         """The exact CLI should respond to --help."""
         result = subprocess.run(
             [sys.executable, "-m", "mqt.ionshuttler.single_shuttler", "--help"],
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode == 0
         assert "config_file" in result.stdout.lower() or "usage" in result.stdout.lower()
 
-    def test_heuristic_cli_help(self):
+    def test_heuristic_cli_help(self) -> None:
         """The heuristic CLI should respond to --help."""
         result = subprocess.run(
             [sys.executable, "-m", "mqt.ionshuttler.multi_shuttler", "--help"],
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode == 0
         assert "config_file" in result.stdout.lower() or "usage" in result.stdout.lower()
 
-    def test_exact_cli_missing_config_exits_nonzero(self):
+    def test_exact_cli_missing_config_exits_nonzero(self) -> None:
         """Running the exact CLI without a config file should fail gracefully."""
         result = subprocess.run(
             [sys.executable, "-m", "mqt.ionshuttler.single_shuttler"],
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode != 0
 
-    def test_heuristic_cli_missing_config_exits_nonzero(self):
+    def test_heuristic_cli_missing_config_exits_nonzero(self) -> None:
         """Running the heuristic CLI without a config file should fail gracefully."""
         result = subprocess.run(
             [sys.executable, "-m", "mqt.ionshuttler.multi_shuttler"],
             capture_output=True,
             text=True,
+            check=False,
         )
         assert result.returncode != 0
 
@@ -69,7 +75,12 @@ class TestCLISmoke:
 class TestCLIInProcess:
     """In-process tests that invoke __main__.main() with monkeypatched sys.argv."""
 
-    def test_exact_cli_with_config(self, exact_config_full_register, tmp_path, monkeypatch):
+    def test_exact_cli_with_config(
+        self,
+        exact_config_full_register: dict[str, object],
+        tmp_path: Any,
+        monkeypatch: Any,
+    ) -> None:
         """Running the exact CLI main() with a valid config should succeed."""
         from mqt.ionshuttler.single_shuttler.__main__ import main
 
@@ -79,7 +90,12 @@ class TestCLIInProcess:
         monkeypatch.setattr("sys.argv", ["mqt-ionshuttler-exact", str(config_file)])
         main()  # Should not raise
 
-    def test_heuristic_cli_with_config(self, heuristic_config_1pz, tmp_path, monkeypatch):
+    def test_heuristic_cli_with_config(
+        self,
+        heuristic_config_1pz: dict[str, object],
+        tmp_path: Any,
+        monkeypatch: Any,
+    ) -> None:
         """Running the heuristic CLI main() with a valid config should succeed."""
         from mqt.ionshuttler.multi_shuttler.__main__ import main
 
@@ -89,7 +105,7 @@ class TestCLIInProcess:
         monkeypatch.setattr("sys.argv", ["mqt-ionshuttler-heuristic", str(config_file)])
         main()  # Should not raise
 
-    def test_exact_cli_missing_config_raises(self, monkeypatch):
+    def test_exact_cli_missing_config_raises(self, monkeypatch: Any) -> None:
         """The exact CLI main() should raise SystemExit when no config is given."""
         from mqt.ionshuttler.single_shuttler.__main__ import main
 
@@ -98,7 +114,7 @@ class TestCLIInProcess:
             main()
         assert exc_info.value.code != 0
 
-    def test_heuristic_cli_missing_config_raises(self, monkeypatch):
+    def test_heuristic_cli_missing_config_raises(self, monkeypatch: Any) -> None:
         """The heuristic CLI main() should raise SystemExit when no config is given."""
         from mqt.ionshuttler.multi_shuttler.__main__ import main
 
@@ -107,7 +123,7 @@ class TestCLIInProcess:
             main()
         assert exc_info.value.code != 0
 
-    def test_heuristic_cli_nonexistent_config(self, tmp_path, monkeypatch):
+    def test_heuristic_cli_nonexistent_config(self, tmp_path: Any, monkeypatch: Any) -> None:
         """The heuristic CLI should sys.exit(1) for a missing config file."""
         from mqt.ionshuttler.multi_shuttler.__main__ import main
 
@@ -116,7 +132,7 @@ class TestCLIInProcess:
             main()
         assert exc_info.value.code == 1
 
-    def test_heuristic_cli_invalid_json(self, tmp_path, monkeypatch):
+    def test_heuristic_cli_invalid_json(self, tmp_path: Any, monkeypatch: Any) -> None:
         """The heuristic CLI should sys.exit(1) for an invalid JSON file."""
         from mqt.ionshuttler.multi_shuttler.__main__ import main
 

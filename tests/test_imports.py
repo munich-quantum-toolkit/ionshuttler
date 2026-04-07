@@ -33,14 +33,12 @@ def test_all_submodules_importable():
     }
 
     failed = []
-    for _, name, _ in pkgutil.walk_packages(
-        mqt.ionshuttler.__path__, prefix=mqt.ionshuttler.__name__ + "."
-    ):
+    for _, name, _ in pkgutil.walk_packages(mqt.ionshuttler.__path__, prefix=mqt.ionshuttler.__name__ + "."):
         if name in skip:
             continue
         try:
             importlib.import_module(name)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             failed.append((name, exc))
 
     assert not failed, "\n".join(f"{n}: {e}" for n, e in failed)

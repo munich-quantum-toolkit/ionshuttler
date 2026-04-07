@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-import networkx as nx
-import pytest
+import importlib
+from typing import Any, cast
 
+import networkx as nx
+
+pytest = cast("Any", importlib.import_module("pytest"))
 
 # ===================================================================
 # Graph creation tests
@@ -15,7 +18,7 @@ class TestCreateGraph:
     """Tests for the ``create_graph`` function in ``memory_sat``."""
 
     def test_basic_2x2_graph_structure(self, small_grid_graph):
-        """A 2×2 graph should have the expected nodes and edge types."""
+        """A 2x2 graph should have the expected nodes and edge types."""
         g = small_grid_graph
         assert isinstance(g, nx.Graph)
         # Must contain at least one processing zone node
@@ -45,7 +48,7 @@ class TestCreateGraph:
         assert len(junction_nodes) > 0
 
     def test_3x3_graph_has_more_traps_than_2x2(self, small_grid_graph, medium_grid_graph):
-        """A 3×3 graph should have more trap edges than a 2×2 graph."""
+        """A 3x3 graph should have more trap edges than a 2x2 graph."""
         et_small = nx.get_edge_attributes(small_grid_graph, "edge_type")
         et_medium = nx.get_edge_attributes(medium_grid_graph, "edge_type")
         traps_small = sum(1 for t in et_small.values() if t == "trap")
@@ -162,7 +165,7 @@ class TestGraphUtils:
         from mqt.ionshuttler.single_shuttler.memory_sat import get_path_to_node
 
         nodes = list(small_grid_graph.nodes())
-        trap_nodes = [n for n in nodes if small_grid_graph.nodes[n].get("node_type") in ("trap_node", "junction_node")]
+        trap_nodes = [n for n in nodes if small_grid_graph.nodes[n].get("node_type") in {"trap_node", "junction_node"}]
         if len(trap_nodes) >= 2:
             path = get_path_to_node(small_grid_graph, trap_nodes[0], trap_nodes[1])
             assert isinstance(path, list)
@@ -277,7 +280,7 @@ class TestMemorySAT:
     """Tests for the SAT-based exact solver."""
 
     def test_trivial_single_qubit_sequence(self):
-        """A trivial 1-qubit sequence on a 2×2 grid should be satisfiable."""
+        """A trivial 1-qubit sequence on a 2x2 grid should be satisfiable."""
         from mqt.ionshuttler.single_shuttler.memory_sat import MemorySAT, create_graph
 
         g = create_graph(2, 2, 1, 1)
@@ -309,4 +312,3 @@ class TestSingleShuttlerMain:
         from mqt.ionshuttler.single_shuttler.main import main
 
         main(exact_config_qft05)  # Should not raise
-
