@@ -403,14 +403,14 @@ class TestMultiMainValidation:
         from mqt.ionshuttler.multi_shuttler.main import main
 
         with pytest.raises(ValueError, match="arch"):
-            main({"algorithm_name": "test", "num_ions": 6})
+            main({"algorithm_name": "test", "abs_num_ions": 6})
 
     def test_missing_algorithm_name_raises(self):
         """main should raise ValueError when 'algorithm_name' is missing."""
         from mqt.ionshuttler.multi_shuttler.main import main
 
         with pytest.raises(ValueError, match="algorithm_name"):
-            main({"arch": [3, 3, 1, 1], "num_ions": 6})
+            main({"arch": [3, 3, 1, 1], "abs_num_ions": 6})
 
     def test_missing_num_ions_raises(self):
         """Without ion-count fields, main defaults and later exits on missing QASM."""
@@ -425,7 +425,7 @@ class TestMultiMainValidation:
         from mqt.ionshuttler.multi_shuttler.main import main
 
         with pytest.raises(ValueError, match="arch"):
-            main({"arch": [3, 3], "algorithm_name": "test", "num_ions": 6})
+            main({"arch": [3, 3], "algorithm_name": "test", "abs_num_ions": 6})
 
 
 # ===================================================================
