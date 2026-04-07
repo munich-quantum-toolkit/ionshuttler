@@ -438,11 +438,12 @@ class TestMultiShuttlerMain:
 
     def test_main_1pz(self, heuristic_config_1pz):
         """main() should complete without error for the 1-PZ config."""
+        from mqt.ionshuttler.multi_shuttler.main import main
 
+        main(heuristic_config_1pz)  # Should not raise
 
-def test_main() -> None:
-    config_file = Path(__file__).absolute().parent.parent / "inputs/algorithms_heuristic/qft_06_1pz.json"
-    with Path(config_file).open("r", encoding="utf-8") as f:
-        config = json.load(f)
+    def test_main_2pzs(self, heuristic_config_2pzs):
+        """main() should complete without error for the 2-PZ config."""
+        from mqt.ionshuttler.multi_shuttler.main import main
 
-    main(config)
+        main(heuristic_config_2pzs)  # Should not raise
