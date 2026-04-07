@@ -438,7 +438,6 @@ class TestMultiShuttlerMain:
 
     def test_main_1pz(self, heuristic_config_1pz):
         """main() should complete without error for the 1-PZ config."""
-        from mqt.ionshuttler.multi_shuttler.main import main
 
 
 def test_main() -> None:
