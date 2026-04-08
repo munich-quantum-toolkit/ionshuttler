@@ -144,6 +144,7 @@ _IEEE Trans. on CAD of Integrated Circuits and Systems 44, 2144_, 2024.
 [[3]](https://arxiv.org/abs/2505.07928)
 D. Schoenberger and R. Wille
 Orchestrating Multi-Zone Shuttling in Trapped-Ion Quantum Computers.
+_IEEE International Conference on Quantum Computing and Engineering_, 2025.
 
 ---
 
