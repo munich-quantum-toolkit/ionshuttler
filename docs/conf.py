@@ -17,7 +17,11 @@ if TYPE_CHECKING:
 ROOT = Path(__file__).parent.parent.resolve()
 
 
-version = metadata.version("mqt.ionshuttler")
+try:
+    version = metadata.version("mqt.ionshuttler")
+except ModuleNotFoundError:
+    msg = "mqt.ionshuttler must be installed to build the documentation"
+    raise ModuleNotFoundError(msg) from None
 
 
 # Filter git details from version
