@@ -95,6 +95,7 @@ def pick_pz_for_2_q_gate(graph: Graph, ion0: int, ion1: int) -> str:
 def assign_gate_to_pz(graph: Graph, gate: GateRef) -> str:
     policy = getattr(graph, "pz_assignment_policy", "legacy")
     qubits = graph.gate_qubits(gate)
+    gate_id = gate if isinstance(gate, int) else None
 
     if len(qubits) == 1:
         ion = qubits[0]
@@ -108,8 +109,8 @@ def assign_gate_to_pz(graph: Graph, gate: GateRef) -> str:
             raise ValueError(msg)
 
     elif len(qubits) == 2:
-        if gate in graph.locked_gates:
-            chosen_pz = graph.locked_gates[gate]
+        if gate_id is not None and gate_id in graph.locked_gates:
+            chosen_pz = graph.locked_gates[gate_id]
         else:
             ion0, ion1 = qubits
             if policy == "legacy":
@@ -120,7 +121,8 @@ def assign_gate_to_pz(graph: Graph, gate: GateRef) -> str:
             else:
                 msg = f"Unknown pz_assignment_policy: {policy}"
                 raise ValueError(msg)
-            graph.locked_gates[gate] = chosen_pz
+            if gate_id is not None:
+                graph.locked_gates[gate_id] = chosen_pz
     else:
         msg = f"Unsupported gate arity: {qubits}"
         raise ValueError(msg)
@@ -132,7 +134,7 @@ def create_priority_queue(
     graph: Graph,
     pz_executing_gate_order: list[str],
     max_length: int = 10,
-) -> tuple[dict[int, str], dict[str, GateRef | tuple[()]]]:
+) -> tuple[dict[int, str], dict[str, int | tuple[()]]]:
     """
     Create a priority queue based on a given graph and sequence of gates.
     Also creates a dictionary of the next gate of each processing zone.
@@ -175,7 +177,8 @@ def create_priority_queue(
                 # otherwise maybe pz changes if both move in a way, that favors a new pz
                 # -> could result in a bug, if the very next iterations
                 # change state back to old pz
-                graph.locked_gates[gate] = pz_for_2_q_gate
+                if isinstance(gate, int):
+                    graph.locked_gates[gate] = pz_for_2_q_gate
 
             # add ions to unique_sequence
             for elem in qubits:
@@ -233,7 +236,7 @@ def create_priority_queue(
             for ion in ions_in_entry_connections:
                 unique_sequence[ion] = pz.name
                 unique_sequence.move_to_end(ion, last=False)
-    return unique_sequence, graph.next_gate_at_pz
+    return dict(unique_sequence), graph.next_gate_at_pz
 
 
 def get_partitioned_priority_queues(priority_queue: dict[int, str]) -> dict[str, list[int]]:

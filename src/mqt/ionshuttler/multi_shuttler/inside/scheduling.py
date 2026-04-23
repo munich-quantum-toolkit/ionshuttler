@@ -116,6 +116,7 @@ def create_priority_queue(
     next_gate_at_pz: dict[str, GateRef | tuple[()]] = {}
     for gate in sequence_to_use:
         qubits = graph.gate_qubits(gate)
+        gate_id = gate if isinstance(gate, int) else None
         # 1-qubit gate
         if len(qubits) == 1:
             elem = qubits[0]
@@ -132,13 +133,13 @@ def create_priority_queue(
 
         # 2-qubit gate
         elif len(qubits) == 2:
-            if gate not in graph.locked_gates:
+            if gate_id is None or gate_id not in graph.locked_gates:
                 # pick processing zone for 2-qubit gate
                 pz_for_2_q_gate = pick_pz_for_2_q_gate(graph, qubits[0], qubits[1])
                 # new in multishuttler outside:
                 # graph.locked_gates[seq_elem] = pz_for_2_q_gate
             else:
-                pz_for_2_q_gate = graph.locked_gates[gate]
+                pz_for_2_q_gate = graph.locked_gates[gate_id]
 
             # add first gate of pz to next_gate_at_pz (if not already there)
             if pz_for_2_q_gate not in next_gate_at_pz or next_gate_at_pz[pz_for_2_q_gate] == ():
@@ -147,7 +148,8 @@ def create_priority_queue(
                 # otherwise maybe pz changes if both move in a way, that favors a new pz
                 # -> could result in a bug, if the very next iterations
                 # change state back to old pz
-                graph.locked_gates[gate] = pz_for_2_q_gate
+                if gate_id is not None:
+                    graph.locked_gates[gate_id] = pz_for_2_q_gate
 
             # add ions to unique_sequence
             for elem in qubits:

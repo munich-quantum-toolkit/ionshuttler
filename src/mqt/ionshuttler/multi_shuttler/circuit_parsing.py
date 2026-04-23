@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
-from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 from qiskit.qasm2 import dumps
 from qiskit.qasm3 import loads as load_qasm3
 
 from .circuit_types import GateInfo, ParsedCircuit
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
 
 _HEADER_PREFIXES = ("OPENQASM", "include", "qreg", "creg", "gate", "barrier", "measure")
 _QUBIT_PATTERN = re.compile(r"q\[(\d+)\]")
@@ -37,6 +40,7 @@ def normalize_qasm_registers(qasm_str: str, *, qreg_name: str = "q", creg_name: 
     """Rewrite all quantum registers into a single canonical register order."""
 
     circuit = _load_quantum_circuit(qasm_str)
+    clbit_map: dict[object, object] = {}
 
     qreg_new = QuantumRegister(circuit.num_qubits, qreg_name)
     if circuit.num_clbits:
@@ -45,7 +49,6 @@ def normalize_qasm_registers(qasm_str: str, *, qreg_name: str = "q", creg_name: 
         clbit_map = {old: creg_new[index] for index, old in enumerate(circuit.clbits)}
     else:
         normalized_circuit = QuantumCircuit(qreg_new)
-        clbit_map: dict[object, object] = {}
 
     qubit_map = {old: qreg_new[index] for index, old in enumerate(circuit.qubits)}
     normalized_circuit.compose(
@@ -54,7 +57,7 @@ def normalize_qasm_registers(qasm_str: str, *, qreg_name: str = "q", creg_name: 
         clbits=[clbit_map[clbit] for clbit in circuit.clbits] if circuit.clbits else None,
         inplace=True,
     )
-    return dumps(normalized_circuit)
+    return cast("str", dumps(normalized_circuit))
 
 
 def parse_qasm_circuit(filename: Path, *, normalize_registers: bool = True) -> ParsedCircuit:
@@ -92,4 +95,4 @@ def _load_quantum_circuit(qasm_str: str) -> QuantumCircuit:
     try:
         return QuantumCircuit.from_qasm_str(qasm_str)
     except Exception:
-        return load_qasm3(qasm_str)
+        return cast("QuantumCircuit", load_qasm3(qasm_str))

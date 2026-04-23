@@ -1,8 +1,12 @@
-import re
-from pathlib import Path
+from __future__ import annotations
 
-from ..circuit_parsing import extract_qubits_from_gate, is_qasm_file, parse_qasm_circuit
-from ..circuit_types import ParsedCircuit
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from ..circuit_parsing import is_qasm_file, parse_qasm_circuit
+
+if TYPE_CHECKING:
+    from ..circuit_types import ParsedCircuit
 
 
 def parse_qasm(filename: Path) -> list[tuple[int, ...]]:

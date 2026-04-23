@@ -40,6 +40,8 @@ class Graph(nx.Graph):  # type: ignore [type-arg]
         super().__init__(*args, **kwargs)
         self.executed_gates_next: list[dict[str, object]] = []
         self._pz_assignment_policy: str = "legacy"  # default
+        self._gate_info: dict[int, GateInfo] = {}
+        self._dag_gate_id_lookup: dict[int, int] = {}
         self.run_stats: RunStats = RunStats()
         self.path_cache: dict[Any, Any] = {}
         self.max_timesteps: int = 1_000_000
@@ -151,19 +153,19 @@ class Graph(nx.Graph):  # type: ignore [type-arg]
         self._state = value
 
     @property
-    def sequence(self) -> list[GateRef]:
+    def sequence(self) -> list[int]:
         return self._sequence
 
     @sequence.setter
-    def sequence(self, value: list[GateRef]) -> None:
+    def sequence(self, value: list[int]) -> None:
         self._sequence = value
 
     @property
-    def locked_gates(self) -> dict[GateRef, str]:
+    def locked_gates(self) -> dict[int, str]:
         return self._locked_gates
 
     @locked_gates.setter
-    def locked_gates(self, value: dict[GateRef, str]) -> None:
+    def locked_gates(self, value: dict[int, str]) -> None:
         self._locked_gates = value
 
     @property
@@ -212,11 +214,11 @@ class Graph(nx.Graph):  # type: ignore [type-arg]
         self._map_to_pz = value
 
     @property
-    def next_gate_at_pz(self) -> dict[str, GateRef | tuple[()]]:
+    def next_gate_at_pz(self) -> dict[str, int | tuple[()]]:
         return self._next_gate_at_pz
 
     @next_gate_at_pz.setter
-    def next_gate_at_pz(self, value: dict[str, GateRef | tuple[()]]) -> None:
+    def next_gate_at_pz(self, value: dict[str, int | tuple[()]]) -> None:
         self._next_gate_at_pz = value
 
     @property

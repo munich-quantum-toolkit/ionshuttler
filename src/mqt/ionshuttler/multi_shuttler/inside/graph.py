@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import networkx as nx
 
@@ -16,9 +16,10 @@ GateRef = int | tuple[int, ...]
 
 
 class Graph(nx.Graph):  # type: ignore [type-arg]
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.executed_gates_next: list[dict[str, object]] = []
+        self._gate_info: dict[int, GateInfo] = {}
 
     @property
     def junction_nodes(self) -> list[Node]:
@@ -37,11 +38,11 @@ class Graph(nx.Graph):  # type: ignore [type-arg]
         self._pzs = value
 
     @property
-    def locked_gates(self) -> dict[GateRef, str]:
+    def locked_gates(self) -> dict[int, str]:
         return self._locked_gates
 
     @locked_gates.setter
-    def locked_gates(self, value: dict[GateRef, str]) -> None:
+    def locked_gates(self, value: dict[int, str]) -> None:
         self._locked_gates = value
 
     @property
@@ -84,11 +85,11 @@ class Graph(nx.Graph):  # type: ignore [type-arg]
         self._arch = value
 
     @property
-    def sequence(self) -> list[GateRef]:
+    def sequence(self) -> list[int]:
         return self._sequence
 
     @sequence.setter
-    def sequence(self, value: list[GateRef]) -> None:
+    def sequence(self, value: list[int]) -> None:
         self._sequence = value
 
     @property

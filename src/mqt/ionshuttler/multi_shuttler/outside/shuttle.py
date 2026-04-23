@@ -388,7 +388,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
 
         pz_executing_gate_order = find_pz_order(graph, gate_info_list)
         graph.locked_gates = locked_gates
-        priority_queue, next_gate_at_pz_dict = create_priority_queue(graph, pz_executing_gate_order)
+        priority_queue, _next_gate_at_pz_dict = create_priority_queue(graph, pz_executing_gate_order)
 
         for i in range(min(len(graph.pzs), len(graph.sequence))):
             gate = graph.sequence[i]
@@ -400,17 +400,9 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                     state1 = graph.state[ion1]
                     state2 = graph.state[ion2]
                     next_gate_qubits = graph.next_gate_qubits(pz.name)
-                    if (
-                        state1 == pz.parking_edge
-                        and ion1 in next_gate_qubits
-                        and ion2 in next_gate_qubits
-                    ):
+                    if state1 == pz.parking_edge and ion1 in next_gate_qubits and ion2 in next_gate_qubits:
                         graph.in_process[pz.name].append(ion1)
-                    if (
-                        state2 == pz.parking_edge
-                        and ion1 in next_gate_qubits
-                        and ion2 in next_gate_qubits
-                    ):
+                    if state2 == pz.parking_edge and ion1 in next_gate_qubits and ion2 in next_gate_qubits:
                         graph.in_process[pz.name].append(ion2)
 
         shuttle(graph, priority_queue, timestep, cycle_or_paths, unique_folder)
@@ -562,15 +554,15 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                             or getattr(gate_node, "name", None)
                             or "OP"
                         )
-                        qubits = list(
+                        exec_qubits = list(
                             getattr(gate_node, "qindices", [q._index for q in getattr(gate_node, "qargs", [])])
                         )
-                        duration = GATE_TIME_2Q if len(qubits) >= 2 else GATE_TIME_1Q
+                        duration = GATE_TIME_2Q if len(exec_qubits) >= 2 else GATE_TIME_1Q
                         t0_val = start_t if isinstance(start_t, int) else max(0, timestep - (duration - 1))
                         execs.append({
                             "id": f"t{timestep}_{pz_name}",
                             "type": gtype,
-                            "qubits": qubits,
+                            "qubits": exec_qubits,
                             "pz": pz_name,
                             "edge_idc": getattr(pz_obj, "parking_edge", None) if pz_obj else None,
                             "duration": duration,
@@ -596,9 +588,9 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
                     pz_used: ProcessingZone | None = None
                     for pz in graph.pzs:
                         try:
-                            if len(qubits) == 1 and get_idx_from_idc(graph.idc_dict, graph.state[qubits[0]]) == get_idx_from_idc(
-                                graph.idc_dict, pz.parking_edge
-                            ):
+                            if len(qubits) == 1 and get_idx_from_idc(
+                                graph.idc_dict, graph.state[qubits[0]]
+                            ) == get_idx_from_idc(graph.idc_dict, pz.parking_edge):
                                 pz_used = pz
                                 break
                             if len(qubits) == 2 and all(

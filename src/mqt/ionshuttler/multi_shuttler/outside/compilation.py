@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections import defaultdict, deque
 import math
 import re
+from collections import defaultdict, deque
 from typing import TYPE_CHECKING
 
 from qiskit import QuantumCircuit
@@ -11,16 +11,33 @@ from qiskit.dagcircuit import DAGDependency
 from qiskit.transpiler.passes import RemoveBarriers, RemoveFinalMeasurements
 
 from ..circuit_parsing import extract_qubits_from_gate, is_qasm_file, parse_qasm_circuit
-from ..circuit_types import ParsedCircuit
 from .cycles import get_state_idxs
 from .graph_utils import create_dist_dict, update_distance_map
 from .scheduling import assign_gate_to_pz
+
+__all__ = [
+    "build_dag_gate_id_lookup",
+    "create_dag",
+    "create_initial_circuit",
+    "create_initial_sequence",
+    "create_updated_sequence_destructive",
+    "extract_qubits_from_gate",
+    "get_all_first_gates_and_update_sequence_non_destructive",
+    "get_front_layer",
+    "is_qasm_file",
+    "manual_copy_dag",
+    "map_front_gates_to_pzs",
+    "parse_qasm",
+    "remove_node",
+    "remove_processed_gates",
+]
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from qiskit.dagcircuit import DAGDepNode
 
+    from ..circuit_types import GateInfo, ParsedCircuit
     from .graph import Graph
 
 
@@ -93,14 +110,14 @@ def manual_copy_dag(dag: DAGDependency) -> DAGDependency:
     return new_dag
 
 
-def build_dag_gate_id_lookup(dag: DAGDependency, gate_info: dict[int, object]) -> dict[int, int]:
+def build_dag_gate_id_lookup(dag: DAGDependency, gate_info: dict[int, GateInfo]) -> dict[int, int]:
     """Match DAG nodes to parsed gate ids by qubits and operation name."""
 
     gate_buckets: dict[tuple[tuple[int, ...], str], deque[int]] = defaultdict(deque)
     for gate_id in sorted(gate_info):
         metadata = gate_info[gate_id]
         gate_name = re.split(r"[\(\s\[]", metadata.qasm)[0]
-        gate_buckets[(metadata.qubits, gate_name)].append(gate_id)
+        gate_buckets[metadata.qubits, gate_name].append(gate_id)
 
     lookup: dict[int, int] = {}
     for node in dag.topological_nodes():
@@ -148,13 +165,14 @@ def create_updated_sequence_destructive(
     # assert file is a qasm file
     assert is_qasm_file(filename), "The file is not a valid QASM file."
 
+    seq: list[int]
     # generate sequence
     if use_dag is False:
         seq = list(graph.sequence)
         dag_dep = None
     else:
         working_dag = manual_copy_dag(dag_dep)
-        seq: list[int] = []
+        seq = []
         graph.dag_gate_id_lookup = build_dag_gate_id_lookup(working_dag, graph.gate_info)
 
         graph.dist_dict = create_dist_dict(graph)
@@ -250,7 +268,7 @@ def get_all_first_gates_and_update_sequence_non_destructive(
     Continue finding the subsequent "first gates" and update the sequence accordingly.
     Creates a compiled list of gates (ordered) for each pz from the DAG Dependency."""
 
-    ordered_sequence = []
+    ordered_sequence: list[int] = []
     processed_nodes: set[DAGDepNode] = set()  # Track nodes we've "virtually removed"
     # Dictionary to store the first gate for each processing zone
     first_nodes_by_pz = {}

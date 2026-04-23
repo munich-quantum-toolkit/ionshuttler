@@ -249,14 +249,14 @@ class TestMultiCompilation:
 
     def test_extract_qubits_from_gate(self):
         """extract_qubits_from_gate should parse qubit indices correctly."""
-        from mqt.ionshuttler.multi_shuttler.outside.compilation import extract_qubits_from_gate
+        from mqt.ionshuttler.multi_shuttler.circuit_parsing import extract_qubits_from_gate
 
         result = extract_qubits_from_gate("cx q[1],q[4];")
         assert result == [1, 4]
 
     def test_is_qasm_file(self, qasm_file_qft6):
         """is_qasm_file should return True for a valid QASM file."""
-        from mqt.ionshuttler.multi_shuttler.outside.compilation import is_qasm_file
+        from mqt.ionshuttler.multi_shuttler.circuit_parsing import is_qasm_file
 
         assert is_qasm_file(qasm_file_qft6) is True
 
@@ -286,16 +286,14 @@ class TestMultiCompilation:
 
         qasm_file = tmp_path / "multi_register.qasm"
         qasm_file.write_text(
-            "\n".join(
-                [
-                    "OPENQASM 2.0;",
-                    'include "qelib1.inc";',
-                    "qreg a[1];",
-                    "qreg b[1];",
-                    "cx a[0],b[0];",
-                    "x b[0];",
-                ]
-            ),
+            "\n".join([
+                "OPENQASM 2.0;",
+                'include "qelib1.inc";',
+                "qreg a[1];",
+                "qreg b[1];",
+                "cx a[0],b[0];",
+                "x b[0];",
+            ]),
             encoding="utf-8",
         )
 
@@ -350,9 +348,10 @@ class TestMultiCompilation:
 
     def test_inside_priority_queue_accepts_gate_ids(self):
         """The inside scheduler should accept gate-id sequences backed by metadata."""
+        from unittest.mock import patch
+
         from mqt.ionshuttler.multi_shuttler.circuit_types import GateInfo
         from mqt.ionshuttler.multi_shuttler.inside.scheduling import create_priority_queue
-        from unittest.mock import patch
 
         gate_info = {
             0: GateInfo(qubits=(0,), qasm="x q[0];"),
@@ -371,7 +370,7 @@ class TestMultiCompilation:
             "mqt.ionshuttler.multi_shuttler.inside.scheduling.pick_pz_for_2_q_gate",
             return_value="pz2",
         ):
-            priority_queue, next_gate_at_pz = create_priority_queue(graph)
+            priority_queue, next_gate_at_pz = create_priority_queue(cast("Any", graph))
 
         assert priority_queue == {0: "pz1", 1: "pz2", 2: "pz2"}
         assert next_gate_at_pz == {"pz1": 0, "pz2": 1}

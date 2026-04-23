@@ -268,7 +268,9 @@ def main(graph: Graph, sequence: list[int] | None, cycle_or_paths: str, record_p
                 for pz in graph.pzs:
                     state1 = graph.state[ion1]
                     state2 = graph.state[ion2]
-                    next_gate_qubits = () if next_gate_at_pz[pz.name] == () else graph.gate_qubits(next_gate_at_pz[pz.name])
+                    next_gate_qubits = (
+                        () if next_gate_at_pz[pz.name] == () else graph.gate_qubits(next_gate_at_pz[pz.name])
+                    )
                     # append ion to in_process if it is in the correct processing zone
                     if state1 == pz.edge_idc and ion1 in next_gate_qubits and ion2 in next_gate_qubits:
                         graph.in_process.append(ion1)
