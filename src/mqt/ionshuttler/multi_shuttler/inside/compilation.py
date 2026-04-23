@@ -1,47 +1,20 @@
 import re
 from pathlib import Path
 
-
-def is_qasm_file(filename: Path) -> bool:
-    # Check if the file has a .qasm extension
-    if filename.suffix != ".qasm":
-        return False
-
-    try:
-        with filename.open(encoding="utf-8") as file:
-            # Read the first line of the file (7th line, specific to MQT Bench)
-            for _f in range(7):
-                first_line = file.readline()
-            # Check if the first line contains the OPENQASM identifier
-            return "OPENQASM" in first_line
-    except OSError:
-        # If the file cannot be opened, return False
-        return False
-
-
-def extract_qubits_from_gate(gate_line: str) -> list[int]:
-    """Extract qubit numbers from a gate operation line."""
-    # Regular expression to match qubits (assuming they are in the format q[<number>])
-    pattern = re.compile(r"q\[(\d+)\]")
-    matches = pattern.findall(gate_line)
-
-    # Convert matched qubit numbers to integers
-    return [int(match) for match in matches]
+from ..circuit_parsing import extract_qubits_from_gate, is_qasm_file, parse_qasm_circuit
+from ..circuit_types import ParsedCircuit
 
 
 def parse_qasm(filename: Path) -> list[tuple[int, ...]]:
     """Parse a QASM file and return qubits used for each gate preserving their order."""
-    gates_and_qubits = []
-    with filename.open(encoding="utf-8") as file:
-        for line_ in file:
-            line = line_.strip()
+    return parse_qasm_circuit(filename, normalize_registers=False).qubit_sequence
 
-            # Check if line represents a gate operation
-            if not line.startswith(("OPENQASM", "include", "qreg", "creg", "gate", "barrier", "measure")):
-                qubits = extract_qubits_from_gate(line)
-                if qubits:
-                    gates_and_qubits.append(tuple(qubits))
-    return gates_and_qubits
+
+def create_initial_circuit(filename: Path) -> ParsedCircuit:
+    """Return a canonicalized parsed circuit with stable gate ids."""
+
+    assert is_qasm_file(filename), "The file is not a valid QASM file."
+    return parse_qasm_circuit(filename)
 
 
 def compile(filename: Path | str) -> list[tuple[int, ...]]:  # noqa: A001

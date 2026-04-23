@@ -9,6 +9,8 @@ from qiskit.converters import circuit_to_dagdependency
 from qiskit.dagcircuit import DAGDependency
 from qiskit.transpiler.passes import RemoveBarriers, RemoveFinalMeasurements
 
+from ..circuit_parsing import extract_qubits_from_gate, is_qasm_file, parse_qasm_circuit
+from ..circuit_types import ParsedCircuit
 from .cycles import get_state_idxs
 from .graph_utils import create_dist_dict, update_distance_map
 from .scheduling import assign_gate_to_pz
@@ -21,42 +23,10 @@ if TYPE_CHECKING:
     from .graph import Graph
 
 
-def is_qasm_file(file_path: Path) -> bool:
-    with file_path.open(encoding="utf-8") as file:
-        # Read the first line of the file (7th line, specific to MQT Bench)
-        first_line = ""
-        for _f in range(7):
-            first_line = file.readline()
-            if "OPENQASM" in first_line:
-                break
-        # Check if the first line contains the OPENQASM identifier
-        return "OPENQASM" in first_line
-
-
-def extract_qubits_from_gate(gate_line: str) -> list[int]:
-    """Extract qubit numbers from a gate operation line."""
-    # Regular expression to match qubits (assuming they are in the format q[<number>])
-    pattern = re.compile(r"q\[(\d+)\]")
-    matches = pattern.findall(gate_line)
-
-    # Convert matched qubit numbers to integers
-    return [int(match) for match in matches]
-
-
 def parse_qasm(filename: Path) -> list[tuple[int, ...]]:
     """Parse a QASM file and return qubits used for each gate
     preserving their order."""
-    gates_and_qubits = []
-    with filename.open(encoding="utf-8") as file:
-        for line_ in file:
-            line = line_.strip()
-
-            # Check if line represents a gate operation
-            if not line.startswith(("OPENQASM", "include", "qreg", "creg", "gate", "barrier", "measure")):
-                qubits = extract_qubits_from_gate(line)
-                if qubits:
-                    gates_and_qubits.append(tuple(qubits))
-    return gates_and_qubits
+    return parse_qasm_circuit(filename, normalize_registers=False).qubit_sequence
 
 
 def compile_qasm_file(filename: Path) -> list[tuple[int, ...]]:
@@ -129,6 +99,13 @@ def create_dag(filename: Path) -> DAGDependency:
     # Remove measurement operations
     qc = RemoveFinalMeasurements()(qc)
     return circuit_to_dagdependency(qc)
+
+
+def create_initial_circuit(filename: Path) -> ParsedCircuit:
+    """Return a canonicalized parsed circuit with stable gate ids."""
+
+    assert is_qasm_file(filename), "The file is not a valid QASM file."
+    return parse_qasm_circuit(filename)
 
 
 def create_initial_sequence(filename: Path) -> list[tuple[int, ...]]:

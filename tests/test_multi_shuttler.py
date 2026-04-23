@@ -247,6 +247,43 @@ class TestMultiCompilation:
         assert isinstance(result, list)
         assert len(result) > 0
 
+    def test_create_initial_circuit(self, qasm_file_qft6):
+        """create_initial_circuit should return stable gate ids with metadata."""
+        from mqt.ionshuttler.multi_shuttler.circuit_types import ParsedCircuit
+        from mqt.ionshuttler.multi_shuttler.outside.compilation import create_initial_circuit, create_initial_sequence
+
+        parsed = create_initial_circuit(qasm_file_qft6)
+
+        assert isinstance(parsed, ParsedCircuit)
+        assert parsed.sequence == list(range(len(parsed.sequence)))
+        assert len(parsed.gate_info) == len(parsed.sequence)
+        assert parsed.qubit_sequence == create_initial_sequence(qasm_file_qft6)
+
+    def test_create_initial_circuit_normalizes_registers(self, tmp_path):
+        """create_initial_circuit should canonicalize multi-register inputs."""
+        from mqt.ionshuttler.multi_shuttler.outside.compilation import create_initial_circuit
+
+        qasm_file = tmp_path / "multi_register.qasm"
+        qasm_file.write_text(
+            "\n".join(
+                [
+                    "OPENQASM 2.0;",
+                    'include "qelib1.inc";',
+                    "qreg a[1];",
+                    "qreg b[1];",
+                    "cx a[0],b[0];",
+                    "x b[0];",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        parsed = create_initial_circuit(qasm_file)
+
+        assert parsed.sequence == [0, 1]
+        assert parsed.gate_info[0].qubits == (0, 1)
+        assert parsed.gate_info[1].qubits == (1,)
+
     def test_create_dag(self, qasm_file_qft6):
         """create_dag should return a DAGDependency object."""
         from qiskit.dagcircuit import DAGDependency
