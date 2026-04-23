@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
+from mqt.ionshuttler.multi_shuttler.circuit_types import GateInfo
 from mqt.ionshuttler.multi_shuttler.outside import scheduling
 from mqt.ionshuttler.multi_shuttler.outside.graph import Graph
 from mqt.ionshuttler.multi_shuttler.outside.ion_types import Edge
@@ -185,6 +186,102 @@ def _mk_graph(state: dict[int, Edge], edge_types: dict[Edge, str]) -> Graph:
             get_edge_data=get_edge_data,
         ),
     )
+
+
+def _gate_qubits(gate_info: dict[int, GateInfo], gate: int | tuple[int, ...]) -> tuple[int, ...]:
+    if isinstance(gate, int):
+        return gate_info[gate].qubits
+    return gate
+
+
+def test_assign_gate_to_pz_uses_gate_info_for_single_qubit_gate_ids() -> None:
+    gate_info = {7: GateInfo(qubits=(3,), qasm="x q[3];")}
+    graph = cast(
+        "Graph",
+        SimpleNamespace(
+            gate_info=gate_info,
+            gate_qubits=lambda gate: _gate_qubits(gate_info, gate),
+            map_to_pz={3: "PZ1"},
+            locked_gates={},
+            pz_assignment_policy="legacy",
+        ),
+    )
+
+    assert scheduling.assign_gate_to_pz(graph, 7) == "PZ1"
+
+
+def test_assign_gate_to_pz_locks_two_qubit_gate_ids() -> None:
+    gate_info = {11: GateInfo(qubits=(1, 4), qasm="cx q[1],q[4];")}
+    locked_gates: dict[int, str] = {}
+    graph = cast(
+        "Graph",
+        SimpleNamespace(
+            gate_info=gate_info,
+            gate_qubits=lambda gate: _gate_qubits(gate_info, gate),
+            map_to_pz={1: "PZ1", 4: "PZ2"},
+            locked_gates=locked_gates,
+            pz_assignment_policy="legacy",
+        ),
+    )
+
+    with patch(
+        "mqt.ionshuttler.multi_shuttler.outside.scheduling.pick_pz_for_2_q_gate",
+        return_value="PZ2",
+    ) as picker:
+        assert scheduling.assign_gate_to_pz(graph, 11) == "PZ2"
+        assert scheduling.assign_gate_to_pz(graph, 11) == "PZ2"
+
+    picker.assert_called_once_with(graph, 1, 4)
+    assert locked_gates == {11: "PZ2"}
+
+
+def test_create_priority_queue_accepts_gate_ids() -> None:
+    gate_info = {
+        0: GateInfo(qubits=(0,), qasm="x q[0];"),
+        1: GateInfo(qubits=(1, 2), qasm="cx q[1],q[2];"),
+    }
+    graph = cast(
+        "Graph",
+        SimpleNamespace(
+            sequence=[0, 1],
+            gate_info=gate_info,
+            gate_qubits=lambda gate: _gate_qubits(gate_info, gate),
+            map_to_pz={0: "PZ1", 1: "PZ1", 2: "PZ2"},
+            locked_gates={},
+            next_gate_at_pz={},
+            pzs=[SimpleNamespace(name="PZ1"), SimpleNamespace(name="PZ2")],
+            pzs_name_map={
+                "PZ1": SimpleNamespace(
+                    name="PZ1",
+                    path_to_pz_idxs=[],
+                    path_from_pz_idxs=[],
+                ),
+                "PZ2": SimpleNamespace(
+                    name="PZ2",
+                    path_to_pz_idxs=[],
+                    path_from_pz_idxs=[],
+                ),
+            },
+            pz_assignment_policy="legacy",
+            idc_dict={},
+            state={},
+        ),
+    )
+
+    with (
+        patch(
+            "mqt.ionshuttler.multi_shuttler.outside.scheduling.pick_pz_for_2_q_gate",
+            return_value="PZ2",
+        ),
+        patch(
+            "mqt.ionshuttler.multi_shuttler.outside.scheduling.get_ions",
+            return_value={},
+        ),
+    ):
+        queue, next_gate_at_pz = scheduling.create_priority_queue(graph, ["PZ1", "PZ2"])
+
+    assert queue == {0: "PZ1", 1: "PZ2", 2: "PZ2"}
+    assert next_gate_at_pz == {"PZ1": 0, "PZ2": 1}
 
 
 def test_calculate_next_edges_trap_edge_uses_find_next_edge_and_ordering() -> None:

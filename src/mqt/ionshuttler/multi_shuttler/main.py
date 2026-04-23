@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import networkx as nx
 
-from .outside.compilation import create_dag, create_initial_sequence, create_updated_sequence_destructive
+from .outside.compilation import create_dag, create_initial_circuit, create_updated_sequence_destructive
 from .outside.cycles import create_starting_config, get_ions
 from .outside.graph_creator import GraphCreator, PZCreator
 from .outside.partition import get_partition
@@ -199,7 +199,9 @@ def main(config: dict[str, Any]) -> int:
     create_starting_config(graph, num_ions, seed=seed)
     graph.state = get_ions(graph)  # Get initial state {ion: edge_idc}
 
-    graph.sequence = create_initial_sequence(qasm_file_path)
+    parsed_circuit = create_initial_circuit(qasm_file_path)
+    graph.gate_info = parsed_circuit.gate_info
+    graph.sequence = parsed_circuit.sequence.copy()
     seq_length = len(graph.sequence)
     print(f"Number of Gates: {seq_length}")
 
@@ -238,7 +240,7 @@ def main(config: dict[str, Any]) -> int:
     graph.map_to_pz = map_to_pz
 
     # Validation
-    unique_sequence_qubits = {item for sublist in graph.sequence for item in sublist}
+    unique_sequence_qubits = {qubit for gate in graph.sequence for qubit in graph.gate_qubits(gate)}
     missing_qubits = unique_sequence_qubits - set(all_partition_elements)
     if missing_qubits:
         print(f"Error: Qubits {missing_qubits} from sequence are not in any partition.")
@@ -262,7 +264,7 @@ def main(config: dict[str, Any]) -> int:
             print("Falling back to non-compiled sequence.")
             use_dag = False  # Disable use_dag if setup fails
             dag = None
-            graph.sequence = create_initial_sequence(qasm_file_path)  # Revert to basic sequence
+            graph.sequence = parsed_circuit.sequence.copy()  # Revert to the basic parsed sequence
     else:
         print("DAG disabled, using static QASM sequence.")
 

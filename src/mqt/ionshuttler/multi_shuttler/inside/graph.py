@@ -7,8 +7,12 @@ import networkx as nx
 from .graph_utils import create_idc_dictionary
 
 if TYPE_CHECKING:
+    from ..circuit_types import GateInfo
     from .ion_types import Edge, Node
     from .processing_zone import ProcessingZone
+
+
+GateRef = int | tuple[int, ...]
 
 
 class Graph(nx.Graph):  # type: ignore [type-arg]
@@ -33,12 +37,27 @@ class Graph(nx.Graph):  # type: ignore [type-arg]
         self._pzs = value
 
     @property
-    def locked_gates(self) -> dict[tuple[int, ...], str]:
+    def locked_gates(self) -> dict[GateRef, str]:
         return self._locked_gates
 
     @locked_gates.setter
-    def locked_gates(self, value: dict[tuple[int, ...], str]) -> None:
+    def locked_gates(self, value: dict[GateRef, str]) -> None:
         self._locked_gates = value
+
+    @property
+    def gate_info(self) -> dict[int, GateInfo]:
+        if not hasattr(self, "_gate_info"):
+            self._gate_info = {}
+        return self._gate_info
+
+    @gate_info.setter
+    def gate_info(self, value: dict[int, GateInfo]) -> None:
+        self._gate_info = value
+
+    def gate_qubits(self, gate: GateRef) -> tuple[int, ...]:
+        if isinstance(gate, int):
+            return self.gate_info[gate].qubits
+        return gate
 
     @property
     def state(self) -> dict[int, Edge]:
@@ -65,11 +84,11 @@ class Graph(nx.Graph):  # type: ignore [type-arg]
         self._arch = value
 
     @property
-    def sequence(self) -> list[tuple[int, ...]]:
+    def sequence(self) -> list[GateRef]:
         return self._sequence
 
     @sequence.setter
-    def sequence(self, value: list[tuple[int, ...]]) -> None:
+    def sequence(self, value: list[GateRef]) -> None:
         self._sequence = value
 
     @property
