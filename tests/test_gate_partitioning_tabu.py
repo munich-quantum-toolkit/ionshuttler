@@ -95,7 +95,7 @@ def test_multi_qubit_projection_stays_within_one_cluster() -> None:
         capacity=2,
     )
 
-    for slice_gate_ids, qubit_assignment in zip(result.time_slices, result.qubit_assignments_by_slice):
+    for slice_gate_ids, qubit_assignment in zip(result.time_slices, result.qubit_assignments_by_slice, strict=False):
         for gate_id in slice_gate_ids:
             qubits = gate_info[gate_id].qubits
             if not qubits:

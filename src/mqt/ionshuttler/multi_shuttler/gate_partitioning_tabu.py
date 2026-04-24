@@ -1,26 +1,24 @@
 from __future__ import annotations
 
-from collections import defaultdict
-from collections.abc import Sequence
-from dataclasses import dataclass
+import itertools
 import math
 import random
 import time
+from collections import defaultdict
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from .circuit_types import GateInfo
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
+    from .circuit_types import GateInfo
 
 DistanceMatrix = list[list[float]]
 
 
 @dataclass(slots=True)
 class FineGrainedTabuConfig:
-    """Configuration for the fine-grained tabu gate partitioner.
-
-    The defaults mirror the prototype configuration that was used for the
-    `fgp_tabu_global_2` partitioner. The target-side port keeps relaxed layering
-    fixed internally, so that knob is intentionally not exposed here.
-    """
+    """Configuration for the fine-grained tabu gate partitioner."""
 
     balance_penalty: float = 1.0
     capacity_weight: float = 0.5
@@ -37,7 +35,7 @@ class FineGrainedTabuConfig:
     max_layer_depth: int | None = None
 
     def resolve_max_iterations(self, num_qubits: int) -> int:
-        """Resolve the iteration budget for a concrete circuit size."""
+        """Resolve max_iterations_factor, which scales the iteration budget with the number of qubits."""
 
         if self.max_iterations is not None:
             return max(self.max_iterations, 1)
@@ -48,16 +46,16 @@ class FineGrainedTabuConfig:
 
 @dataclass(slots=True)
 class GatePartitionResult:
-    """Runtime-neutral output of the fine-grained tabu partitioner.
+    """Output of the fine-grained tabu partitioner that contains both the resulting partitioning and additional optimization run metadata.
 
     Attributes:
         gate_partition_by_pz: Gate ids grouped by processing zone in execution order.
-        gate_assignment: Direct gate-id to processing-zone mapping.
-        time_slices: Relaxed gate slices used by the optimizer.
-        qubit_assignments_by_slice: Per-slice qubit-to-cluster assignments.
-        cost_before: Objective value before tabu refinement.
-        cost_after: Best objective value reached by tabu refinement.
-        move_distance_total: Aggregate move distance between adjacent slices.
+        gate_assignment: Direct gate-id to processing-zone mapping.      -> This is the main output used by runtime code.
+        time_slices: Relaxed gate slices used by the optimizer.      (For tuning/debugging purposes)
+        qubit_assignments_by_slice: Per-slice qubit-to-cluster assignments.      (For tuning/debugging purposes)
+        cost_before: Objective value before tabu refinement.      (For tuning/debugging purposes)
+        cost_after: Best objective value reached by tabu refinement.      (For tuning/debugging purposes)
+        move_distance_total: Aggregate move distance between adjacent slices.      (For tuning/debugging purposes)
         optimization_time: Wall-clock time spent in the tabu loop in seconds.
     """
 
@@ -73,7 +71,7 @@ class GatePartitionResult:
 
 @dataclass(slots=True)
 class _Supernode:
-    """Collapsed component of qubits that must stay together within one slice."""
+    """Collapsed component of qubits that must stay together within one slice, implicitly satisfying the hard constraints that the qubits of a 2q-gate must be assigned to the same cluster/PZ."""
 
     id: int
     qubits: tuple[int, ...]
@@ -104,7 +102,7 @@ def compute_fine_grained_gate_partition(
     """Compute a fine-grained gate-to-processing-zone assignment.
 
     The algorithm first groups gates into relaxed time slices, contracts qubits
-    that must move together inside each slice, and then refines all slice
+    that must move together inside each slice (to allow for 2q-gates), and then refines all slice
     assignments jointly with a tabu search. The result is expressed in terms of
     gate ids and processing-zone names so later runtime code can consume it
     without depending on this module's internal optimization state.
@@ -114,13 +112,12 @@ def compute_fine_grained_gate_partition(
         gate_info: Gate metadata keyed by gate id.
         pz_names: Processing-zone names in cluster index order.
         pz_distance_matrix: Square distance matrix indexed by processing-zone order.
-        capacity: Optional soft per-zone qubit capacity. When omitted, the port uses
-            the balanced default `ceil(num_qubits / num_pzs)`.
-        config: Optional configuration object. Defaults are chosen to match the
-            prototype configuration used by `fgp_tabu_global_2`.
+        capacity: Optional soft per-zone qubit capacity, which informs the congestion penalty in the partitioning cost function.
+            When omitted, defaults to `ceil(num_qubits / num_pzs)`.
+        config: Optional configuration settings (see defaults in FineGrainedTabuConfig class).
 
     Returns:
-        A runtime-neutral gate partition result.
+        A gate partition result object including GatePartitionResult.gate_assignment, which is the main output mapping gate ids to PZs.
 
     Raises:
         ValueError: If the inputs are inconsistent or incomplete.
@@ -145,6 +142,8 @@ def compute_fine_grained_gate_partition(
     num_pzs = len(pz_names)
     num_qubits = _infer_num_qubits(gate_info)
     resolved_capacity = capacity if capacity is not None else max(math.ceil(num_qubits / num_pzs), 1)
+
+    # Decompose circuit into slices
     time_slices = _build_time_slices_relaxed(
         sequence,
         gate_info,
@@ -154,6 +153,8 @@ def compute_fine_grained_gate_partition(
 
     slice_contractions: list[_SliceContraction] = []
     seed_assignment: list[int] | None = None
+
+    # Contract slices into supernodes and (greedily)initialize partitioning
     for index, slice_gate_ids in enumerate(time_slices):
         contraction = _contract_slice(
             gate_info,
@@ -168,6 +169,7 @@ def compute_fine_grained_gate_partition(
         if index == 0:
             seed_assignment = _build_qubit_assignment(contraction, num_qubits, num_pzs)
 
+    # Tabu-based optimization of the gate partitioning using a shuttling-aware cost function
     optimization_start = time.perf_counter()
     optimized_assignments, cost_before, cost_after = _optimize_gate_partition(
         slice_contractions,
@@ -179,6 +181,7 @@ def compute_fine_grained_gate_partition(
     )
     optimization_time = time.perf_counter() - optimization_start
 
+    # Post-process optimized partitionings and compute metrics for return
     for slice_index, contraction in enumerate(slice_contractions):
         contraction.cluster_assignment = optimized_assignments[slice_index]
         contraction.cluster_loads = _compute_cluster_loads(contraction, num_pzs)
@@ -257,7 +260,7 @@ def _infer_num_qubits(gate_info: dict[int, GateInfo]) -> int:
     max_qubit = -1
     for info in gate_info.values():
         if info.qubits:
-            max_qubit = max(max_qubit, max(info.qubits))
+            max_qubit = max(max_qubit, *info.qubits)
     if max_qubit < 0:
         msg = "Unable to infer qubit count from gate metadata."
         raise ValueError(msg)
@@ -267,7 +270,7 @@ def _infer_num_qubits(gate_info: dict[int, GateInfo]) -> int:
 class _UnionFind:
     def __init__(self, elements: Sequence[int]) -> None:
         self.parent = {element: element for element in elements}
-        self.rank = {element: 0 for element in elements}
+        self.rank = dict.fromkeys(elements, 0)
 
     def find(self, item: int) -> int:
         parent = self.parent.setdefault(item, item)
@@ -316,7 +319,25 @@ def _build_time_slices_relaxed(
     *,
     max_layer_depth: int | None = None,
 ) -> list[list[int]]:
-    """Group gates into relaxed slices while avoiding oversized live components."""
+    """Group gates into informed time-slices/layers before partitioning.
+
+    The partitioner does not work on the full circuit at once. Instead, it
+    first breaks the ordered gate list into smaller chunks called time slices.
+
+    Each layer corresponds to a greedily constructed maximal set of gates that
+    restricts the interaction structure within the layer to individual non-
+    interacting qubits or isolated pairs, while following a conservative
+    dependency model.
+
+    The goal of this layering scheme is to aggregate maximally deep layers
+    while maintaining a controlled interaction structure within each layer
+    without relying on costly commutativity analysis. Alternative layering
+    schemes that exploit additional parallelism via commutativity may also
+    be suitable but have not yet been implemented and would require
+    additional scaffolding that informs the partitioner about actual
+    commutativity and dependency relationships between gates, for example
+    by passing a proper DAG.
+    """
 
     ordered_gate_ids = list(gate_ids)
     processed: set[int] = set()
@@ -330,7 +351,7 @@ def _build_time_slices_relaxed(
         progress = False
         gate_depth_by_qubit: defaultdict[int, int] = defaultdict(int)
         union_find = _UnionFind(list(range(num_qubits)))
-        component_sizes: dict[int, int] = {qubit: 1 for qubit in range(num_qubits)}
+        component_sizes: dict[int, int] = dict.fromkeys(range(num_qubits), 1)
         component_members: dict[int, set[int]] = {qubit: {qubit} for qubit in range(num_qubits)}
 
         for gate_id in ordered_gate_ids:
@@ -410,17 +431,29 @@ def _contract_slice(
     randomize_initial: bool,
     seed: int | None,
 ) -> _SliceContraction:
+    """Prepare one time-slice for optimization by contracting interacting nodes
+    and initializing a starting partitioning (already shuttling-aware).
+
+    The partitioner handles qubits that interact within a slice collectively,
+    since they must be in the same PZ in order for the gate to be executed
+    (hard constraint). This is done by contracting such qubit pairs into
+    (two-qubit-)supernodes.
+
+    After contraction, a "warm-start" initial partitioning is determined for the
+    slice, either based on the partitioning of the preceding slice or if that is
+    not available, falls back to a simple fresh seed that the later tabu search
+    can improve. Alternatively, slices can be initialized randomly with a seed.
+    """
+
     if not slice_gate_ids:
         msg = "Slice must contain at least one gate to contract."
         raise ValueError(msg)
 
     required_edges = _build_edge_weights(slice_gate_ids, gate_info)
-    required_unary = {
-        gate_info[gate_id].qubits[0]
-        for gate_id in slice_gate_ids
-        if len(gate_info[gate_id].qubits) == 1
-    }
+    required_unary = {gate_info[gate_id].qubits[0] for gate_id in slice_gate_ids if len(gate_info[gate_id].qubits) == 1}
     qubits = list(range(num_qubits))
+
+    # Contract interacting qubits into supernodes
     supernodes, qubit_to_supernode = _contract_supernodes(qubits, required_edges)
 
     supernode_loads = [0] * len(supernodes)
@@ -428,25 +461,24 @@ def _contract_slice(
         qubits_in_gate = gate_info[gate_id].qubits
         if not qubits_in_gate:
             continue
-        touched_supernodes = {
-            qubit_to_supernode[qubit]
-            for qubit in set(qubits_in_gate)
-            if qubit in qubit_to_supernode
-        }
+        touched_supernodes = {qubit_to_supernode[qubit] for qubit in set(qubits_in_gate) if qubit in qubit_to_supernode}
         for supernode_id in touched_supernodes:
             supernode_loads[supernode_id] += len(qubits_in_gate)
     for supernode in supernodes:
         supernode.load = max(1, supernode_loads[supernode.id])
 
+    # Initialize partitioning for the slice, either based on the previous slice's assignment or with a fresh seed
     cluster_assignment: list[int] | None = None
     cluster_loads: list[int] | None = None
     if previous_qubit_assignment is not None and not randomize_initial:
+        # Already distance-aware by aligning with the previous slice.
         cluster_assignment, cluster_loads = _seed_assignment_from_previous(
             supernodes,
             previous_qubit_assignment,
             num_pzs,
         )
     if cluster_assignment is None:
+        # Already capacity-aware in the initial assignment by balancing load.
         cluster_assignment, cluster_loads = _greedy_initial_partition(
             supernodes,
             num_pzs,
@@ -468,12 +500,17 @@ def _build_edge_weights(
     gate_ids: Sequence[int],
     gate_info: dict[int, GateInfo],
 ) -> dict[tuple[int, int], float]:
+    """Track number of two-qubit gates within a cluster.
+    Relevant as a weight for estimating congestion effects.
+    """
+
     weights: dict[tuple[int, int], float] = {}
     for gate_id in gate_ids:
         qubits = gate_info[gate_id].qubits
         if len(qubits) != 2:
             continue
-        edge = tuple(sorted(qubits))
+        left, right = sorted(qubits)
+        edge = (left, right)
         weights[edge] = weights.get(edge, 0.0) + 1.0
     return weights
 
@@ -482,8 +519,15 @@ def _contract_supernodes(
     qubits: Sequence[int],
     required_edges: dict[tuple[int, int], float],
 ) -> tuple[list[_Supernode], dict[int, int]]:
+    """Merge qubits that must travel together within the slice.
+
+    Any qubits connected through the required two-qubit interactions are folded
+    into the same supernode. The optimizer then automatically moves that supernode
+    as a single unit instead of trying to keep the member qubits synchronized manually.
+    """
+
     union_find = _UnionFind(list(qubits))
-    for left, right in required_edges:
+    for (left, right), _weight in required_edges.items():
         union_find.union(left, right)
 
     components: dict[int, list[int]] = {}
@@ -507,6 +551,14 @@ def _seed_assignment_from_previous(
     previous_qubit_assignment: list[int],
     num_pzs: int,
 ) -> tuple[list[int] | None, list[int] | None]:
+    """Reuse the previous slice as a sensible starting guess.
+
+    Each supernode looks at where its qubits lived in the previous slice and
+    adopts the cluster that contained most of them (majority vote). If that
+    information is not usable for some supernode, the caller will fall back 
+    to building a fresh initial placement instead.
+    """
+
     if not previous_qubit_assignment:
         return None, None
 
@@ -532,6 +584,14 @@ def _greedy_initial_partition(
     randomize_initial: bool,
     seed: int | None,
 ) -> tuple[list[int], list[int]]:
+    """Build a capacity-aware first placement for the search.
+
+    With random initialization enabled, supernodes are spread across the
+    available clusters using the configured seed. Otherwise, the helper uses a
+    simple greedy rule: place larger supernodes first and always choose the
+    cluster that is currently lightest.
+    """
+
     if num_pzs <= 0:
         msg = "Number of processing zones must be positive for initial partitioning."
         raise ValueError(msg)
@@ -564,6 +624,19 @@ def _optimize_gate_partition(
     num_qubits: int,
     config: FineGrainedTabuConfig,
 ) -> tuple[list[list[int]], float, float]:
+    """Improve the initial slice assignments with tabu search.
+
+    Starting from the seeded placements, this routine scores the current global
+    solution and repeatedly asks: "what happens if one
+    supernode (i.e. a set of interacting qubits) moves to a different processing
+    zone?" It evaluates those local moves, picks the most promising legal one,
+    applies it, and remembers recent moves in a tabu list so the search does not
+    get stuck undoing and redoing the same change over and over.
+
+    The search keeps the best full assignment seen so far, even if some
+    intermediate moves are only useful as stepping stones to a better result.
+    """
+
     if not slice_contractions or num_pzs <= 0:
         return [], 0.0, 0.0
 
@@ -623,7 +696,9 @@ def _optimize_gate_partition(
     best_assignments = [assignment.copy() for assignment in assignments_by_slice]
 
     tabu_list: list[tuple[int, int, int]] = []
-    candidate_list_length = config.candidate_list_length if config.candidate_list_length and config.candidate_list_length > 0 else None
+    candidate_list_length = (
+        config.candidate_list_length if config.candidate_list_length and config.candidate_list_length > 0 else None
+    )
     per_slice_quota = config.per_slice_quota if config.per_slice_quota and config.per_slice_quota > 0 else None
     refresh_every = config.refresh_every if config.refresh_every and config.refresh_every > 0 else None
     candidate_k: int | None = None
@@ -631,6 +706,7 @@ def _optimize_gate_partition(
     candidate_scores_by_slice: list[list[float]] | None = None
     total_candidate_pairs = sum(len(contraction.supernodes) for contraction in slice_contractions)
 
+    # Build finite candidate pool to prune search space
     if candidate_list_length is not None:
         candidate_k = min(max(candidate_list_length, 1), total_candidate_pairs)
         candidate_scores_by_slice = _build_candidate_scores(
@@ -648,6 +724,7 @@ def _optimize_gate_partition(
     max_iterations = config.resolve_max_iterations(num_qubits)
     tabu_list_length = max(config.tabu_list_length, 1)
 
+    # Big iteration loop: visit all candidates, pick best move, apply, repeat
     for iteration in range(max_iterations):
         if (
             candidate_list_length is not None
@@ -677,6 +754,7 @@ def _optimize_gate_partition(
         while True:
             move_sources = candidate_pool
             if move_sources is None:
+                # fall-back no candidate list -> exhaustive search over all possible moves
                 for slice_index, contraction in enumerate(slice_contractions):
                     for supernode_id in range(len(contraction.supernodes)):
                         (
@@ -701,9 +779,15 @@ def _optimize_gate_partition(
                             current_cost=current_cost,
                             best_cost=best_cost,
                             tabu_list=tabu_list,
-                            best_move_state=(best_move, best_move_score, best_move_capacity_delta, best_move_distance_delta),
+                            best_move_state=(
+                                best_move,
+                                best_move_score,
+                                best_move_capacity_delta,
+                                best_move_distance_delta,
+                            ),
                         )
             else:
+                # With candidate list -> only evaluate the k most promising nodes
                 for slice_index, supernode_id in move_sources:
                     contraction = slice_contractions[slice_index]
                     (
@@ -728,7 +812,12 @@ def _optimize_gate_partition(
                         current_cost=current_cost,
                         best_cost=best_cost,
                         tabu_list=tabu_list,
-                        best_move_state=(best_move, best_move_score, best_move_capacity_delta, best_move_distance_delta),
+                        best_move_state=(
+                            best_move,
+                            best_move_score,
+                            best_move_capacity_delta,
+                            best_move_distance_delta,
+                        ),
                     )
 
             if best_move is not None or candidate_list_length is None:
@@ -819,6 +908,7 @@ def _optimize_gate_partition(
 
     return best_assignments if best_assignments else assignments_by_slice, initial_cost, best_cost
 
+
 def _consider_supernode_moves(
     *,
     contraction: _SliceContraction,
@@ -839,15 +929,25 @@ def _consider_supernode_moves(
     tabu_list: Sequence[tuple[int, int, int]],
     best_move_state: tuple[tuple[int, _Supernode, int] | None, float, float, float],
 ) -> tuple[tuple[int, _Supernode, int] | None, float, float, float]:
+    """Evaluate all target clusters for one supernode.
+
+    This helper checks every possible destination for the chosen supernode,
+    skips tabu moves that are not worth overriding, and returns the best move it
+    found together with the cached cost deltas needed by the caller.
+    """
+
     best_move, best_move_score, best_move_capacity_delta, best_move_distance_delta = best_move_state
     supernode = contraction.supernodes[supernode_id]
     current_cluster = qubit_assignments_by_slice[slice_index][supernode.qubits[0]]
 
     for target_cluster in range(num_pzs):
+        # Iterate over all possible clusters into which a (super)node could go
         if target_cluster == current_cluster:
             continue
         active_count = active_counts_per_slice[slice_index].get(supernode.id, 0)
         active_load = active_loads_per_slice[slice_index].get(supernode.id, 0)
+
+        # Compute update of cost function terms associated with this move (local)
         capacity_delta = _capacity_delta(
             slice_counts[slice_index],
             slice_loads[slice_index],
@@ -873,16 +973,21 @@ def _consider_supernode_moves(
             active_load,
             num_pzs,
         )
+
+        # compute overall move score
         move_delta = (
             config.distance_weight_factor * distance_delta
             + config.capacity_weight * capacity_delta
             + config.balance_penalty * balance_delta
         )
         candidate_cost = current_cost + move_delta
+
+        # check tabu list, i.e. if this move is just a reversal of a recent move (avoid cycles) 
         move_key = (slice_index, supernode.id, target_cluster)
         if move_key in tabu_list and candidate_cost >= best_cost:
             continue
         if candidate_cost < best_move_score:
+            # Aspiration criterion: allow overriding tabu status when move is globally best so far
             best_move = (slice_index, supernode, target_cluster)
             best_move_score = candidate_cost
             best_move_capacity_delta = capacity_delta
@@ -905,6 +1010,12 @@ def _capacity_delta(
     supernode_load: int,
     capacity: int | None,
 ) -> float:
+    """Measure how one move changes the overflow penalty.
+
+    Only the source and destination clusters can change this cost term, so
+    the delta can be computed locally instead of recomputing the full score.
+    """
+
     if capacity is None:
         return 0.0
     if not (
@@ -947,6 +1058,14 @@ def _distance_delta(
     distance_matrix: DistanceMatrix | None,
     slack_weights: Sequence[Sequence[float]] | None,
 ) -> float:
+    """Measure how one move changes cross-slice travel cost.
+
+    A move in one slice only affects travel into that slice and out of it, so
+    the delta can be computed from the neighboring slices alone. That keeps the
+    inner search loop much cheaper than rebuilding the full movement cost every
+    time.
+    """
+
     delta = 0.0
     num_slices = len(qubit_assignments_by_slice)
     if num_slices <= 1:
@@ -985,17 +1104,25 @@ def _compute_capacity_cost(
     slice_loads: Sequence[Sequence[int]],
     capacity: int | None,
 ) -> float:
+    """Add up the congestion penalty across all slices.
+
+    A slice contributes to this cost only when a cluster holds more active
+    qubits than the chosen PZs capacity.
+    """
+
     if capacity is None:
         return 0.0
     total = 0.0
-    for counts, loads in zip(slice_counts, slice_loads):
-        for count, load in zip(counts, loads):
+    for counts, loads in zip(slice_counts, slice_loads, strict=False):
+        for count, load in zip(counts, loads, strict=False):
             if count > capacity:
                 total += (count - capacity) * load
     return float(total)
 
 
 def _compute_balance_cost(slice_loads: Sequence[Sequence[int]]) -> float:
+    """Measure how (un)evenly workload is distributed within each slice."""
+
     total = 0.0
     for loads in slice_loads:
         if not loads:
@@ -1012,6 +1139,8 @@ def _balance_delta(
     supernode_load: int,
     num_pzs: int,
 ) -> float:
+    """Measure how one move changes the slice's load imbalance."""
+
     if not (0 <= src_cluster < len(load_vector) and 0 <= dst_cluster < len(load_vector)):
         return 0.0
     if num_pzs <= 0:
@@ -1031,6 +1160,15 @@ def _compute_distance_cost(
     distance_matrix: DistanceMatrix | None,
     slack_weights: Sequence[Sequence[float]] | None = None,
 ) -> float:
+    """Add up weighted travel cost between neighboring slices.
+
+    Each qubit contributes according to how far it needs to move from one slice
+    to the next, optionally softened by slack weights when long idle gaps make
+    that movement less critical (acts as a tie-breaker favoring the movement of
+    active qubits over ones that are currently idle, i.e. there movement is
+    uncritical).
+    """
+
     if len(qubit_assignments_by_slice) <= 1:
         return 0.0
     total = 0.0
@@ -1049,6 +1187,12 @@ def _distance_between_clusters(
     dst_cluster: int,
     distance_matrix: DistanceMatrix | None,
 ) -> float:
+    """Look up the travel cost between two clusters.
+
+    If no explicit distance matrix is available, the helper falls back to a
+    unit cost so the optimizer can still run.
+    """
+
     if src_cluster == dst_cluster or src_cluster < 0 or dst_cluster < 0:
         return 0.0
     if (
@@ -1065,6 +1209,14 @@ def _build_slack_weights(
     num_qubits: int,
     slack_dropoff: float | None,
 ) -> list[list[float]] | None:
+    """Soften movement penalties across long idle gaps.
+
+    If a qubit disappears from the active work for several slices, insisting on
+    a perfect low-movement path is not worth much in practical downstream shuttling.
+    The slack weights reduce the travel penalty across such idle gaps so the
+    optimizer can spend its effort on more active qubits in a given slice.
+    """
+
     if not slack_dropoff or slack_dropoff <= 0:
         return None
     num_slices = len(slice_contractions)
@@ -1109,10 +1261,12 @@ def _build_slack_weights(
 
 
 def _compute_moves(assignments: list[list[int]]) -> list[list[tuple[int, int, int]]]:
+    """Turn neighboring slice assignments into an explicit move list."""
+
     moves: list[list[tuple[int, int, int]]] = []
-    for previous, current in zip(assignments, assignments[1:]):
+    for previous, current in itertools.pairwise(assignments):
         slice_moves: list[tuple[int, int, int]] = []
-        for qubit, (src, dst) in enumerate(zip(previous, current)):
+        for qubit, (src, dst) in enumerate(zip(previous, current, strict=False)):
             if src != dst:
                 slice_moves.append((qubit, src, dst))
         moves.append(slice_moves)
@@ -1123,6 +1277,8 @@ def _compute_total_move_distance(
     moves: list[list[tuple[int, int, int]]],
     distance_matrix: DistanceMatrix | None,
 ) -> float:
+    """Add up the total travel implied by a list of moves."""
+
     total = 0.0
     for slice_moves in moves:
         for _, src, dst in slice_moves:
@@ -1135,6 +1291,8 @@ def _build_qubit_assignment(
     num_qubits: int,
     num_clusters: int,
 ) -> list[int] | None:
+    """Expand a supernode placement into one cluster label per qubit."""
+
     if contraction.cluster_assignment is None:
         return None
     qubit_assignment = [-1] * num_qubits
@@ -1149,6 +1307,8 @@ def _build_qubit_assignment(
 
 
 def _compute_cluster_loads(contraction: _SliceContraction, num_pzs: int) -> list[int]:
+    """Collect how much workload ends up in each processing zone."""
+
     loads = [0] * num_pzs
     if contraction.cluster_assignment is None:
         return loads
@@ -1170,6 +1330,13 @@ def _compute_supernode_scores_for_slice(
     capacity_weight: float,
     distance_matrix: DistanceMatrix | None,
 ) -> list[float]:
+    """Score which supernodes are most promising to revisit. (optional)
+
+    Higher scores mean a supernode contributes more to movement, overflow, or
+    imbalance in the current slice, so it is a better candidate for local-search
+    attention when candidate lists are enabled.
+    """
+
     scores = [0.0] * len(contraction.supernodes)
     current = qubit_assignments_by_slice[slice_index]
     previous = qubit_assignments_by_slice[slice_index - 1] if slice_index > 0 else None
@@ -1215,6 +1382,8 @@ def _build_candidate_scores(
     capacity_weight: float,
     distance_matrix: DistanceMatrix | None,
 ) -> list[list[float]]:
+    """Precompute per-slice supernode scores for (optional) candidate-list search."""
+
     return [
         _compute_supernode_scores_for_slice(
             contraction,
@@ -1243,6 +1412,8 @@ def _update_candidate_scores(
     scores_by_slice: list[list[float]],
     slice_indices: Sequence[int],
 ) -> list[list[float]]:
+    """Refresh cached scores only in slices touched by the latest move."""
+
     for slice_index in slice_indices:
         scores_by_slice[slice_index] = _compute_supernode_scores_for_slice(
             slice_contractions[slice_index],
@@ -1263,6 +1434,12 @@ def _build_candidate_pool(
     candidate_k: int,
     per_slice_quota: int | None,
 ) -> list[tuple[int, int]]:
+    """Build a ranked shortlist of slice/supernode pairs to inspect first.
+
+    The pool is a cheap way to focus the search on the most promising parts of
+    the current solution before falling back to a broader scan.
+    """
+
     ranked: list[tuple[float, int, int]] = []
     for slice_index, scores in enumerate(scores_by_slice):
         for supernode_id, score in enumerate(scores):
@@ -1298,7 +1475,15 @@ def _build_gate_partition_projection(
     *,
     num_qubits: int,
 ) -> tuple[list[list[int]], dict[str, list[int]], dict[int, str]]:
-    gate_partition_by_pz = {pz_name: [] for pz_name in pz_names}
+    """Turn the optimizer's internal state into the public result format.
+
+    Internally, the search works with supernodes and numeric cluster indices.
+    This helper converts that back into the gate-centric output exposed by the
+    public API: per-slice qubit assignments, ordered gate lists for each
+    processing zone, and a direct gate-to-zone lookup.
+    """
+
+    gate_partition_by_pz: dict[str, list[int]] = {pz_name: [] for pz_name in pz_names}
     gate_assignment: dict[int, str] = {}
     qubit_assignments_by_slice: list[list[int]] = []
     num_clusters = len(pz_names)
@@ -1307,7 +1492,7 @@ def _build_gate_partition_projection(
         msg = "Slice contractions and time slices must have matching length."
         raise ValueError(msg)
 
-    for contraction, slice_gate_ids in zip(slice_contractions, time_slices):
+    for contraction, slice_gate_ids in zip(slice_contractions, time_slices, strict=False):
         if contraction.cluster_assignment is None:
             msg = "Slice contraction is missing a finalized assignment."
             raise ValueError(msg)
