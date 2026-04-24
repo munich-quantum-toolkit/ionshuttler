@@ -97,6 +97,16 @@ def assign_gate_to_pz(graph: Graph, gate: GateRef) -> str:
     qubits = graph.gate_qubits(gate)
     gate_id = gate if isinstance(gate, int) else None
 
+    if gate_id is not None:
+        preferred_pz = graph.preferred_pz_for_gate(gate_id)
+        if preferred_pz is not None:
+            if preferred_pz not in graph.pzs_name_map:
+                msg = f"Unknown preferred processing zone: {preferred_pz}"
+                raise ValueError(msg)
+            if len(qubits) == 2:
+                graph.locked_gates[gate_id] = preferred_pz
+            return preferred_pz
+
     if len(qubits) == 1:
         ion = qubits[0]
         if policy == "legacy":

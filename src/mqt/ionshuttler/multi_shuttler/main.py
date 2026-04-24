@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import pathlib
 import sys
+from collections.abc import Mapping
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import networkx as nx
 
@@ -13,9 +14,6 @@ from .outside.graph_creator import GraphCreator, PZCreator
 from .outside.partition import get_partition
 from .outside.processing_zone import ProcessingZone
 from .outside.shuttle import main as run_shuttle_main
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
 
 
 def validate_conflict_resolution_mode(config: Mapping[str, Any]) -> str:
@@ -47,6 +45,41 @@ def validate_conflict_resolution_mode(config: Mapping[str, Any]) -> str:
         raise ValueError(msg)
 
     return mode
+
+
+def validate_gate_pz_assignment(config: Mapping[str, Any]) -> dict[int, str]:
+    """Validate and normalize an optional explicit gate-to-PZ mapping.
+
+    Args:
+        config: Parsed user configuration.
+
+    Returns:
+        Normalized gate-id to PZ mapping. Missing values normalize to an empty dict.
+
+    Raises:
+        TypeError: If the mapping or any key/value types are invalid.
+    """
+
+    raw_assignment = config.get("gate_pz_assignment")
+    if raw_assignment is None:
+        return {}
+    if isinstance(raw_assignment, (str, bytes)):
+        msg = "Config parameter 'gate_pz_assignment' must be a mapping of int gate ids to PZ names."
+        raise TypeError(msg)
+    if not isinstance(raw_assignment, Mapping):
+        msg = "Config parameter 'gate_pz_assignment' must be a mapping of int gate ids to PZ names."
+        raise TypeError(msg)
+
+    normalized_assignment: dict[int, str] = {}
+    for gate_id, pz_name in raw_assignment.items():
+        if isinstance(gate_id, bool) or not isinstance(gate_id, int):
+            msg = "Config parameter 'gate_pz_assignment' must use integer gate ids as keys."
+            raise TypeError(msg)
+        if not isinstance(pz_name, str):
+            msg = "Config parameter 'gate_pz_assignment' must use string PZ names as values."
+            raise TypeError(msg)
+        normalized_assignment[gate_id] = pz_name
+    return normalized_assignment
 
 
 def main(config: dict[str, Any]) -> int:
@@ -81,6 +114,7 @@ def main(config: dict[str, Any]) -> int:
 
     use_dag = config.get("use_dag", True)
     use_cycle_or_paths = validate_conflict_resolution_mode(config)
+    gate_pz_assignment = validate_gate_pz_assignment(config)
     pz_assignment_policy = config.get("pz_assignment_policy", "legacy")
     max_timesteps = config.get("max_timesteps", 1_000_000)
     plot_flag = config.get("plot", False)
@@ -171,6 +205,7 @@ def main(config: dict[str, Any]) -> int:
     graph.plot = plot_flag
     graph.save = save_flag
     graph.arch = str(arch)  # For plotting/logging
+    graph.gate_pz_assignment = gate_pz_assignment
     graph.pz_assignment_policy = pz_assignment_policy
     print(f"PZ assignment policy: {graph.pz_assignment_policy}")
 

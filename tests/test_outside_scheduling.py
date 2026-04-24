@@ -12,6 +12,8 @@ from mqt.ionshuttler.multi_shuttler.outside.ion_types import Edge
 if TYPE_CHECKING:
     from mqt.ionshuttler.multi_shuttler.outside.processing_zone import ProcessingZone
 
+pytest = cast("Any", __import__("pytest"))
+
 NextEdges = dict[int, tuple[Edge, Edge]]
 
 
@@ -201,6 +203,7 @@ def test_assign_gate_to_pz_uses_gate_info_for_single_qubit_gate_ids() -> None:
         SimpleNamespace(
             gate_info=gate_info,
             gate_qubits=lambda gate: _gate_qubits(gate_info, gate),
+            preferred_pz_for_gate=lambda _gate_id: None,
             map_to_pz={3: "PZ1"},
             locked_gates={},
             pz_assignment_policy="legacy",
@@ -218,6 +221,7 @@ def test_assign_gate_to_pz_locks_two_qubit_gate_ids() -> None:
         SimpleNamespace(
             gate_info=gate_info,
             gate_qubits=lambda gate: _gate_qubits(gate_info, gate),
+            preferred_pz_for_gate=lambda _gate_id: None,
             map_to_pz={1: "PZ1", 4: "PZ2"},
             locked_gates=locked_gates,
             pz_assignment_policy="legacy",
@@ -235,6 +239,71 @@ def test_assign_gate_to_pz_locks_two_qubit_gate_ids() -> None:
     assert locked_gates == {11: "PZ2"}
 
 
+def test_assign_gate_to_pz_prefers_explicit_assignment_for_single_qubit_gate() -> None:
+    gate_info = {7: GateInfo(qubits=(3,), qasm="x q[3];")}
+    graph = cast(
+        "Graph",
+        SimpleNamespace(
+            gate_info=gate_info,
+            gate_qubits=lambda gate: _gate_qubits(gate_info, gate),
+            gate_pz_assignment={7: "PZ2"},
+            preferred_pz_for_gate={7: "PZ2"}.get,
+            pzs_name_map={"PZ1": object(), "PZ2": object()},
+            map_to_pz={3: "PZ1"},
+            locked_gates={},
+            pz_assignment_policy="legacy",
+        ),
+    )
+
+    assert scheduling.assign_gate_to_pz(graph, 7) == "PZ2"
+
+
+def test_assign_gate_to_pz_prefers_explicit_assignment_for_two_qubit_gate() -> None:
+    gate_info = {11: GateInfo(qubits=(1, 4), qasm="cx q[1],q[4];")}
+    locked_gates: dict[int, str] = {}
+    graph = cast(
+        "Graph",
+        SimpleNamespace(
+            gate_info=gate_info,
+            gate_qubits=lambda gate: _gate_qubits(gate_info, gate),
+            gate_pz_assignment={11: "PZ1"},
+            preferred_pz_for_gate={11: "PZ1"}.get,
+            pzs_name_map={"PZ1": object(), "PZ2": object()},
+            map_to_pz={1: "PZ1", 4: "PZ2"},
+            locked_gates=locked_gates,
+            pz_assignment_policy="legacy",
+        ),
+    )
+
+    with patch(
+        "mqt.ionshuttler.multi_shuttler.outside.scheduling.pick_pz_for_2_q_gate",
+    ) as picker:
+        assert scheduling.assign_gate_to_pz(graph, 11) == "PZ1"
+
+    picker.assert_not_called()
+    assert locked_gates == {11: "PZ1"}
+
+
+def test_assign_gate_to_pz_rejects_unknown_explicit_assignment() -> None:
+    gate_info = {11: GateInfo(qubits=(1, 4), qasm="cx q[1],q[4];")}
+    graph = cast(
+        "Graph",
+        SimpleNamespace(
+            gate_info=gate_info,
+            gate_qubits=lambda gate: _gate_qubits(gate_info, gate),
+            gate_pz_assignment={11: "PZX"},
+            preferred_pz_for_gate={11: "PZX"}.get,
+            pzs_name_map={"PZ1": object(), "PZ2": object()},
+            map_to_pz={1: "PZ1", 4: "PZ2"},
+            locked_gates={},
+            pz_assignment_policy="legacy",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="Unknown preferred processing zone"):
+        scheduling.assign_gate_to_pz(graph, 11)
+
+
 def test_create_priority_queue_accepts_gate_ids() -> None:
     gate_info = {
         0: GateInfo(qubits=(0,), qasm="x q[0];"),
@@ -246,6 +315,7 @@ def test_create_priority_queue_accepts_gate_ids() -> None:
             sequence=[0, 1],
             gate_info=gate_info,
             gate_qubits=lambda gate: _gate_qubits(gate_info, gate),
+            preferred_pz_for_gate=lambda _gate_id: None,
             map_to_pz={0: "PZ1", 1: "PZ1", 2: "PZ2"},
             locked_gates={},
             next_gate_at_pz={},

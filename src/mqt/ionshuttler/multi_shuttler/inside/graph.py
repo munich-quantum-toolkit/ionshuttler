@@ -20,6 +20,7 @@ class Graph(nx.Graph):  # type: ignore [type-arg]
         super().__init__(*args, **kwargs)
         self.executed_gates_next: list[dict[str, object]] = []
         self._gate_info: dict[int, GateInfo] = {}
+        self._gate_pz_assignment: dict[int, str] = {}
 
     @property
     def junction_nodes(self) -> list[Node]:
@@ -59,6 +60,19 @@ class Graph(nx.Graph):  # type: ignore [type-arg]
         if isinstance(gate, int):
             return self.gate_info[gate].qubits
         return gate
+
+    @property
+    def gate_pz_assignment(self) -> dict[int, str]:
+        if not hasattr(self, "_gate_pz_assignment"):
+            self._gate_pz_assignment = {}
+        return self._gate_pz_assignment
+
+    @gate_pz_assignment.setter
+    def gate_pz_assignment(self, value: dict[int, str]) -> None:
+        self._gate_pz_assignment = value
+
+    def preferred_pz_for_gate(self, gate_id: int) -> str | None:
+        return self.gate_pz_assignment.get(gate_id)
 
     @property
     def state(self) -> dict[int, Edge]:
