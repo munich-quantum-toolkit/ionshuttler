@@ -555,7 +555,7 @@ def _seed_assignment_from_previous(
 
     Each supernode looks at where its qubits lived in the previous slice and
     adopts the cluster that contained most of them (majority vote). If that
-    information is not usable for some supernode, the caller will fall back 
+    information is not usable for some supernode, the caller will fall back
     to building a fresh initial placement instead.
     """
 
@@ -982,7 +982,7 @@ def _consider_supernode_moves(
         )
         candidate_cost = current_cost + move_delta
 
-        # check tabu list, i.e. if this move is just a reversal of a recent move (avoid cycles) 
+        # check tabu list, i.e. if this move is just a reversal of a recent move (avoid cycles)
         move_key = (slice_index, supernode.id, target_cluster)
         if move_key in tabu_list and candidate_cost >= best_cost:
             continue

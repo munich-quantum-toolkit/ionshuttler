@@ -31,14 +31,14 @@ def _sample_gate_info() -> dict[int, GateInfo]:
 def test_config_defaults_match_prototype_reference_values() -> None:
     config = FineGrainedTabuConfig()
 
-    assert config.balance_penalty == 1.0
-    assert config.capacity_weight == 0.5
-    assert config.distance_weight_factor == 1.0
-    assert config.max_iterations_factor == 20.0
+    assert config.balance_penalty == pytest.approx(1.0)
+    assert config.capacity_weight == pytest.approx(0.5)
+    assert config.distance_weight_factor == pytest.approx(1.0)
+    assert config.max_iterations_factor == pytest.approx(20.0)
     assert config.tabu_list_length == 200
     assert config.candidate_list_length == 200
     assert config.per_slice_quota is None
-    assert config.slack_dropoff == 1.0
+    assert config.slack_dropoff == pytest.approx(1.0)
     assert config.refresh_every is None
     assert config.randomize_initial is False
     assert config.seed == 0
@@ -143,5 +143,5 @@ def test_empty_sequence_returns_empty_partition_result() -> None:
     assert result.gate_assignment == {}
     assert result.time_slices == []
     assert result.qubit_assignments_by_slice == []
-    assert result.cost_before == 0.0
-    assert result.cost_after == 0.0
+    assert result.cost_before == pytest.approx(0.0)
+    assert result.cost_after == pytest.approx(0.0)
