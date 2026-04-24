@@ -603,3 +603,55 @@ class TestMultiShuttlerMain:
 
         with patch("mqt.ionshuttler.multi_shuttler.main.run_shuttle_main", side_effect=_capture_graph):
             assert main(config) == 0
+
+    def test_main_computes_fine_grained_gate_assignment_when_enabled(self, heuristic_config_1pz):
+        """main() should compute and thread a fine-grained gate assignment when enabled."""
+        from unittest.mock import patch
+
+        from mqt.ionshuttler.multi_shuttler.main import main
+
+        config = dict(heuristic_config_1pz)
+        config["use_dag"] = False
+        config["use_fine_grained_gate_partition"] = True
+
+        def _capture_graph(graph, dag, use_cycle_or_paths, *, use_dag):
+            assert dag is None
+            assert use_cycle_or_paths == "cycles"
+            assert use_dag is False
+            assert graph.gate_pz_assignment == {0: "pz1"}
+            return 0
+
+        with (
+            patch(
+                "mqt.ionshuttler.multi_shuttler.main.compute_fine_grained_gate_assignment",
+                return_value={0: "pz1"},
+            ) as compute_assignment,
+            patch("mqt.ionshuttler.multi_shuttler.main.run_shuttle_main", side_effect=_capture_graph),
+        ):
+            assert main(config) == 0
+
+        compute_assignment.assert_called_once()
+
+    def test_main_skips_fine_grained_gate_assignment_when_disabled(self, heuristic_config_1pz):
+        """main() should keep the current flow unchanged when fine-grained partitioning is disabled."""
+        from unittest.mock import patch
+
+        from mqt.ionshuttler.multi_shuttler.main import main
+
+        config = dict(heuristic_config_1pz)
+        config["use_dag"] = False
+
+        def _capture_graph(graph, dag, use_cycle_or_paths, *, use_dag):
+            assert dag is None
+            assert use_cycle_or_paths == "cycles"
+            assert use_dag is False
+            assert graph.gate_pz_assignment == {}
+            return 0
+
+        with (
+            patch("mqt.ionshuttler.multi_shuttler.main.compute_fine_grained_gate_assignment") as compute_assignment,
+            patch("mqt.ionshuttler.multi_shuttler.main.run_shuttle_main", side_effect=_capture_graph),
+        ):
+            assert main(config) == 0
+
+        compute_assignment.assert_not_called()

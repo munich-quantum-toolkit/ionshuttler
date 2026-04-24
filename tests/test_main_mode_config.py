@@ -105,3 +105,40 @@ def test_validate_gate_pz_assignment_rejects_non_int_keys_and_non_str_values() -
         "string PZ names",
         {"gate_pz_assignment": {0: 1}},
     )
+
+
+def test_validate_use_fine_grained_gate_partition_defaults_to_disabled() -> None:
+    result = main_module.validate_use_fine_grained_gate_partition({})
+    assert result is False
+
+
+def test_validate_use_fine_grained_gate_partition_accepts_boolean() -> None:
+    assert main_module.validate_use_fine_grained_gate_partition({"use_fine_grained_gate_partition": True}) is True
+    assert main_module.validate_use_fine_grained_gate_partition({"use_fine_grained_gate_partition": False}) is False
+
+
+def test_validate_use_fine_grained_gate_partition_rejects_invalid_types() -> None:
+    for bad_value in [0, 1, 1.2, "true", None]:
+        _expect_validator_raises_with_text(
+            main_module.validate_use_fine_grained_gate_partition,
+            TypeError,
+            "use_fine_grained_gate_partition",
+            {"use_fine_grained_gate_partition": bad_value},
+        )
+
+
+def test_validate_fine_grained_gate_partition_request_rejects_explicit_assignment_conflict() -> None:
+    _expect_validator_raises_with_text(
+        lambda payload: main_module.validate_fine_grained_gate_partition_request(payload, {0: "pz1"}),
+        ValueError,
+        "use_fine_grained_gate_partition",
+        {"use_fine_grained_gate_partition": True},
+    )
+
+
+def test_validate_fine_grained_gate_partition_request_accepts_enabled_without_extra_config() -> None:
+    result = main_module.validate_fine_grained_gate_partition_request(
+        {"use_fine_grained_gate_partition": True},
+        {},
+    )
+    assert result is True
