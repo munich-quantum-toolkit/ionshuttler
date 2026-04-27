@@ -16,8 +16,7 @@ if TYPE_CHECKING:
 _HEADER_PREFIXES = ("OPENQASM", "include", "qreg", "creg", "gate", "barrier", "measure")
 _QUBIT_PATTERN = re.compile(r"q\[(\d+)\]")
 _NO_QUBITS_EXTRACTED_MSG = (
-    "Failed to extract qubits from QASM gate lines. "
-    "Use normalize_registers=True for non-canonical register names."
+    "Failed to extract qubits from QASM gate lines. Use normalize_registers=True for non-canonical register names."
 )
 
 

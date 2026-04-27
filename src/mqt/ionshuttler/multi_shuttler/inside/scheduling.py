@@ -183,7 +183,7 @@ def create_priority_queue(
     for pz in graph.pzs:
         if pz.name not in next_gate_at_pz:
             next_gate_at_pz[pz.name] = ()
-            
+
     return unique_sequence, next_gate_at_pz
 
 
