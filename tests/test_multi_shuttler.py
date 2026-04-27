@@ -374,7 +374,6 @@ class TestMultiCompilation:
     def test_find_best_gate_uses_global_multi_register_indices(self, tmp_path):
         """find_best_gate should score DAG nodes with global qubit indices."""
         from mqt.ionshuttler.multi_shuttler.outside.compilation import (
-            _build_qubit_to_global_index,
             create_dag,
             find_best_gate,
         )
@@ -398,7 +397,12 @@ class TestMultiCompilation:
 
         dag = create_dag(qasm_file)
         qubits = [qreg[0] for qreg in dag.qregs.values()]
-        qubit_to_global = _build_qubit_to_global_index(dag)
+        qubit_to_global = {}
+        offset = 0
+        for qreg in dag.qregs.values():
+            for local_idx, qubit in enumerate(qreg):
+                qubit_to_global[qubit] = offset + local_idx
+            offset += len(qreg)
 
         single_qubit_gate = FakeNode([qubits[0]])
         two_qubit_gate = FakeNode(qubits)
