@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -378,9 +379,9 @@ class TestMultiCompilation:
             find_best_gate,
         )
 
+        @dataclass
         class FakeNode:
-            def __init__(self, qargs):
-                self.qargs = qargs
+            qargs: list[object]
 
         qasm_file = tmp_path / "multi_register_best_gate.qasm"
         qasm_file.write_text(
@@ -406,8 +407,11 @@ class TestMultiCompilation:
 
         single_qubit_gate = FakeNode([qubits[0]])
         two_qubit_gate = FakeNode(qubits)
-        graph = SimpleNamespace(
-            pzs_name_map={"pz1": SimpleNamespace(getting_processed=set())},
+        graph = cast(
+            "Any",
+            SimpleNamespace(
+                pzs_name_map={"pz1": SimpleNamespace(getting_processed=set())},
+            ),
         )
         gate_info_map = {single_qubit_gate: "pz1", two_qubit_gate: "pz1"}
         dist_map = {
