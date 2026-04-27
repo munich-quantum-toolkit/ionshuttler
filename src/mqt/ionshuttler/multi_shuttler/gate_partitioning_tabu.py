@@ -4,7 +4,7 @@ import itertools
 import math
 import random
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -697,7 +697,9 @@ def _optimize_gate_partition(
     best_cost = current_cost
     best_assignments = [assignment.copy() for assignment in assignments_by_slice]
 
-    tabu_list: list[tuple[int, int, int]] = []
+    tabu_list_length = max(config.tabu_list_length, 1)
+    tabu_list: deque[tuple[int, int, int]] = deque(maxlen=tabu_list_length)
+    tabu_set: set[tuple[int, int, int]] = set()
     candidate_list_length = (
         config.candidate_list_length if config.candidate_list_length and config.candidate_list_length > 0 else None
     )
@@ -724,8 +726,6 @@ def _optimize_gate_partition(
         candidate_pool = _build_candidate_pool(candidate_scores_by_slice, candidate_k, per_slice_quota)
 
     max_iterations = config.resolve_max_iterations(num_qubits)
-    tabu_list_length = max(config.tabu_list_length, 1)
-
     # Big iteration loop: visit all candidates, pick best move, apply, repeat
     for iteration in range(max_iterations):
         if (
@@ -780,7 +780,7 @@ def _optimize_gate_partition(
                             config=config,
                             current_cost=current_cost,
                             best_cost=best_cost,
-                            tabu_list=tabu_list,
+                            tabu_set=tabu_set,
                             best_move_state=(
                                 best_move,
                                 best_move_score,
@@ -813,7 +813,7 @@ def _optimize_gate_partition(
                         config=config,
                         current_cost=current_cost,
                         best_cost=best_cost,
-                        tabu_list=tabu_list,
+                        tabu_set=tabu_set,
                         best_move_state=(
                             best_move,
                             best_move_score,
@@ -867,9 +867,8 @@ def _optimize_gate_partition(
         )
         current_cost = best_move_score
 
-        tabu_list.append((slice_index, supernode.id, previous_cluster))
-        if len(tabu_list) > tabu_list_length:
-            tabu_list.pop(0)
+        tabu_entry = (slice_index, supernode.id, previous_cluster)
+        _append_tabu_move(tabu_list, tabu_set, tabu_entry)
 
         if current_cost < best_cost:
             best_cost = current_cost
@@ -928,7 +927,7 @@ def _consider_supernode_moves(
     config: FineGrainedTabuConfig,
     current_cost: float,
     best_cost: float,
-    tabu_list: Sequence[tuple[int, int, int]],
+    tabu_set: set[tuple[int, int, int]],
     best_move_state: tuple[tuple[int, _Supernode, int] | None, float, float, float],
 ) -> tuple[tuple[int, _Supernode, int] | None, float, float, float]:
     """Evaluate all target clusters for one supernode.
@@ -985,7 +984,7 @@ def _consider_supernode_moves(
 
         # check tabu list, i.e. if this move is just a reversal of a recent move (avoid cycles)
         move_key = (slice_index, supernode.id, target_cluster)
-        if move_key in tabu_list and candidate_cost >= best_cost:
+        if move_key in tabu_set and candidate_cost >= best_cost:
             continue
         if candidate_cost < best_move_score:
             # Aspiration criterion: allow overriding tabu status when move is globally best so far
@@ -1000,6 +999,20 @@ def _consider_supernode_moves(
         best_move_capacity_delta,
         best_move_distance_delta,
     )
+
+
+def _append_tabu_move(
+    tabu_list: deque[tuple[int, int, int]],
+    tabu_set: set[tuple[int, int, int]],
+    tabu_entry: tuple[int, int, int],
+) -> None:
+    """Record a tabu move while keeping deque eviction and set membership in sync."""
+
+    evicted_entry = tabu_list[0] if len(tabu_list) == tabu_list.maxlen else None
+    tabu_list.append(tabu_entry)
+    tabu_set.add(tabu_entry)
+    if evicted_entry is not None and evicted_entry not in tabu_list:
+        tabu_set.discard(evicted_entry)
 
 
 def _capacity_delta(
