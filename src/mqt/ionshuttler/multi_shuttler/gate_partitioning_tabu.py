@@ -155,7 +155,7 @@ def compute_fine_grained_gate_partition(
     seed_assignment: list[int] | None = None
 
     # Contract slices into supernodes and (greedily)initialize partitioning
-    for index, slice_gate_ids in enumerate(time_slices):
+    for _index, slice_gate_ids in enumerate(time_slices):
         contraction = _contract_slice(
             gate_info,
             slice_gate_ids,
@@ -166,8 +166,10 @@ def compute_fine_grained_gate_partition(
             seed=resolved_config.seed,
         )
         slice_contractions.append(contraction)
-        if index == 0:
-            seed_assignment = _build_qubit_assignment(contraction, num_qubits, num_pzs)
+
+        # Carry each slice's assignment forward so the next slice warm-starts from its
+        # immediate predecessor (matches the docstring of _seed_assignment_from_previous).
+        seed_assignment = _build_qubit_assignment(contraction, num_qubits, num_pzs)
 
     # Tabu-based optimization of the gate partitioning using a shuttling-aware cost function
     optimization_start = time.perf_counter()
