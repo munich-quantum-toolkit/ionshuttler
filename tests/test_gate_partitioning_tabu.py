@@ -12,6 +12,7 @@ from mqt.ionshuttler.multi_shuttler.gate_partitioning_tabu import (
 )
 
 pytest = cast("Any", importlib.import_module("pytest"))
+tabu = cast("Any", importlib.import_module("mqt.ionshuttler.multi_shuttler.gate_partitioning_tabu"))
 
 
 def _distance_matrix(num_pzs: int) -> list[list[float]]:
@@ -145,3 +146,41 @@ def test_empty_sequence_returns_empty_partition_result() -> None:
     assert result.qubit_assignments_by_slice == []
     assert result.cost_before == pytest.approx(0.0)
     assert result.cost_after == pytest.approx(0.0)
+
+
+def test_consider_supernode_moves_returns_pre_move_balance_delta() -> None:
+    contraction = tabu._SliceContraction(
+        supernodes=[tabu._Supernode(id=0, qubits=(0,), load=2)],
+        qubit_to_supernode={0: 0},
+        required_edges={},
+        required_unary={0},
+        cluster_assignment=None,
+        cluster_loads=None,
+    )
+    slice_loads = [[5, 1]]
+
+    best_move, _best_score, _capacity_delta, _distance_delta, balance_delta = tabu._consider_supernode_moves(
+        contraction=contraction,
+        slice_index=0,
+        supernode_id=0,
+        num_pzs=2,
+        slice_counts=[[1, 0]],
+        slice_loads=slice_loads,
+        active_counts_per_slice=[{0: 1}],
+        active_loads_per_slice=[{0: 2}],
+        qubit_assignments_by_slice=[[0]],
+        distance_matrix=None,
+        slack_weights=None,
+        capacity=None,
+        config=FineGrainedTabuConfig(balance_penalty=1.0, capacity_weight=0.0, distance_weight_factor=0.0),
+        current_cost=0.0,
+        best_cost=0.0,
+        tabu_set=set(),
+        best_move_state=(None, float("inf"), 0.0, 0.0, 0.0),
+    )
+
+    assert best_move == (0, contraction.supernodes[0], 1)
+    assert balance_delta == pytest.approx(tabu._balance_delta(slice_loads[0], 0, 1, 2, 2))
+
+    moved_slice_loads = [3, 3]
+    assert balance_delta != pytest.approx(tabu._balance_delta(moved_slice_loads, 0, 1, 2, 2))

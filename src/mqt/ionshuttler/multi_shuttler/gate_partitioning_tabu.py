@@ -752,6 +752,7 @@ def _optimize_gate_partition(
         best_move_score = math.inf
         best_move_capacity_delta = 0.0
         best_move_distance_delta = 0.0
+        best_move_balance_delta = 0.0
 
         while True:
             move_sources = candidate_pool
@@ -764,6 +765,7 @@ def _optimize_gate_partition(
                             best_move_score,
                             best_move_capacity_delta,
                             best_move_distance_delta,
+                            best_move_balance_delta,
                         ) = _consider_supernode_moves(
                             contraction=contraction,
                             slice_index=slice_index,
@@ -786,6 +788,7 @@ def _optimize_gate_partition(
                                 best_move_score,
                                 best_move_capacity_delta,
                                 best_move_distance_delta,
+                                best_move_balance_delta,
                             ),
                         )
             else:
@@ -797,6 +800,7 @@ def _optimize_gate_partition(
                         best_move_score,
                         best_move_capacity_delta,
                         best_move_distance_delta,
+                        best_move_balance_delta,
                     ) = _consider_supernode_moves(
                         contraction=contraction,
                         slice_index=slice_index,
@@ -819,6 +823,7 @@ def _optimize_gate_partition(
                             best_move_score,
                             best_move_capacity_delta,
                             best_move_distance_delta,
+                            best_move_balance_delta,
                         ),
                     )
 
@@ -858,13 +863,7 @@ def _optimize_gate_partition(
 
         capacity_cost += best_move_capacity_delta
         distance_cost += best_move_distance_delta
-        balance_cost += _balance_delta(
-            slice_loads[slice_index],
-            previous_cluster,
-            target_cluster,
-            active_load,
-            num_pzs,
-        )
+        balance_cost += best_move_balance_delta
         current_cost = best_move_score
 
         tabu_entry = (slice_index, supernode.id, previous_cluster)
@@ -928,8 +927,8 @@ def _consider_supernode_moves(
     current_cost: float,
     best_cost: float,
     tabu_set: set[tuple[int, int, int]],
-    best_move_state: tuple[tuple[int, _Supernode, int] | None, float, float, float],
-) -> tuple[tuple[int, _Supernode, int] | None, float, float, float]:
+    best_move_state: tuple[tuple[int, _Supernode, int] | None, float, float, float, float],
+) -> tuple[tuple[int, _Supernode, int] | None, float, float, float, float]:
     """Evaluate all target clusters for one supernode.
 
     This helper checks every possible destination for the chosen supernode,
@@ -937,7 +936,13 @@ def _consider_supernode_moves(
     found together with the cached cost deltas needed by the caller.
     """
 
-    best_move, best_move_score, best_move_capacity_delta, best_move_distance_delta = best_move_state
+    (
+        best_move,
+        best_move_score,
+        best_move_capacity_delta,
+        best_move_distance_delta,
+        best_move_balance_delta,
+    ) = best_move_state
     supernode = contraction.supernodes[supernode_id]
     current_cluster = qubit_assignments_by_slice[slice_index][supernode.qubits[0]]
 
@@ -992,12 +997,14 @@ def _consider_supernode_moves(
             best_move_score = candidate_cost
             best_move_capacity_delta = capacity_delta
             best_move_distance_delta = distance_delta
+            best_move_balance_delta = balance_delta
 
     return (
         best_move,
         best_move_score,
         best_move_capacity_delta,
         best_move_distance_delta,
+        best_move_balance_delta,
     )
 
 
