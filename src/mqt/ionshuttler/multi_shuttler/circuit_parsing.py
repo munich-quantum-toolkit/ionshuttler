@@ -15,6 +15,10 @@ if TYPE_CHECKING:
 
 _HEADER_PREFIXES = ("OPENQASM", "include", "qreg", "creg", "gate", "barrier", "measure")
 _QUBIT_PATTERN = re.compile(r"q\[(\d+)\]")
+_NO_QUBITS_EXTRACTED_MSG = (
+    "Failed to extract qubits from QASM gate lines. "
+    "Use normalize_registers=True for non-canonical register names."
+)
 
 
 def is_qasm_file(file_path: Path) -> bool:
@@ -72,7 +76,7 @@ def parse_qasm_circuit(filename: Path, *, normalize_registers: bool = True) -> P
     for line in _iter_gate_lines(qasm_str):
         qubits = extract_qubits_from_gate(line)
         if not qubits:
-            continue
+            raise ValueError(_NO_QUBITS_EXTRACTED_MSG)
 
         gate_id = len(sequence)
         sequence.append(gate_id)

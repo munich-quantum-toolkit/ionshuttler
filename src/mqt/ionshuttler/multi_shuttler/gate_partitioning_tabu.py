@@ -906,7 +906,7 @@ def _optimize_gate_partition(
             )
             candidate_pool = _build_candidate_pool(candidate_scores_by_slice, candidate_k, per_slice_quota)
 
-    return best_assignments if best_assignments else assignments_by_slice, initial_cost, best_cost
+    return (best_assignments if best_assignments else assignments_by_slice), initial_cost, best_cost
 
 
 def _consider_supernode_moves(
@@ -960,7 +960,6 @@ def _consider_supernode_moves(
         distance_delta = _distance_delta(
             slice_index,
             supernode.qubits,
-            current_cluster,
             target_cluster,
             qubit_assignments_by_slice,
             distance_matrix,
@@ -1052,7 +1051,6 @@ def _capacity_delta(
 def _distance_delta(
     slice_index: int,
     qubits: Sequence[int],
-    current_cluster: int,
     target_cluster: int,
     qubit_assignments_by_slice: Sequence[Sequence[int]],
     distance_matrix: DistanceMatrix | None,

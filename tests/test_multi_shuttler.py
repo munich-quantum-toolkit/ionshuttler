@@ -338,6 +338,89 @@ class TestMultiCompilation:
 
         assert projected_qubits == dag_qubits
 
+    def test_build_dag_gate_id_lookup_handles_multi_register_dag_indices(self, tmp_path):
+        """DAG lookup should match normalized gate metadata across registers."""
+        from mqt.ionshuttler.multi_shuttler.outside.compilation import (
+            build_dag_gate_id_lookup,
+            create_dag,
+            create_initial_circuit,
+        )
+
+        qasm_file = tmp_path / "multi_register_lookup.qasm"
+        qasm_file.write_text(
+            "\n".join([
+                "OPENQASM 2.0;",
+                'include "qelib1.inc";',
+                "qreg q[1];",
+                "qreg r[1];",
+                "h q[0];",
+                "cx q[0],r[0];",
+            ]),
+            encoding="utf-8",
+        )
+
+        parsed = create_initial_circuit(qasm_file)
+        dag = create_dag(qasm_file)
+
+        lookup = build_dag_gate_id_lookup(dag, parsed.gate_info)
+        projected_qubits = [
+            parsed.gate_info[lookup[node.node_id]].qubits
+            for node in dag.topological_nodes()
+            if getattr(node, "type", None) == "op"
+        ]
+
+        assert projected_qubits == [(0,), (0, 1)]
+
+    def test_find_best_gate_uses_global_multi_register_indices(self, tmp_path):
+        """find_best_gate should score DAG nodes with global qubit indices."""
+        from mqt.ionshuttler.multi_shuttler.outside.compilation import (
+            _build_qubit_to_global_index,
+            create_dag,
+            find_best_gate,
+        )
+
+        class FakeNode:
+            def __init__(self, qargs):
+                self.qargs = qargs
+
+        qasm_file = tmp_path / "multi_register_best_gate.qasm"
+        qasm_file.write_text(
+            "\n".join([
+                "OPENQASM 2.0;",
+                'include "qelib1.inc";',
+                "qreg q[1];",
+                "qreg r[1];",
+                "h q[0];",
+                "x r[0];",
+            ]),
+            encoding="utf-8",
+        )
+
+        dag = create_dag(qasm_file)
+        qubits = [qreg[0] for qreg in dag.qregs.values()]
+        qubit_to_global = _build_qubit_to_global_index(dag)
+
+        single_qubit_gate = FakeNode([qubits[0]])
+        two_qubit_gate = FakeNode(qubits)
+        graph = SimpleNamespace(
+            pzs_name_map={"pz1": SimpleNamespace(getting_processed=set())},
+        )
+        gate_info_map = {single_qubit_gate: "pz1", two_qubit_gate: "pz1"}
+        dist_map = {
+            0: {"pz1": 0},
+            1: {"pz1": 5},
+        }
+
+        best_gate = find_best_gate(
+            graph,
+            [single_qubit_gate, two_qubit_gate],
+            dist_map,
+            gate_info_map,
+            qubit_to_global,
+        )
+
+        assert best_gate is single_qubit_gate
+
     def test_create_initial_sequence(self, qasm_file_qft6):
         """create_initial_sequence should return a non-empty gate sequence."""
         from mqt.ionshuttler.multi_shuttler.outside.compilation import create_initial_sequence

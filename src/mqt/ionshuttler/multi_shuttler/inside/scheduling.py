@@ -179,10 +179,11 @@ def create_priority_queue(
             msg = "len gate 0 or > 2? - can only process 1 or 2-qubit gates"
             raise ValueError(msg)
 
-        # at the end fill all empty pzs with ()
-        for pz in graph.pzs:
-            if pz.name not in next_gate_at_pz:
-                next_gate_at_pz[pz.name] = ()
+    # at the end fill all empty pzs with ()
+    for pz in graph.pzs:
+        if pz.name not in next_gate_at_pz:
+            next_gate_at_pz[pz.name] = ()
+            
     return unique_sequence, next_gate_at_pz
 
 

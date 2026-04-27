@@ -75,16 +75,29 @@ def remove_node(dag: DAGDependency, node: DAGDepNode) -> None:
     dag._multi_graph.remove_node(node.node_id)
 
 
+def _build_qubit_to_global_index(dag: DAGDependency) -> dict[object, int]:
+    """Map DAG qubit objects to global indices across all quantum registers."""
+
+    qubit_to_global: dict[object, int] = {}
+    offset = 0
+    for qreg in dag.qregs.values():
+        for local_idx, qubit in enumerate(qreg):
+            qubit_to_global[qubit] = offset + local_idx
+        offset += len(qreg)
+    return qubit_to_global
+
+
 def find_best_gate(
     graph: Graph,
     front_layer: list[DAGDepNode],
     dist_map: dict[int, dict[str, int]],
     gate_info_map: dict[DAGDepNode, str],
+    qubit_to_global: dict[object, int],
 ) -> DAGDepNode:
     """Find the best gate to execute based on distance."""
     min_gate_cost = math.inf
     for _, gate_node in enumerate(front_layer):
-        qubit_indices = [q._index for q in gate_node.qargs]
+        qubit_indices = [qubit_to_global[q] for q in gate_node.qargs]
         pz_of_node = gate_info_map[gate_node]
         pz = graph.pzs_name_map[pz_of_node]
         if gate_node in pz.getting_processed:
@@ -120,10 +133,11 @@ def build_dag_gate_id_lookup(dag: DAGDependency, gate_info: dict[int, GateInfo])
         gate_buckets[metadata.qubits, gate_name].append(gate_id)
 
     lookup: dict[int, int] = {}
+    qubit_to_global = _build_qubit_to_global_index(dag)
     for node in dag.topological_nodes():
         if getattr(node, "type", None) != "op":
             continue
-        qubits = tuple(q._index for q in node.qargs)
+        qubits = tuple(qubit_to_global[q] for q in node.qargs)
         gate_name = getattr(getattr(node, "op", None), "name", None) or getattr(node, "name", None) or ""
         key = (qubits, gate_name)
         if key not in gate_buckets or not gate_buckets[key]:
@@ -174,6 +188,7 @@ def create_updated_sequence_destructive(
         working_dag = manual_copy_dag(dag_dep)
         seq = []
         graph.dag_gate_id_lookup = build_dag_gate_id_lookup(working_dag, graph.gate_info)
+        qubit_to_global = _build_qubit_to_global_index(working_dag)
 
         graph.dist_dict = create_dist_dict(graph)
         state = get_state_idxs(graph)
@@ -192,7 +207,13 @@ def create_updated_sequence_destructive(
             for pz_name in pz_info_map:
                 # only include pzs that can process a gate of front layer
                 if pz_info_map[pz_name]:
-                    first_gate_to_execute = find_best_gate(graph, pz_info_map[pz_name], dist_map, gate_info_map)
+                    first_gate_to_execute = find_best_gate(
+                        graph,
+                        pz_info_map[pz_name],
+                        dist_map,
+                        gate_info_map,
+                        qubit_to_global,
+                    )
                     # if first_flag == True:
                     #     next_node = first_gate_to_execute
                     # first_flag = False
@@ -276,6 +297,7 @@ def get_all_first_gates_and_update_sequence_non_destructive(
     # update dist map
     state = get_state_idxs(graph)
     dist_map = update_distance_map(graph, state)
+    qubit_to_global = _build_qubit_to_global_index(dag)
     for round_recalc_fl in range(max_rounds):
         # Get front layer excluding already processed nodes
         front_layer_nodes = get_front_layer_non_destructive(dag, processed_nodes)
@@ -294,7 +316,7 @@ def get_all_first_gates_and_update_sequence_non_destructive(
         for pz_name in pz_info_map:
             if pz_info_map[pz_name]:
                 # Find the best gate for this processing zone
-                best_gate = find_best_gate(graph, pz_info_map[pz_name], dist_map, gate_info_map)
+                best_gate = find_best_gate(graph, pz_info_map[pz_name], dist_map, gate_info_map, qubit_to_global)
 
                 # Save the first gate that can be processed for each pz (only of first round, since otherwise can not be simultaneously processed)
                 if round_recalc_fl == 0 and pz_name not in first_nodes_by_pz:
