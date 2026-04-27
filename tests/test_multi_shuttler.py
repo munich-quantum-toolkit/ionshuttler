@@ -379,9 +379,9 @@ class TestMultiCompilation:
             find_best_gate,
         )
 
-        @dataclass
+        @dataclass(frozen=True)
         class FakeNode:
-            qargs: list[object]
+            qargs: tuple[object, ...]
 
         qasm_file = tmp_path / "multi_register_best_gate.qasm"
         qasm_file.write_text(
@@ -405,8 +405,8 @@ class TestMultiCompilation:
                 qubit_to_global[qubit] = offset + local_idx
             offset += len(qreg)
 
-        single_qubit_gate = FakeNode([qubits[0]])
-        two_qubit_gate = FakeNode(qubits)
+        single_qubit_gate = FakeNode((qubits[0],))
+        two_qubit_gate = FakeNode(tuple(qubits))
         graph = cast(
             "Any",
             SimpleNamespace(
