@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib
+from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, cast
 
 import networkx as nx
@@ -217,6 +219,26 @@ class TestMultiGraph:
         assert isinstance(idc_dict, dict)
         assert len(idc_dict) > 0
 
+    def test_gate_qubits_resolve_gate_ids(self):
+        """The graph should resolve gate ids back to their qubit tuples."""
+        from mqt.ionshuttler.multi_shuttler.circuit_types import GateInfo
+        from mqt.ionshuttler.multi_shuttler.outside.graph import Graph
+
+        g = Graph()
+        g.gate_info = {5: GateInfo(qubits=(2, 4), qasm="cx q[2],q[4];")}
+
+        assert g.gate_qubits(5) == (2, 4)
+
+    def test_inside_graph_gate_qubits_resolve_gate_ids(self):
+        """The inside graph should resolve gate ids back to their qubit tuples."""
+        from mqt.ionshuttler.multi_shuttler.circuit_types import GateInfo
+        from mqt.ionshuttler.multi_shuttler.inside.graph import Graph
+
+        g = Graph()
+        g.gate_info = {3: GateInfo(qubits=(1,), qasm="x q[1];")}
+
+        assert g.gate_qubits(3) == (1,)
+
 
 # ===================================================================
 # Compilation tests (multi_shuttler)
@@ -228,14 +250,14 @@ class TestMultiCompilation:
 
     def test_extract_qubits_from_gate(self):
         """extract_qubits_from_gate should parse qubit indices correctly."""
-        from mqt.ionshuttler.multi_shuttler.outside.compilation import extract_qubits_from_gate
+        from mqt.ionshuttler.multi_shuttler.circuit_parsing import extract_qubits_from_gate
 
         result = extract_qubits_from_gate("cx q[1],q[4];")
         assert result == [1, 4]
 
     def test_is_qasm_file(self, qasm_file_qft6):
         """is_qasm_file should return True for a valid QASM file."""
-        from mqt.ionshuttler.multi_shuttler.outside.compilation import is_qasm_file
+        from mqt.ionshuttler.multi_shuttler.circuit_parsing import is_qasm_file
 
         assert is_qasm_file(qasm_file_qft6) is True
 
@@ -247,6 +269,41 @@ class TestMultiCompilation:
         assert isinstance(result, list)
         assert len(result) > 0
 
+    def test_create_initial_circuit(self, qasm_file_qft6):
+        """create_initial_circuit should return stable gate ids with metadata."""
+        from mqt.ionshuttler.multi_shuttler.circuit_types import ParsedCircuit
+        from mqt.ionshuttler.multi_shuttler.outside.compilation import create_initial_circuit, create_initial_sequence
+
+        parsed = create_initial_circuit(qasm_file_qft6)
+
+        assert isinstance(parsed, ParsedCircuit)
+        assert parsed.sequence == list(range(len(parsed.sequence)))
+        assert len(parsed.gate_info) == len(parsed.sequence)
+        assert parsed.qubit_sequence == create_initial_sequence(qasm_file_qft6)
+
+    def test_create_initial_circuit_normalizes_registers(self, tmp_path):
+        """create_initial_circuit should canonicalize multi-register inputs."""
+        from mqt.ionshuttler.multi_shuttler.outside.compilation import create_initial_circuit
+
+        qasm_file = tmp_path / "multi_register.qasm"
+        qasm_file.write_text(
+            "\n".join([
+                "OPENQASM 2.0;",
+                'include "qelib1.inc";',
+                "qreg a[1];",
+                "qreg b[1];",
+                "cx a[0],b[0];",
+                "x b[0];",
+            ]),
+            encoding="utf-8",
+        )
+
+        parsed = create_initial_circuit(qasm_file)
+
+        assert parsed.sequence == [0, 1]
+        assert parsed.gate_info[0].qubits == (0, 1)
+        assert parsed.gate_info[1].qubits == (1,)
+
     def test_create_dag(self, qasm_file_qft6):
         """create_dag should return a DAGDependency object."""
         from qiskit.dagcircuit import DAGDependency
@@ -257,6 +314,121 @@ class TestMultiCompilation:
         assert isinstance(dag, DAGDependency)
         assert len(list(dag.get_nodes())) > 0
 
+    def test_build_dag_gate_id_lookup_preserves_qubit_projection(self, qasm_file_qft6):
+        """DAG node lookup should preserve the parsed qubit projection."""
+        from mqt.ionshuttler.multi_shuttler.outside.compilation import (
+            build_dag_gate_id_lookup,
+            create_dag,
+            create_initial_circuit,
+        )
+
+        parsed = create_initial_circuit(qasm_file_qft6)
+        dag = create_dag(qasm_file_qft6)
+
+        lookup = build_dag_gate_id_lookup(dag, parsed.gate_info)
+        projected_qubits = [
+            parsed.gate_info[lookup[node.node_id]].qubits
+            for node in dag.topological_nodes()
+            if getattr(node, "type", None) == "op"
+        ]
+        dag_qubits = [
+            tuple(q._index for q in node.qargs)
+            for node in dag.topological_nodes()
+            if getattr(node, "type", None) == "op"
+        ]
+
+        assert projected_qubits == dag_qubits
+
+    def test_build_dag_gate_id_lookup_handles_multi_register_dag_indices(self, tmp_path):
+        """DAG lookup should match normalized gate metadata across registers."""
+        from mqt.ionshuttler.multi_shuttler.outside.compilation import (
+            build_dag_gate_id_lookup,
+            create_dag,
+            create_initial_circuit,
+        )
+
+        qasm_file = tmp_path / "multi_register_lookup.qasm"
+        qasm_file.write_text(
+            "\n".join([
+                "OPENQASM 2.0;",
+                'include "qelib1.inc";',
+                "qreg q[1];",
+                "qreg r[1];",
+                "h q[0];",
+                "cx q[0],r[0];",
+            ]),
+            encoding="utf-8",
+        )
+
+        parsed = create_initial_circuit(qasm_file)
+        dag = create_dag(qasm_file)
+
+        lookup = build_dag_gate_id_lookup(dag, parsed.gate_info)
+        projected_qubits = [
+            parsed.gate_info[lookup[node.node_id]].qubits
+            for node in dag.topological_nodes()
+            if getattr(node, "type", None) == "op"
+        ]
+
+        assert projected_qubits == [(0,), (0, 1)]
+
+    def test_find_best_gate_uses_global_multi_register_indices(self, tmp_path):
+        """find_best_gate should score DAG nodes with global qubit indices."""
+        from mqt.ionshuttler.multi_shuttler.outside.compilation import (
+            create_dag,
+            find_best_gate,
+        )
+
+        @dataclass(frozen=True)
+        class FakeNode:
+            qargs: tuple[object, ...]
+
+        qasm_file = tmp_path / "multi_register_best_gate.qasm"
+        qasm_file.write_text(
+            "\n".join([
+                "OPENQASM 2.0;",
+                'include "qelib1.inc";',
+                "qreg q[1];",
+                "qreg r[1];",
+                "h q[0];",
+                "x r[0];",
+            ]),
+            encoding="utf-8",
+        )
+
+        dag = create_dag(qasm_file)
+        qubits = [qreg[0] for qreg in dag.qregs.values()]
+        qubit_to_global = {}
+        offset = 0
+        for qreg in dag.qregs.values():
+            for local_idx, qubit in enumerate(qreg):
+                qubit_to_global[qubit] = offset + local_idx
+            offset += len(qreg)
+
+        single_qubit_gate = FakeNode((qubits[0],))
+        two_qubit_gate = FakeNode(tuple(qubits))
+        graph = cast(
+            "Any",
+            SimpleNamespace(
+                pzs_name_map={"pz1": SimpleNamespace(getting_processed=set())},
+            ),
+        )
+        gate_info_map = {single_qubit_gate: "pz1", two_qubit_gate: "pz1"}
+        dist_map = {
+            0: {"pz1": 0},
+            1: {"pz1": 5},
+        }
+
+        best_gate = find_best_gate(
+            graph,
+            [single_qubit_gate, two_qubit_gate],
+            dist_map,
+            gate_info_map,
+            qubit_to_global,
+        )
+
+        assert best_gate is single_qubit_gate
+
     def test_create_initial_sequence(self, qasm_file_qft6):
         """create_initial_sequence should return a non-empty gate sequence."""
         from mqt.ionshuttler.multi_shuttler.outside.compilation import create_initial_sequence
@@ -264,6 +436,61 @@ class TestMultiCompilation:
         seq = create_initial_sequence(qasm_file_qft6)
         assert isinstance(seq, list)
         assert len(seq) > 0
+
+    def test_inside_priority_queue_accepts_gate_ids(self):
+        """The inside scheduler should accept gate-id sequences backed by metadata."""
+        from unittest.mock import patch
+
+        from mqt.ionshuttler.multi_shuttler.circuit_types import GateInfo
+        from mqt.ionshuttler.multi_shuttler.inside.scheduling import create_priority_queue
+
+        gate_info = {
+            0: GateInfo(qubits=(0,), qasm="x q[0];"),
+            1: GateInfo(qubits=(1, 2), qasm="cx q[1],q[2];"),
+        }
+        graph = SimpleNamespace(
+            sequence=[0, 1],
+            gate_info=gate_info,
+            gate_qubits=lambda gate: gate_info[gate].qubits if isinstance(gate, int) else gate,
+            preferred_pz_for_gate=lambda _gate_id: None,
+            map_to_pz={0: "pz1", 1: "pz1", 2: "pz2"},
+            locked_gates={},
+            pzs=[SimpleNamespace(name="pz1"), SimpleNamespace(name="pz2")],
+        )
+
+        with patch(
+            "mqt.ionshuttler.multi_shuttler.inside.scheduling.pick_pz_for_2_q_gate",
+            return_value="pz2",
+        ):
+            priority_queue, next_gate_at_pz = create_priority_queue(cast("Any", graph))
+
+        assert priority_queue == {0: "pz1", 1: "pz2", 2: "pz2"}
+        assert next_gate_at_pz == {"pz1": 0, "pz2": 1}
+
+    def test_inside_priority_queue_prefers_explicit_gate_assignment(self):
+        """The inside scheduler should honor explicit gate-to-PZ overrides."""
+        from mqt.ionshuttler.multi_shuttler.circuit_types import GateInfo
+        from mqt.ionshuttler.multi_shuttler.inside.scheduling import create_priority_queue
+
+        gate_info = {
+            0: GateInfo(qubits=(0,), qasm="x q[0];"),
+            1: GateInfo(qubits=(1, 2), qasm="cx q[1],q[2];"),
+        }
+        graph = SimpleNamespace(
+            sequence=[0, 1],
+            gate_info=gate_info,
+            gate_qubits=lambda gate: gate_info[gate].qubits if isinstance(gate, int) else gate,
+            gate_pz_assignment={0: "pz2", 1: "pz1"},
+            preferred_pz_for_gate={0: "pz2", 1: "pz1"}.get,
+            map_to_pz={0: "pz1", 1: "pz1", 2: "pz2"},
+            locked_gates={},
+            pzs=[SimpleNamespace(name="pz1"), SimpleNamespace(name="pz2")],
+        )
+
+        priority_queue, next_gate_at_pz = create_priority_queue(cast("Any", graph))
+
+        assert priority_queue == {0: "pz2", 1: "pz1", 2: "pz1"}
+        assert next_gate_at_pz == {"pz1": 1, "pz2": 0}
 
     def test_get_front_layer(self):
         """get_front_layer should return the initial nodes of a DAG."""
@@ -447,3 +674,75 @@ class TestMultiShuttlerMain:
         from mqt.ionshuttler.multi_shuttler.main import main
 
         main(heuristic_config_2pzs)  # Should not raise
+
+    def test_main_threads_explicit_gate_assignment_to_graph(self, heuristic_config_1pz):
+        """main() should pass explicit gate assignments through to the runtime graph."""
+        from unittest.mock import patch
+
+        from mqt.ionshuttler.multi_shuttler.main import main
+
+        config = dict(heuristic_config_1pz)
+        config["use_dag"] = False
+        config["gate_pz_assignment"] = {0: "pz1"}
+
+        def _capture_graph(graph, dag, use_cycle_or_paths, *, use_dag):
+            assert dag is None
+            assert use_cycle_or_paths == "cycles"
+            assert use_dag is False
+            assert graph.gate_pz_assignment == {0: "pz1"}
+            return 0
+
+        with patch("mqt.ionshuttler.multi_shuttler.main.run_shuttle_main", side_effect=_capture_graph):
+            assert main(config) == 0
+
+    def test_main_computes_fine_grained_gate_assignment_when_enabled(self, heuristic_config_1pz):
+        """main() should compute and thread a fine-grained gate assignment when enabled."""
+        from unittest.mock import patch
+
+        from mqt.ionshuttler.multi_shuttler.main import main
+
+        config = dict(heuristic_config_1pz)
+        config["use_dag"] = False
+        config["use_fine_grained_gate_partition"] = True
+
+        def _capture_graph(graph, dag, use_cycle_or_paths, *, use_dag):
+            assert dag is None
+            assert use_cycle_or_paths == "cycles"
+            assert use_dag is False
+            assert graph.gate_pz_assignment == {0: "pz1"}
+            return 0
+
+        with (
+            patch(
+                "mqt.ionshuttler.multi_shuttler.main.compute_fine_grained_gate_assignment",
+                return_value={0: "pz1"},
+            ) as compute_assignment,
+            patch("mqt.ionshuttler.multi_shuttler.main.run_shuttle_main", side_effect=_capture_graph),
+        ):
+            assert main(config) == 0
+
+        compute_assignment.assert_called_once()
+
+    def test_main_skips_fine_grained_gate_assignment_when_disabled(self, heuristic_config_1pz):
+        """main() should keep the current flow unchanged when fine-grained partitioning is disabled."""
+        from unittest.mock import patch
+
+        from mqt.ionshuttler.multi_shuttler.main import main
+
+        config = dict(heuristic_config_1pz)
+        config["use_dag"] = False
+
+        def _capture_graph(graph, dag, use_cycle_or_paths, *, use_dag):
+            assert dag is None
+            assert use_cycle_or_paths == "cycles"
+            assert use_dag is False
+            assert graph.gate_pz_assignment == {}
+            return 0
+
+        with (
+            patch("mqt.ionshuttler.multi_shuttler.main.compute_fine_grained_gate_assignment") as compute_assignment,
+            patch("mqt.ionshuttler.multi_shuttler.main.run_shuttle_main", side_effect=_capture_graph),
+        ):
+            assert main(config) == 0
+
+        compute_assignment.assert_not_called()

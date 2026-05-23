@@ -1,21 +1,21 @@
 from __future__ import annotations
 
+import math
 import pathlib
 import sys
+from collections.abc import Mapping
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import networkx as nx
 
-from .outside.compilation import create_dag, create_initial_sequence, create_updated_sequence_destructive
+from .gate_partitioning_tabu import compute_fine_grained_gate_partition
+from .outside.compilation import create_dag, create_initial_circuit, create_updated_sequence_destructive
 from .outside.cycles import create_starting_config, get_ions
 from .outside.graph_creator import GraphCreator, PZCreator
 from .outside.partition import get_partition
 from .outside.processing_zone import ProcessingZone
 from .outside.shuttle import main as run_shuttle_main
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
 
 
 def validate_conflict_resolution_mode(config: Mapping[str, Any]) -> str:
@@ -47,6 +47,90 @@ def validate_conflict_resolution_mode(config: Mapping[str, Any]) -> str:
         raise ValueError(msg)
 
     return mode
+
+
+def validate_gate_pz_assignment(config: Mapping[str, Any]) -> dict[int, str]:
+    """Validate and normalize an optional explicit gate-to-PZ mapping.
+
+    Args:
+        config: Parsed user configuration.
+
+    Returns:
+        Normalized gate-id to PZ mapping. Missing values normalize to an empty dict.
+
+    Raises:
+        TypeError: If the mapping or any key/value types are invalid.
+    """
+
+    raw_assignment = config.get("gate_pz_assignment")
+    if raw_assignment is None:
+        return {}
+    if isinstance(raw_assignment, (str, bytes)):
+        msg = "Config parameter 'gate_pz_assignment' must be a mapping of int gate ids to PZ names."
+        raise TypeError(msg)
+    if not isinstance(raw_assignment, Mapping):
+        msg = "Config parameter 'gate_pz_assignment' must be a mapping of int gate ids to PZ names."
+        raise TypeError(msg)
+
+    normalized_assignment: dict[int, str] = {}
+    for gate_id, pz_name in raw_assignment.items():
+        if isinstance(gate_id, bool) or not isinstance(gate_id, int):
+            msg = "Config parameter 'gate_pz_assignment' must use integer gate ids as keys."
+            raise TypeError(msg)
+        if not isinstance(pz_name, str):
+            msg = "Config parameter 'gate_pz_assignment' must use string PZ names as values."
+            raise TypeError(msg)
+        normalized_assignment[gate_id] = pz_name
+    return normalized_assignment
+
+
+def validate_use_fine_grained_gate_partition(config: Mapping[str, Any]) -> bool:
+    """Validate and normalize the opt-in fine-grained partitioning flag."""
+
+    raw_enabled = config.get("use_fine_grained_gate_partition", False)
+    if not isinstance(raw_enabled, bool):
+        msg = "Config parameter 'use_fine_grained_gate_partition' must be a boolean."
+        raise TypeError(msg)
+    return raw_enabled
+
+
+def validate_fine_grained_gate_partition_request(
+    config: Mapping[str, Any],
+    gate_pz_assignment: Mapping[int, str],
+) -> bool:
+    """Validate the optional fine-grained orchestration request as one unit."""
+
+    use_fine_grained_gate_partition = validate_use_fine_grained_gate_partition(config)
+    if use_fine_grained_gate_partition and gate_pz_assignment:
+        msg = (
+            "Config cannot enable 'use_fine_grained_gate_partition' while also supplying an explicit "
+            "'gate_pz_assignment'."
+        )
+        raise ValueError(msg)
+    return use_fine_grained_gate_partition
+
+
+def compute_fine_grained_gate_assignment(
+    sequence: list[int],
+    gate_info: dict[int, Any],
+    pzs: list[ProcessingZone],
+) -> dict[int, str]:
+    """Compute a gate-to-PZ assignment using the default fine-grained settings."""
+
+    pz_names = [pz.name for pz in pzs]
+    pz_distance_matrix = _build_pz_distance_matrix(pzs)
+    result = compute_fine_grained_gate_partition(sequence, gate_info, pz_names, pz_distance_matrix)
+    return result.gate_assignment
+
+
+def _build_pz_distance_matrix(pzs: list[ProcessingZone]) -> list[list[float]]:
+    """Build a dense PZ distance matrix from current processing-zone coordinates."""
+
+    processing_zone_positions = [pz.processing_zone for pz in pzs]
+    return [
+        [0.0 if i == j else math.dist(source, target) for j, target in enumerate(processing_zone_positions)]
+        for i, source in enumerate(processing_zone_positions)
+    ]
 
 
 def main(config: dict[str, Any]) -> int:
@@ -81,6 +165,8 @@ def main(config: dict[str, Any]) -> int:
 
     use_dag = config.get("use_dag", True)
     use_cycle_or_paths = validate_conflict_resolution_mode(config)
+    gate_pz_assignment = validate_gate_pz_assignment(config)
+    use_fine_grained_gate_partition = validate_fine_grained_gate_partition_request(config, gate_pz_assignment)
     pz_assignment_policy = config.get("pz_assignment_policy", "legacy")
     max_timesteps = config.get("max_timesteps", 1_000_000)
     plot_flag = config.get("plot", False)
@@ -155,6 +241,8 @@ def main(config: dict[str, Any]) -> int:
     print(f"Architecture: {arch}, Seed: {seed}")
     print(f"Algorithm: {algorithm_name}")
     print(f"DAG-Compilation: {use_dag}, Conflict Resolution: {use_cycle_or_paths}")
+    if use_fine_grained_gate_partition:
+        print("Fine-grained gate partitioning enabled with default parameters.")
 
     # --- Graph Creation ---
     basegraph_creator = GraphCreator(m, n, v, h, failing_junctions, pzs_to_use, seed)
@@ -171,6 +259,7 @@ def main(config: dict[str, Any]) -> int:
     graph.plot = plot_flag
     graph.save = save_flag
     graph.arch = str(arch)  # For plotting/logging
+    graph.gate_pz_assignment = gate_pz_assignment
     graph.pz_assignment_policy = pz_assignment_policy
     print(f"PZ assignment policy: {graph.pz_assignment_policy}")
 
@@ -199,7 +288,9 @@ def main(config: dict[str, Any]) -> int:
     create_starting_config(graph, num_ions, seed=seed)
     graph.state = get_ions(graph)  # Get initial state {ion: edge_idc}
 
-    graph.sequence = create_initial_sequence(qasm_file_path)
+    parsed_circuit = create_initial_circuit(qasm_file_path)
+    graph.gate_info = parsed_circuit.gate_info
+    graph.sequence = parsed_circuit.sequence.copy()
     seq_length = len(graph.sequence)
     print(f"Number of Gates: {seq_length}")
 
@@ -238,11 +329,18 @@ def main(config: dict[str, Any]) -> int:
     graph.map_to_pz = map_to_pz
 
     # Validation
-    unique_sequence_qubits = {item for sublist in graph.sequence for item in sublist}
+    unique_sequence_qubits = {qubit for gate in graph.sequence for qubit in graph.gate_qubits(gate)}
     missing_qubits = unique_sequence_qubits - set(all_partition_elements)
     if missing_qubits:
         print(f"Error: Qubits {missing_qubits} from sequence are not in any partition.")
         sys.exit(1)
+
+    if use_fine_grained_gate_partition:
+        graph.gate_pz_assignment = compute_fine_grained_gate_assignment(
+            parsed_circuit.sequence,
+            parsed_circuit.gate_info,
+            graph.pzs,
+        )
 
     # --- DAG-Compilation Setup (if enabled) ---
     dag = None
@@ -262,7 +360,7 @@ def main(config: dict[str, Any]) -> int:
             print("Falling back to non-compiled sequence.")
             use_dag = False  # Disable use_dag if setup fails
             dag = None
-            graph.sequence = create_initial_sequence(qasm_file_path)  # Revert to basic sequence
+            graph.sequence = parsed_circuit.sequence.copy()  # Revert to the basic parsed sequence
     else:
         print("DAG disabled, using static QASM sequence.")
 

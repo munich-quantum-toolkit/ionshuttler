@@ -83,14 +83,15 @@ def find_pz_order(graph: Graph, gate_info_list: dict[str, list[int]]) -> list[st
     # find next processing zone that will execute a gate
     pz_order = []
     for gate in graph.sequence:
-        if len(gate) == 1:
-            ion = gate[0]
+        qubits = graph.gate_qubits(gate)
+        if len(qubits) == 1:
+            ion = qubits[0]
             for pz in graph.pzs:
                 if ion in gate_info_list[pz.name]:
                     pz_order.append(pz.name)
                     break
-        elif len(gate) == 2:
-            ion1, ion2 = gate
+        elif len(qubits) == 2:
+            ion1, ion2 = qubits
             for pz in graph.pzs:
                 if ion1 in gate_info_list[pz.name] and ion2 in gate_info_list[pz.name]:
                     pz_order.append(pz.name)
@@ -203,12 +204,15 @@ def shuttle(
     )
 
 
-def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str, record_path: str | None = None) -> int:
+def main(graph: Graph, sequence: list[int] | None, cycle_or_paths: str, record_path: str | None = None) -> int:
     """
     If record_path is provided, writes:
     { "timeline": [ { "t": 0, "ions": [...] }, { "t": 1, ... }, ... ] }
     """
     timestep = 0
+
+    if sequence is not None:
+        graph.sequence = list(sequence)
 
     timeline = []
     if record_path is not None:
@@ -249,25 +253,29 @@ def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str, rec
 
         # priority queue is dict with ions as keys and pz as values
         # (for 2-qubit gates pz may not match the pz of the individual ion)
-        priority_queue, next_gate_at_pz = create_priority_queue(graph, sequence)
+        priority_queue, next_gate_at_pz = create_priority_queue(graph)
 
         # check if ions are already in processing zone ->
         # important for 2-qubit gates
         # -> leave ion in processing zone if needed in a 2-qubit gate
-        for i in range(min(len(graph.pzs), len(sequence))):
+        for i in range(min(len(graph.pzs), len(graph.sequence))):
             # only continue if previous ion was processed
-            gate = sequence[i]
+            gate = graph.sequence[i]
+            qubits = graph.gate_qubits(gate)
 
-            if len(gate) == 2:
-                ion1, ion2 = gate
+            if len(qubits) == 2:
+                ion1, ion2 = qubits
                 for pz in graph.pzs:
                     state1 = graph.state[ion1]
                     state2 = graph.state[ion2]
+                    next_gate_qubits = (
+                        () if next_gate_at_pz[pz.name] == () else graph.gate_qubits(next_gate_at_pz[pz.name])
+                    )
                     # append ion to in_process if it is in the correct processing zone
-                    if state1 == pz.edge_idc and ion1 in next_gate_at_pz[pz.name] and ion2 in next_gate_at_pz[pz.name]:
+                    if state1 == pz.edge_idc and ion1 in next_gate_qubits and ion2 in next_gate_qubits:
                         graph.in_process.append(ion1)
                         # print(f"Added ion {ion1} to in_process")
-                    if state2 == pz.edge_idc and ion1 in next_gate_at_pz[pz.name] and ion2 in next_gate_at_pz[pz.name]:
+                    if state2 == pz.edge_idc and ion1 in next_gate_qubits and ion2 in next_gate_qubits:
                         graph.in_process.append(ion2)
                         # print(f"Added ion {ion2} to in_process")
 
@@ -281,27 +289,28 @@ def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str, rec
 
         # Check the state of each ion in the sequence
         graph.state = get_ion_chains(graph)
-        processed_ions: list[tuple[int, ...]] = []
+        processed_gates: list[int] = []
         processed_execs: list[dict[str, Any]] = []  # NEW: gates executed this step
         previous_ion_processed = True
         pzs = graph.pzs.copy()
         # go through the first gates in the sequence (as many as pzs or sequence length)
         # for now, gates are processed in order
         # (can only be processed in parallel if previous gates are processed)
-        for i in range(min(len(graph.pzs), len(sequence))):
+        for i in range(min(len(graph.pzs), len(graph.sequence))):
             # only continue if previous ion was processed
             if not previous_ion_processed:
                 break
-            gate = sequence[i]
+            gate = graph.sequence[i]
+            qubits = graph.gate_qubits(gate)
             ion_processed = False
             # wenn auf weg zu pz in anderer pz -> wird processed?
             # Problem nur für 2-qubit gate? -> TODO fix
             for pz in pzs:
-                if len(gate) == 1:
-                    ion = gate[0]
+                if len(qubits) == 1:
+                    ion = qubits[0]
                     if graph.state[ion] == pz.edge_idc:
                         print(f"Ion {ion} at Processing Zone {pz.name}")
-                        processed_ions.insert(0, (ion,))
+                        processed_gates.insert(0, gate)
                         processed_execs.insert(
                             0,
                             {  # NEW
@@ -319,8 +328,8 @@ def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str, rec
                         pzs.remove(pz)
                         # graph.in_process.append(ion)
                         break
-                elif len(gate) == 2:
-                    ion1, ion2 = gate
+                elif len(qubits) == 2:
+                    ion1, ion2 = qubits
                     state1 = graph.state[ion1]
                     state2 = graph.state[ion2]
 
@@ -340,7 +349,7 @@ def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str, rec
                     # if both ions are in the processing zone, process the gate
                     if state1 == pz.edge_idc and state2 == pz.edge_idc:
                         print(f"Ions {ion1} and {ion2} at Processing Zone {pz.name}")
-                        processed_ions.insert(0, (ion1, ion2))
+                        processed_gates.insert(0, gate)
                         processed_execs.insert(
                             0,
                             {  # NEW
@@ -367,8 +376,8 @@ def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str, rec
             previous_ion_processed = ion_processed
 
         # Remove processed ions from the sequence
-        for gate in processed_ions:
-            sequence.remove(gate)
+        for gate in processed_gates:
+            graph.sequence.remove(gate)
 
         # Make executed gates available to the next snapshot
         try:
@@ -376,7 +385,7 @@ def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str, rec
         except Exception:
             graph.executed_gates_next = []
 
-        if len(sequence) == 0:
+        if len(graph.sequence) == 0:
             print(f"All ions have arrived at their destination in {timestep} timesteps")
             break
 
