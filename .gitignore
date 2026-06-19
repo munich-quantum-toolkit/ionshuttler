@@ -12,8 +12,23 @@ build/
 dist/
 *.egg-info/
 
-# Ignore macOS system files
+# ruff
+.ruff_cache/
+
+# Claude
+CLAUDE.md
+.claude/
+
+# OS specific stuff
 .DS_Store
+.DS_Store?
+.Spotlight-V100
+.Trashes
+._*
+Thumbs.db
+editor.swp
+editor~
+ehthumbs.db
 
 # Sphinx documentation
 docs/_build/

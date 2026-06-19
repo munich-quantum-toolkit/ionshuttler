@@ -37,17 +37,17 @@ master_doc = "index"
 templates_path = ["_templates"]
 
 extensions = [
-    "myst_nb",
     "autoapi.extension",
+    "myst_nb",
+    "sphinx_copybutton",
+    "sphinx_design",
     "sphinx.ext.autodoc",
     "sphinx.ext.intersphinx",
     "sphinx.ext.napoleon",
-    "sphinx_copybutton",
-    "sphinx_design",
-    "sphinxext.opengraph",
     "sphinx.ext.viewcode",
     "sphinxcontrib.inkscapeconverter",
     "sphinxcontrib.bibtex",
+    "sphinxext.opengraph",
 ]
 
 source_suffix = [".rst", ".md"]
