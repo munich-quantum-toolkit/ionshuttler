@@ -122,7 +122,8 @@ repos:
         args: []
         additional_dependencies:
           - matplotlib
-          - nox
           - more_itertools
+          - nox
+          - numpy<2.5.0
           - types-networkx
         priority: 8
