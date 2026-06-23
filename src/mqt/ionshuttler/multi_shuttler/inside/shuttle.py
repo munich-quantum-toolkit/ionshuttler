@@ -364,7 +364,7 @@ def main(graph: Graph, sequence: list[int] | None, cycle_or_paths: str, record_p
                         ion_processed = True
                         # remove the processing zone from the list
                         # (it can only process one gate)
-                        pzs.remove(pz)  # noqa: B909
+                        pzs.remove(pz)
 
                         # remove the locked pz of the processed two-qubit gate
                         if gate in graph.locked_gates and graph.locked_gates[gate] == pz.name:

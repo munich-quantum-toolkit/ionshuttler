@@ -85,5 +85,7 @@ def plot_state(
         plt.show()
 
     if save_plot is True:
+        assert filename is not None
         plt.savefig(filename)
+
     plt.close()
