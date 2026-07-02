@@ -10,12 +10,12 @@ if TYPE_CHECKING:
 def create_idc_dictionary(graph: Graph) -> dict[int, Edge]:
     edge_dict = {}
     for edge_idx, edge_idc in enumerate(graph.edges()):
-        edge_dict[edge_idx] = tuple(sorted(edge_idc, key=sum))
+        edge_dict[edge_idx] = tuple(sorted(edge_idc, key=lambda e: sum(list(e))))
     return edge_dict
 
 
 def get_idx_from_idc(edge_dictionary: dict[int, Edge], idc: Edge) -> int:
-    node1, node2 = tuple(sorted(idc, key=sum))
+    node1, node2 = tuple(sorted(idc, key=lambda e: sum(list(e))))
     return list(edge_dictionary.values()).index((node1, node2))
 
 

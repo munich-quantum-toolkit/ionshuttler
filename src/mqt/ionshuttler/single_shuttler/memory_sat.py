@@ -107,7 +107,7 @@ def plot_state(nx_g: Graph, plot_ions: bool = True) -> None:
 def create_idc_dictionary(nx_g: Graph) -> dict[int, Edge]:
     edge_dict = {}
     for edge_idx, edge_idc in enumerate(nx_g.edges()):
-        edge_dict[edge_idx] = tuple(sorted(edge_idc, key=sum))
+        edge_dict[edge_idx] = tuple(sorted(edge_idc, key=lambda e: sum(list(e))))
     return edge_dict
 
 

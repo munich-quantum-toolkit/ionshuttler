@@ -15,12 +15,22 @@ if TYPE_CHECKING:
 GateRef = int | tuple[int, ...]
 
 
-class Graph(nx.Graph):  # type: ignore [type-arg]
+class Graph(nx.Graph):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self.executed_gates_next: list[dict[str, object]] = []
-        self._gate_info: dict[int, GateInfo] = {}
-        self._gate_pz_assignment: dict[int, str] = {}
+        self._executed_gates_next = []
+        self._locked_gates = {}
+        self._gate_info = {}
+        self._gate_pz_assignment = {}
+        self._in_process = []
+
+    @property
+    def executed_gates_next(self) -> list[dict[str, Any]]:
+        return self._executed_gates_next
+
+    @executed_gates_next.setter
+    def executed_gates_next(self, value: list[dict[str, Any]]) -> None:
+        self._executed_gates_next = value
 
     @property
     def junction_nodes(self) -> list[Node]:
@@ -48,8 +58,6 @@ class Graph(nx.Graph):  # type: ignore [type-arg]
 
     @property
     def gate_info(self) -> dict[int, GateInfo]:
-        if not hasattr(self, "_gate_info"):
-            self._gate_info = {}
         return self._gate_info
 
     @gate_info.setter
@@ -63,8 +71,6 @@ class Graph(nx.Graph):  # type: ignore [type-arg]
 
     @property
     def gate_pz_assignment(self) -> dict[int, str]:
-        if not hasattr(self, "_gate_pz_assignment"):
-            self._gate_pz_assignment = {}
         return self._gate_pz_assignment
 
     @gate_pz_assignment.setter

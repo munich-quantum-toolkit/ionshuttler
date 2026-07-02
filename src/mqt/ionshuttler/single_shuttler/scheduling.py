@@ -167,7 +167,7 @@ def create_initial_sequence(
         next_node = None
         dag_dep = None
     else:
-        qc = QuantumCircuit.from_qasm_file(filename)
+        qc = QuantumCircuit.from_qasm_file(filename)  # ty: ignore[invalid-argument-type]
         # Remove barriers
         qc = RemoveBarriers()(qc)
         # Remove measurement operations
@@ -428,6 +428,7 @@ def update_sequence_and_process_gate(
                 seq.pop(0)
             else:
                 # update dag
+                assert next_node is not None
                 remove_node(dag_dep, next_node)
                 dag_dep = manual_copy_dag(dag_dep)
                 new_dist_map = memorygrid.update_distance_map()
@@ -489,8 +490,8 @@ def run_simulation(
     max_timesteps: int,
     seq: list[tuple[int, ...]],
     flat_seq: list[int],
-    dag_dep: DAGDependency,
-    next_node_initial: DAGDepNode,
+    dag_dep: DAGDependency | None,
+    next_node_initial: DAGDepNode | None,
     max_length: int,
 ) -> int:
     time_in_pz_counter = 0

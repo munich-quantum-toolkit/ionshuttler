@@ -35,7 +35,7 @@ class RunStats:
         self.per_timestep.append({"timestep": timestep, "cycles": cycles, "paths": paths})
 
 
-class Graph(nx.Graph):  # type: ignore [type-arg]
+class Graph(nx.Graph):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.executed_gates_next: list[dict[str, object]] = []

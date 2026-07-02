@@ -60,7 +60,7 @@ def normalize_qasm_registers(qasm_str: str, *, qreg_name: str = "q", creg_name: 
         clbits=[clbit_map[clbit] for clbit in circuit.clbits] if circuit.clbits else None,
         inplace=True,
     )
-    return cast("str", dumps(normalized_circuit))
+    return dumps(normalized_circuit)
 
 
 def parse_qasm_circuit(filename: Path, *, normalize_registers: bool = True) -> ParsedCircuit:

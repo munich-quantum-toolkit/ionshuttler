@@ -6,15 +6,8 @@ from collections import Counter
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-# Keep all imports at module top; optional deps are handled via try/except imports.
-try:
-    import matplotlib as mpl  # ICN001
-    import matplotlib.pyplot as plt  # ICN001
-
-    mpl.use("Agg")
-except Exception:  # pragma: no cover
-    mpl = None  # type: ignore[assignment]
-    plt = None  # type: ignore[assignment]
+import matplotlib as mpl
+import matplotlib.pyplot as plt
 
 from .compilation import get_all_first_gates_and_update_sequence_non_destructive, remove_processed_gates
 from .cycles import get_ions, precompute_all_paths
@@ -41,6 +34,8 @@ if TYPE_CHECKING:
     from .graph import Graph
     from .ion_types import Edge
     from .processing_zone import ProcessingZone
+
+mpl.use("Agg")
 
 # Gate time configuration (overridable from run scripts)
 GATE_TIME_1Q = 1
@@ -322,7 +317,7 @@ def _rehome_after_2q(graph: Graph, ion_a: int, ion_b: int, pz_name: str) -> None
         graph.map_to_pz[ion_a] = pz_name
 
 
-def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, save_dag: bool = False) -> int:
+def main(graph: Graph, dag: DAGDependency | None, cycle_or_paths: str, use_dag: bool, save_dag: bool = False) -> int:
     timestep = 0
     graph.state = get_ions(graph)
 
@@ -366,6 +361,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
     graph.in_process = {pz.name: [] for pz in graph.pzs}
 
     if use_dag:
+        assert dag is not None
         next_processable_gate_nodes = get_all_first_gates_and_update_sequence_non_destructive(graph, dag)
 
     locked_gates: dict[int, str] = {}
@@ -574,6 +570,7 @@ def main(graph: Graph, dag: DAGDependency, cycle_or_paths: str, use_dag: bool, s
             else:
                 graph.executed_gates_next = []
             if processed_nodes:
+                assert dag is not None
                 remove_processed_gates(graph, dag, processed_nodes)
                 next_processable_gate_nodes = get_all_first_gates_and_update_sequence_non_destructive(graph, dag)
                 for pz_name, node in next_processable_gate_nodes.items():

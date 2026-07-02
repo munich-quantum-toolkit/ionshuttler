@@ -17,12 +17,12 @@ if TYPE_CHECKING:
 def create_idc_dictionary(nx_g: Graph) -> dict[int, Edge]:
     edge_dict: dict[int, Edge] = {}
     for edge_idx, edge_idc in enumerate(nx_g.edges()):
-        edge_dict[edge_idx] = tuple(sorted(edge_idc, key=sum))
+        edge_dict[edge_idx] = tuple(sorted(edge_idc, key=lambda e: sum(list(e))))
     return edge_dict
 
 
 def get_idx_from_idc(edge_dictionary: dict[int, Edge], idc: Edge) -> int:
-    idc1, icd2 = tuple(sorted(idc, key=sum))
+    idc1, icd2 = tuple(sorted(idc, key=lambda e: sum(list(e))))
     return list(edge_dictionary.values()).index((idc1, icd2))
 
 

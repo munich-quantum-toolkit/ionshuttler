@@ -149,7 +149,7 @@ def build_dag_gate_id_lookup(dag: DAGDependency, gate_info: dict[int, GateInfo])
 
 
 def create_dag(filename: Path) -> DAGDependency:
-    qc = QuantumCircuit.from_qasm_file(str(filename))
+    qc = QuantumCircuit.from_qasm_file(filename)  # ty: ignore[invalid-argument-type]
     # Remove barriers
     qc = RemoveBarriers()(qc)
     # Remove measurement operations
@@ -173,7 +173,7 @@ def create_initial_sequence(filename: Path) -> list[tuple[int, ...]]:
 def create_updated_sequence_destructive(
     graph: Graph,
     filename: Path,
-    dag_dep: DAGDependency,
+    dag_dep: DAGDependency | None,
     use_dag: bool,
 ) -> tuple[list[int], list[int], DAGDependency | None]:
     # assert file is a qasm file
@@ -185,6 +185,7 @@ def create_updated_sequence_destructive(
         seq = list(graph.sequence)
         dag_dep = None
     else:
+        assert dag_dep is not None
         working_dag = manual_copy_dag(dag_dep)
         seq = []
         graph.dag_gate_id_lookup = build_dag_gate_id_lookup(working_dag, graph.gate_info)
@@ -222,7 +223,7 @@ def create_updated_sequence_destructive(
 
     flat_seq = [qubit for gate in seq for qubit in graph.gate_qubits(gate)]
 
-    return seq, flat_seq, dag_dep  # , next_node
+    return seq, flat_seq, dag_dep
 
 
 def get_front_layer_non_destructive(dag: DAGDependency, virtually_processed_nodes: set[int]) -> list[DAGDepNode]:
@@ -288,9 +289,8 @@ def get_all_first_gates_and_update_sequence_non_destructive(
     """Get the first gates from the DAG for each processing zone (only first round, so they are simultaneously processable).
     Continue finding the subsequent "first gates" and update the sequence accordingly.
     Creates a compiled list of gates (ordered) for each pz from the DAG Dependency."""
-
     ordered_sequence: list[int] = []
-    processed_nodes: set[DAGDepNode] = set()  # Track nodes we've "virtually removed"
+    processed_nodes: set[int] = set()  # Track nodes we've "virtually removed"
     # Dictionary to store the first gate for each processing zone
     first_nodes_by_pz = {}
 

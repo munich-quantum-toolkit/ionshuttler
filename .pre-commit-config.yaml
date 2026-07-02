@@ -12,7 +12,7 @@ ci:
   autoupdate_commit_msg: "⬆️🪝 update pre-commit hooks"
   autoupdate_schedule: quarterly
   autofix_commit_msg: "🎨 pre-commit fixes"
-  skip: [mypy]
+  skip: [ty]
 
 repos:
   ## Standard hooks
@@ -37,7 +37,7 @@ repos:
 
   ## Check best practices for scientific Python code
   - repo: https://github.com/scientific-python/cookie
-    rev: 2026.04.04
+    rev: 2026.06.18
     hooks:
       - id: sp-repo-review
         additional_dependencies: ["repo-review[cli]"]
@@ -52,7 +52,7 @@ repos:
 
   ## Ensure uv.lock is up to date
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.11.21
+    rev: 0.11.23
     hooks:
       - id: uv-lock
         priority: 0
@@ -104,7 +104,7 @@ repos:
 
   ## Format and lint Python files with ruff
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.17
+    rev: v0.15.18
     hooks:
       - id: ruff-check
         require_serial: true
@@ -113,16 +113,10 @@ repos:
         types_or: [python, pyi, jupyter, markdown]
         priority: 7
 
-  ## Check Python types with mypy
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.1.0
+  ## Check Python types with ty
+  - repo: https://github.com/astral-sh/ty-pre-commit
+    rev: v0.0.51
     hooks:
-      - id: mypy
-        files: ^(src/mqt|tests|noxfile.py)
-        args: []
-        additional_dependencies:
-          - matplotlib
-          - nox
-          - more_itertools
-          - types-networkx
+      - id: ty
+        args: [--isolated]
         priority: 8
