@@ -77,7 +77,7 @@ def remove_node(dag: DAGDependency, node: DAGDepNode) -> None:
 def find_best_gate(front_layer: list[DAGDepNode], dist_map: dict[int, int]) -> DAGDepNode:
     """Find the best gate to execute based on distance."""
     min_gate_cost = math.inf
-    best_gate = None
+    best_gate = front_layer[0]
     for _, gate_node in enumerate(front_layer):
         qubit_indices = gate_node.qindices
         gate_cost = max(dist_map[qs] for qs in qubit_indices)
@@ -104,7 +104,7 @@ def manual_copy_dag(dag: DAGDependency) -> DAGDependency:
     return new_dag
 
 
-def update_sequence(dag: DAGDependency, dist_map: dict[int, int]) -> tuple[list[list[int]], DAGDepNode]:
+def update_sequence(dag: DAGDependency, dist_map: dict[int, int]) -> tuple[list[list[int]], DAGDepNode | None]:
     """Get the sequence of gates from the DAG. Creates a new DAG and removes all gates from it while creating the sequence."""
     working_dag = manual_copy_dag(dag)
     sequence: list[list[int]] = []

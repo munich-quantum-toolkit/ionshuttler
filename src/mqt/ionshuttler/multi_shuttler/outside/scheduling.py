@@ -638,6 +638,7 @@ def update_entry_and_exit_cycles(
                 # move it to entry (later through rotate_entry flag in rotate_free_cycles)
                 pz.rotate_entry = True
                 # change its path/circle to a stop move -> will be later placed into entry
+                assert pz.ion_to_move_out_of_pz is not None
                 all_cycles[pz.ion_to_move_out_of_pz] = [
                     pz.path_from_pz[0],
                     pz.path_from_pz[0],

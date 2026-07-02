@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pathlib
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from .cycles import get_ion_chains
 from .plotting import plot_state
@@ -46,7 +46,7 @@ def _snapshot_state_for_json(graph: Graph, t: int) -> dict[str, Any]:
         ],
     }
     # Include executed gates buffered by main() for the previous step
-    pending = getattr(graph, "executed_gates_next", None)
+    pending = graph.executed_gates_next
     if pending:
         gates_out: list[dict[str, Any]] = []
         for i, g in enumerate(pending):
@@ -241,7 +241,7 @@ def main(graph: Graph, sequence: list[tuple[int, ...]], cycle_or_paths: str, rec
     )
 
     graph.in_process = []
-    graph.locked_gates = {}
+    graph.locked_gates = cast("dict[tuple[int, ...], str]", {})
     while timestep < max_timesteps:
         print("locked_gates", graph.locked_gates)
         print(f"\nStarting timestep {timestep}")
