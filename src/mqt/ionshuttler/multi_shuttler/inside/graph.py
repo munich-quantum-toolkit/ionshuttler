@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import networkx as nx
 
@@ -11,10 +11,20 @@ if TYPE_CHECKING:
     from .processing_zone import ProcessingZone
 
 
-class Graph(nx.Graph):  # type: ignore [type-arg]
-    def __init__(self, *args, **kwargs):
+class Graph(nx.Graph):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self.executed_gates_next: list[dict[str, object]] = []
+        self._executed_gates_next = []
+        self._in_process = []
+        self._locked_gates = {}
+
+    @property
+    def executed_gates_next(self) -> list[dict[str, Any]]:
+        return self._executed_gates_next
+
+    @executed_gates_next.setter
+    def executed_gates_next(self, value: list[dict[str, Any]]) -> None:
+        self._executed_gates_next = value
 
     @property
     def junction_nodes(self) -> list[Node]:

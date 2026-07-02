@@ -123,7 +123,7 @@ def manual_copy_dag(dag: DAGDependency) -> DAGDependency:
 
 
 def create_dag(filename: Path) -> DAGDependency:
-    qc = QuantumCircuit.from_qasm_file(str(filename))
+    qc = QuantumCircuit.from_qasm_file(filename)  # ty: ignore[invalid-argument-type]
     # Remove barriers
     qc = RemoveBarriers()(qc)
     # Remove measurement operations
@@ -140,9 +140,9 @@ def create_initial_sequence(filename: Path) -> list[tuple[int, ...]]:
 def create_updated_sequence_destructive(
     graph: Graph,
     filename: Path,
-    dag_dep: DAGDependency,
+    dag_dep: DAGDependency | None,
     use_dag: bool,
-) -> tuple[list[tuple[int, ...]], list[int], DAGDependency]:
+) -> tuple[list[tuple[int, ...]], list[int], DAGDependency | None]:
     # assert file is a qasm file
     assert is_qasm_file(filename), "The file is not a valid QASM file."
 
@@ -151,6 +151,7 @@ def create_updated_sequence_destructive(
         seq = parse_qasm(filename)
         dag_dep = None
     else:
+        assert dag_dep is not None
         working_dag = manual_copy_dag(dag_dep)
         seq = []
 
@@ -180,7 +181,7 @@ def create_updated_sequence_destructive(
 
     flat_seq = [item for sublist in seq for item in sublist]
 
-    return seq, flat_seq, dag_dep  # , next_node
+    return seq, flat_seq, dag_dep
 
 
 def get_front_layer_non_destructive(dag: DAGDependency, virtually_processed_nodes: set[int]) -> list[DAGDepNode]:
@@ -248,7 +249,7 @@ def get_all_first_gates_and_update_sequence_non_destructive(
     Creates a compiled list of gates (ordered) for each pz from the DAG Dependency."""
 
     ordered_sequence = []
-    processed_nodes: set[DAGDepNode] = set()  # Track nodes we've "virtually removed"
+    processed_nodes: set[int] = set()  # Track nodes we've "virtually removed"
     # Dictionary to store the first gate for each processing zone
     first_nodes_by_pz = {}
 

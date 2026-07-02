@@ -14,14 +14,14 @@ if TYPE_CHECKING:
 def create_idc_dictionary(graph: Graph) -> dict[Edge, int]:
     edge_dict = {}
     for edge_idx, edge_idc in enumerate(graph.edges()):
-        node1, node2 = tuple(sorted(edge_idc, key=sum))
+        node1, node2 = tuple(sorted(edge_idc, key=lambda e: sum(list(e))))
         edge_dict[node1, node2] = edge_idx
         edge_dict[node2, node1] = edge_idx
     return edge_dict
 
 
 def get_idx_from_idc(edge_dictionary: dict[Edge, int], idc: Edge) -> int:
-    node1, node2 = tuple(sorted(idc, key=sum))
+    node1, node2 = tuple(sorted(idc, key=lambda e: sum(list(e))))
     return edge_dictionary[node1, node2]
 
 
@@ -70,4 +70,4 @@ def update_distance_map(graph: Graph, state: dict[int, int]) -> dict[int, dict[s
 # Function to convert all nodes to float
 def convert_nodes_to_float(graph: Graph) -> Graph:
     mapping = {node: (float(node[0]), float(node[1])) for node in graph.nodes}
-    return nx.relabel_nodes(graph, mapping, copy=False)  # type: ignore [return-value]
+    return nx.relabel_nodes(graph, mapping, copy=False)
