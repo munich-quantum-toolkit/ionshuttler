@@ -68,14 +68,15 @@ def find_pz_order(graph: Graph, gate_info_list: dict[str, list[int]]) -> list[st
     # find next processing zone that will execute a gate
     pz_order = []
     for gate in graph.sequence:
-        if len(gate) == 1:
-            ion = gate[0]
+        qubits = graph.gate_qubits(gate)
+        if len(qubits) == 1:
+            ion = qubits[0]
             for pz in graph.pzs:
                 if ion in gate_info_list[pz.name]:
                     pz_order.append(pz.name)
                     break
-        elif len(gate) == 2:
-            ion1, ion2 = gate
+        elif len(qubits) == 2:
+            ion1, ion2 = qubits
             for pz in graph.pzs:
                 if ion1 in gate_info_list[pz.name] and ion2 in gate_info_list[pz.name]:
                     pz_order.append(pz.name)
@@ -363,7 +364,7 @@ def main(graph: Graph, dag: DAGDependency | None, cycle_or_paths: str, use_dag: 
         assert dag is not None
         next_processable_gate_nodes = get_all_first_gates_and_update_sequence_non_destructive(graph, dag)
 
-    locked_gates: dict[tuple[int, ...], str] = {}
+    locked_gates: dict[int, str] = {}
     graph.locked_gates = locked_gates
     graph.run_stats = RunStats()
     graph.path_cache = precompute_all_paths(graph)
@@ -383,27 +384,21 @@ def main(graph: Graph, dag: DAGDependency | None, cycle_or_paths: str, use_dag: 
 
         pz_executing_gate_order = find_pz_order(graph, gate_info_list)
         graph.locked_gates = locked_gates
-        priority_queue, next_gate_at_pz_dict = create_priority_queue(graph, pz_executing_gate_order)
+        priority_queue, _next_gate_at_pz_dict = create_priority_queue(graph, pz_executing_gate_order)
 
         for i in range(min(len(graph.pzs), len(graph.sequence))):
             gate = graph.sequence[i]
+            qubits = graph.gate_qubits(gate)
 
-            if len(gate) == 2:
-                ion1, ion2 = gate
+            if len(qubits) == 2:
+                ion1, ion2 = qubits
                 for pz in graph.pzs:
                     state1 = graph.state[ion1]
                     state2 = graph.state[ion2]
-                    if (
-                        state1 == pz.parking_edge
-                        and ion1 in next_gate_at_pz_dict[pz.name]
-                        and ion2 in next_gate_at_pz_dict[pz.name]
-                    ):
+                    next_gate_qubits = graph.next_gate_qubits(pz.name)
+                    if state1 == pz.parking_edge and ion1 in next_gate_qubits and ion2 in next_gate_qubits:
                         graph.in_process[pz.name].append(ion1)
-                    if (
-                        state2 == pz.parking_edge
-                        and ion1 in next_gate_at_pz_dict[pz.name]
-                        and ion2 in next_gate_at_pz_dict[pz.name]
-                    ):
+                    if state2 == pz.parking_edge and ion1 in next_gate_qubits and ion2 in next_gate_qubits:
                         graph.in_process[pz.name].append(ion2)
 
         shuttle(graph, priority_queue, timestep, cycle_or_paths, unique_folder)
@@ -415,9 +410,10 @@ def main(graph: Graph, dag: DAGDependency | None, cycle_or_paths: str, use_dag: 
             processed_nodes = {}
             for pz_name, gate_node in next_processable_gate_nodes.items():
                 pz = graph.pzs_name_map[pz_name]
-                gate = tuple(ion for ion in [q._index for q in gate_node.qargs])
-                if len(gate) == 1:
-                    ion = gate[0]
+                gate_id = graph.dag_gate_id_lookup[gate_node.node_id]
+                qubits = graph.gate_qubits(gate_id)
+                if len(qubits) == 1:
+                    ion = qubits[0]
                     if get_idx_from_idc(graph.idc_dict, graph.state[ion]) == get_idx_from_idc(
                         graph.idc_dict, pz.parking_edge
                     ):
@@ -436,8 +432,8 @@ def main(graph: Graph, dag: DAGDependency | None, cycle_or_paths: str, use_dag: 
                                 pz.getting_processed.remove(gate_node)
                             pz.time_in_pz_counter = 0
                             pz.gate_execution_finished = True
-                elif len(gate) == 2:
-                    ion1, ion2 = gate
+                elif len(qubits) == 2:
+                    ion1, ion2 = qubits
                     state1 = graph.state[ion1]
                     state2 = graph.state[ion2]
 
@@ -458,11 +454,11 @@ def main(graph: Graph, dag: DAGDependency | None, cycle_or_paths: str, use_dag: 
                             processed_nodes[pz_name] = gate_node
                             if REHOME:
                                 _rehome_after_2q(graph, ion1, ion2, pz.name)
-                            if gate in graph.locked_gates and graph.locked_gates[gate] == pz.name:
-                                graph.locked_gates.pop(gate)
+                            if gate_id in graph.locked_gates and graph.locked_gates[gate_id] == pz.name:
+                                graph.locked_gates.pop(gate_id)
                             pz.time_in_pz_counter = 0
                             pz.gate_execution_finished = True
-                            print(f"[GATE EXECUTED] t={timestep} gate={gate} at PZ={pz.name}")
+                            print(f"[GATE EXECUTED] t={timestep} gate={gate_id} at PZ={pz.name}")
                             if gate_node in pz.getting_processed:
                                 pz.getting_processed.remove(gate_node)
                 else:
@@ -470,7 +466,7 @@ def main(graph: Graph, dag: DAGDependency | None, cycle_or_paths: str, use_dag: 
                     raise ValueError(msg)
 
         else:
-            processed_ions: list[tuple[int, ...]] = []
+            processed_gates: list[int] = []
             previous_ion_processed = True
             pzs = graph.pzs.copy()
             next_gates = graph.sequence[: min(len(graph.pzs), len(graph.sequence))]
@@ -478,11 +474,12 @@ def main(graph: Graph, dag: DAGDependency | None, cycle_or_paths: str, use_dag: 
                 if not previous_ion_processed:
                     break
                 gate = next_gates[i]
+                qubits = graph.gate_qubits(gate)
                 ion_processed = False
                 pz_to_remove = None
                 for pz in list(pzs):
-                    if len(gate) == 1:
-                        ion = gate[0]
+                    if len(qubits) == 1:
+                        ion = qubits[0]
                         if get_idx_from_idc(graph.idc_dict, graph.state[ion]) == get_idx_from_idc(
                             graph.idc_dict, pz.parking_edge
                         ):
@@ -495,15 +492,15 @@ def main(graph: Graph, dag: DAGDependency | None, cycle_or_paths: str, use_dag: 
                             pz.time_in_pz_counter += 1
                             gate_time_1q = GATE_TIME_1Q
                             if pz.time_in_pz_counter == gate_time_1q:
-                                processed_ions.insert(0, (ion,))
+                                processed_gates.insert(0, gate)
                                 ion_processed = True
                                 pz_to_remove = pz
                                 pz.time_in_pz_counter = 0
                                 pz.gate_execution_finished = True
                                 pz.active_start_t = None
                                 break
-                    elif len(gate) == 2:
-                        ion1, ion2 = gate
+                    elif len(qubits) == 2:
+                        ion1, ion2 = qubits
                         state1 = graph.state[ion1]
                         state2 = graph.state[ion2]
 
@@ -519,7 +516,7 @@ def main(graph: Graph, dag: DAGDependency | None, cycle_or_paths: str, use_dag: 
                             pz.time_in_pz_counter += 1
                             gate_time_2q = GATE_TIME_2Q
                             if pz.time_in_pz_counter == gate_time_2q:
-                                processed_ions.insert(0, (ion1, ion2))
+                                processed_gates.insert(0, gate)
                                 ion_processed = True
                                 if REHOME:
                                     _rehome_after_2q(graph, ion1, ion2, pz.name)
@@ -553,15 +550,15 @@ def main(graph: Graph, dag: DAGDependency | None, cycle_or_paths: str, use_dag: 
                             or getattr(gate_node, "name", None)
                             or "OP"
                         )
-                        qubits = list(
+                        exec_qubits = list(
                             getattr(gate_node, "qindices", [q._index for q in getattr(gate_node, "qargs", [])])
                         )
-                        duration = GATE_TIME_2Q if len(qubits) >= 2 else GATE_TIME_1Q
+                        duration = GATE_TIME_2Q if len(exec_qubits) >= 2 else GATE_TIME_1Q
                         t0_val = start_t if isinstance(start_t, int) else max(0, timestep - (duration - 1))
                         execs.append({
                             "id": f"t{timestep}_{pz_name}",
                             "type": gtype,
-                            "qubits": qubits,
+                            "qubits": exec_qubits,
                             "pz": pz_name,
                             "edge_idc": getattr(pz_obj, "parking_edge", None) if pz_obj else None,
                             "duration": duration,
@@ -577,25 +574,26 @@ def main(graph: Graph, dag: DAGDependency | None, cycle_or_paths: str, use_dag: 
                 remove_processed_gates(graph, dag, processed_nodes)
                 next_processable_gate_nodes = get_all_first_gates_and_update_sequence_non_destructive(graph, dag)
                 for pz_name, node in next_processable_gate_nodes.items():
-                    locked_gates[tuple(q._index for q in node.qargs)] = pz_name
+                    locked_gates[graph.dag_gate_id_lookup[node.node_id]] = pz_name
         else:
-            if processed_ions:
+            if processed_gates:
                 execs = []
-                for i, g in enumerate(processed_ions):
-                    duration = GATE_TIME_2Q if len(g) >= 2 else GATE_TIME_1Q
+                for i, gate in enumerate(processed_gates):
+                    qubits = graph.gate_qubits(gate)
+                    duration = GATE_TIME_2Q if len(qubits) >= 2 else GATE_TIME_1Q
                     # Explicitly type pz_used as ProcessingZone or None
                     pz_used: ProcessingZone | None = None
                     for pz in graph.pzs:
                         try:
-                            if len(g) == 1 and get_idx_from_idc(graph.idc_dict, graph.state[g[0]]) == get_idx_from_idc(
-                                graph.idc_dict, pz.parking_edge
-                            ):
+                            if len(qubits) == 1 and get_idx_from_idc(
+                                graph.idc_dict, graph.state[qubits[0]]
+                            ) == get_idx_from_idc(graph.idc_dict, pz.parking_edge):
                                 pz_used = pz
                                 break
-                            if len(g) == 2 and all(
+                            if len(qubits) == 2 and all(
                                 get_idx_from_idc(graph.idc_dict, graph.state[q])
                                 == get_idx_from_idc(graph.idc_dict, pz.parking_edge)
-                                for q in g
+                                for q in qubits
                             ):
                                 pz_used = pz
                                 break
@@ -609,7 +607,7 @@ def main(graph: Graph, dag: DAGDependency | None, cycle_or_paths: str, use_dag: 
                     execs.append({
                         "id": f"t{timestep}_{i}",
                         "type": "OP",
-                        "qubits": list(g),
+                        "qubits": list(qubits),
                         "duration": duration,
                         **({"pz": getattr(pz_used, "name", None)} if pz_used else {}),
                         **({"edge_idc": getattr(pz_used, "parking_edge", None)} if pz_used else {}),
@@ -620,7 +618,7 @@ def main(graph: Graph, dag: DAGDependency | None, cycle_or_paths: str, use_dag: 
                 graph.executed_gates_next = execs
             else:
                 graph.executed_gates_next = []
-            for gate in processed_ions:
+            for gate in processed_gates:
                 graph.sequence.remove(gate)
 
         if len(graph.sequence) == 0:
