@@ -9,7 +9,7 @@ from qiskit.transpiler.passes import RemoveBarriers, RemoveFinalMeasurements
 
 
 def read_qasm_file(file_path: Path) -> QuantumCircuit:
-    circuit = QuantumCircuit.from_qasm_file(file_path)  # ty: ignore[invalid-argument-type]
+    circuit = QuantumCircuit.from_qasm_file(file_path)
     # Remove barriers
     circuit = RemoveBarriers()(circuit)
     # Remove measurement operations
