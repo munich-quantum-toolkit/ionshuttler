@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from qiskit.dagcircuit import DAGDependency
 
@@ -119,5 +119,5 @@ def update_sequence(dag: DAGDependency, dist_map: dict[int, int]) -> tuple[list[
             first_node = first_gate_to_execute
         i = 1
         remove_node(working_dag, first_gate_to_execute)
-        sequence.append(first_gate_to_execute.qindices)
+        sequence.append(cast("list[int]", first_gate_to_execute.qindices))
     return sequence, first_node

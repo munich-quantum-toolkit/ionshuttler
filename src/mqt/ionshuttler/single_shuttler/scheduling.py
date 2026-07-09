@@ -167,7 +167,7 @@ def create_initial_sequence(
         next_node = None
         dag_dep = None
     else:
-        qc = QuantumCircuit.from_qasm_file(filename)  # ty: ignore[invalid-argument-type]
+        qc = QuantumCircuit.from_qasm_file(filename)
         # Remove barriers
         qc = RemoveBarriers()(qc)
         # Remove measurement operations

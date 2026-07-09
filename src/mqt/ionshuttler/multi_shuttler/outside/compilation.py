@@ -123,7 +123,7 @@ def manual_copy_dag(dag: DAGDependency) -> DAGDependency:
 
 
 def create_dag(filename: Path) -> DAGDependency:
-    qc = QuantumCircuit.from_qasm_file(filename)  # ty: ignore[invalid-argument-type]
+    qc = QuantumCircuit.from_qasm_file(filename)
     # Remove barriers
     qc = RemoveBarriers()(qc)
     # Remove measurement operations
