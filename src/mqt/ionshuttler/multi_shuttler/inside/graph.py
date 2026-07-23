@@ -7,16 +7,22 @@ import networkx as nx
 from .graph_utils import create_idc_dictionary
 
 if TYPE_CHECKING:
+    from ..circuit_types import GateInfo
     from .ion_types import Edge, Node
     from .processing_zone import ProcessingZone
+
+
+GateRef = int | tuple[int, ...]
 
 
 class Graph(nx.Graph):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._executed_gates_next = []
-        self._in_process = []
         self._locked_gates = {}
+        self._gate_info = {}
+        self._gate_pz_assignment = {}
+        self._in_process = []
 
     @property
     def executed_gates_next(self) -> list[dict[str, Any]]:
@@ -43,12 +49,36 @@ class Graph(nx.Graph):
         self._pzs = value
 
     @property
-    def locked_gates(self) -> dict[tuple[int, ...], str]:
+    def locked_gates(self) -> dict[int, str]:
         return self._locked_gates
 
     @locked_gates.setter
-    def locked_gates(self, value: dict[tuple[int, ...], str]) -> None:
+    def locked_gates(self, value: dict[int, str]) -> None:
         self._locked_gates = value
+
+    @property
+    def gate_info(self) -> dict[int, GateInfo]:
+        return self._gate_info
+
+    @gate_info.setter
+    def gate_info(self, value: dict[int, GateInfo]) -> None:
+        self._gate_info = value
+
+    def gate_qubits(self, gate: GateRef) -> tuple[int, ...]:
+        if isinstance(gate, int):
+            return self.gate_info[gate].qubits
+        return gate
+
+    @property
+    def gate_pz_assignment(self) -> dict[int, str]:
+        return self._gate_pz_assignment
+
+    @gate_pz_assignment.setter
+    def gate_pz_assignment(self, value: dict[int, str]) -> None:
+        self._gate_pz_assignment = value
+
+    def preferred_pz_for_gate(self, gate_id: int) -> str | None:
+        return self.gate_pz_assignment.get(gate_id)
 
     @property
     def state(self) -> dict[int, Edge]:
@@ -75,11 +105,11 @@ class Graph(nx.Graph):
         self._arch = value
 
     @property
-    def sequence(self) -> list[tuple[int, ...]]:
+    def sequence(self) -> list[int]:
         return self._sequence
 
     @sequence.setter
-    def sequence(self, value: list[tuple[int, ...]]) -> None:
+    def sequence(self, value: list[int]) -> None:
         self._sequence = value
 
     @property
