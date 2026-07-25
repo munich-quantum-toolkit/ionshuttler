@@ -127,7 +127,7 @@ def get_path_to_node(nx_g: Graph, src: Node, tar: Node) -> list[Edge]:
         nx_g,
         src,
         tar,
-        lambda edge0, edge1, edge_attr_dict: (edge_attr_dict["edge_type"] != "trap") * 1e8 + 1,  # noqa: ARG005
+        lambda edge0, edge1, edge_attr_dict: (edge_attr_dict["edge_type"] != "trap") * 1e8 + 1,  # ruff:ignore[unused-lambda-argument]
     )
     # shortest path should always be the correct path in a grid -> care for changes
     for edge in pairwise(node_path):

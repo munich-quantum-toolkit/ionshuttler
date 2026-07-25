@@ -8,17 +8,17 @@ import pkgutil
 
 def test_package_imports():
     """Test that the top-level package can be imported."""
-    import mqt.ionshuttler  # noqa: F401
+    import mqt.ionshuttler  # ruff:ignore[unused-import]
 
 
 def test_single_shuttler_importable():
     """Test that the single_shuttler subpackage can be imported."""
-    import mqt.ionshuttler.single_shuttler  # noqa: F401
+    import mqt.ionshuttler.single_shuttler  # ruff:ignore[unused-import]
 
 
 def test_multi_shuttler_importable():
     """Test that the multi_shuttler subpackage can be imported."""
-    import mqt.ionshuttler.multi_shuttler  # noqa: F401
+    import mqt.ionshuttler.multi_shuttler  # ruff:ignore[unused-import]
 
 
 def test_all_submodules_importable():

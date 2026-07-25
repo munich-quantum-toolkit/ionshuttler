@@ -150,7 +150,7 @@ def find_nonfree_paths(graph: Graph, paths_idcs_dict: dict[int, list[Edge]]) -> 
         # exclude processing zone node -> if pz node in circles -> can both be executed -> now not in junction_nodes and also not checked in first check above
         # if both end in same edge -> don't execute (scenario where path out of pz ends in same edge as next edge for other)
         # from cycles: -> new exclude parking edge (can end both in parking edge, since stop moves in parking edge also end in parking edge)
-        if len(nodes1.intersection(nodes2).intersection(junction_nodes)) > 0 or (  # noqa: SIM102
+        if len(nodes1.intersection(nodes2).intersection(junction_nodes)) > 0 or (  # ruff:ignore[collapsible-if]
             get_idx_from_idc(graph.idc_dict, paths_idcs_dict[path_ion_1][-1])
             == (get_idx_from_idc(graph.idc_dict, paths_idcs_dict[path_ion_2][-1]))
             and (get_idx_from_idc(graph.idc_dict, paths_idcs_dict[path_ion_1][-1]) not in graph.parking_edges_idxs)

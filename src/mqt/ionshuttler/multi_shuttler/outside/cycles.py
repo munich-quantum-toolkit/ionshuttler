@@ -624,7 +624,7 @@ def find_conflict_cycle_idxs(graph: Graph, cycles_dict: dict[int, list[Edge]]) -
         # exclude processing zone node -> if pz node in circles -> can both be executed
         # if both end in same edge -> don't execute (scenario where path out of pz ends in same edge as next edge for other)
         # -> new exclude parking edge (can end both in parking edge, since stop moves in parking edge also end in parking edge)
-        if len(nodes1.intersection(nodes2)) > 0 or (  # noqa: SIM102
+        if len(nodes1.intersection(nodes2)) > 0 or (  # ruff:ignore[collapsible-if]
             get_idx_from_idc(graph.idc_dict, cycles_dict[cycle1][-1])
             == (get_idx_from_idc(graph.idc_dict, cycles_dict[cycle2][-1]))
             and (get_idx_from_idc(graph.idc_dict, cycles_dict[cycle1][-1]) not in graph.parking_edges_idxs)
