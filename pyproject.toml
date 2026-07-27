@@ -209,6 +209,7 @@ git-only = [
     "tests/*",
     ".gitignore",
     ".readthedocs.yaml",
+    ".rumdl.toml",
     "AGENTS.md",
     "sitecustomize.py",
     "uv.lock",
