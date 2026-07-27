@@ -1,9 +1,10 @@
 # References
 
-The _MQT IonShuttler_ has a strong foundation in peer‑reviewed research.
-Many of its built‑in algorithms are based on methods published in scientific journals and conferences.
-For an overview of the _MQT IonShuttler_ and its features, see {cite:p}`schoenberger2024shuttling`.
-If you want to cite this article, please use the following BibTeX entry:
+The _MQT IonShuttler_ has a strong foundation in peer‑reviewed research. Many of
+its built‑in algorithms are based on methods published in scientific journals
+and conferences. For an overview of the _MQT IonShuttler_ and its features, see
+{cite:p}`schoenberger2024shuttling`. If you want to cite this article, please
+use the following BibTeX entry:
 
 ```bibtex
 @article{schoenberger2024shuttling,
@@ -20,8 +21,9 @@ If you want to cite this article, please use the following BibTeX entry:
 }
 ```
 
-The _MQT IonShuttler_ is part of the Munich Quantum Toolkit, which is described in {cite:p}`mqt`.
-If you want to cite the Munich Quantum Toolkit, please use the following BibTeX entry:
+The _MQT IonShuttler_ is part of the Munich Quantum Toolkit, which is described
+in {cite:p}`mqt`. If you want to cite the Munich Quantum Toolkit, please use the
+following BibTeX entry:
 
 ```bibtex
 @inproceedings{mqt,
@@ -37,7 +39,10 @@ If you want to cite the Munich Quantum Toolkit, please use the following BibTeX 
 }
 ```
 
-If you use the _MQT IonShuttler_ in your work, we would appreciate if you cited {cite:p}`schoenberger2024shuttling` (which subsumes {cite:p}`schoenberger2023usingbooleansatisfiabilityexact` and {cite:p}`schoenberger2025orchestratingmultizoneshuttlingtrappedion`).
+If you use the _MQT IonShuttler_ in your work, we would appreciate if you cited
+{cite:p}`schoenberger2024shuttling` (which subsumes
+{cite:p}`schoenberger2023usingbooleansatisfiabilityexact` and
+{cite:p}`schoenberger2025orchestratingmultizoneshuttlingtrappedion`).
 
 A full list of references is given below.
 

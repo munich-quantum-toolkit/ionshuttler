@@ -12,8 +12,10 @@
 
 # MQT IonShuttler
 
-The MQT IonShuttler is a tool for generating shuttling schedules for trapped-ion quantum computers with a grid-type Memory Zone based on the Quantum Charge Coupled Device (QCCD) architecture.
-It is part of the [_Munich Quantum Toolkit (MQT)_](https://mqt.readthedocs.io).
+The MQT IonShuttler is a tool for generating shuttling schedules for trapped-ion
+quantum computers with a grid-type Memory Zone based on the Quantum Charge
+Coupled Device (QCCD) architecture. It is part of the
+[_Munich Quantum Toolkit (MQT)_](https://mqt.readthedocs.io).
 
 <p align="center">
   <a href="https://mqt.readthedocs.io/projects/ionshuttler">
@@ -23,13 +25,20 @@ It is part of the [_Munich Quantum Toolkit (MQT)_](https://mqt.readthedocs.io).
 
 ## Key Features
 
-- **Exact shuttling schedules** for small architectures with **a single processing zone (PZ)**
-- **Heuristic shuttling schedules** for larger devices with **one _or_ multiple processing zones**
+- **Exact shuttling schedules** for small architectures with
+  **a single processing zone (PZ)**
+- **Heuristic shuttling schedules** for larger devices with
+  **one _or_ multiple processing zones**
 
 ## Contributors and Supporters
 
-The _[Munich Quantum Toolkit (MQT)](https://mqt.readthedocs.io)_ is developed by the [Chair for Design Automation](https://www.cda.cit.tum.de/) at the [Technical University of Munich](https://www.tum.de/) and supported by [MQSC](https://mq.sc).
-Among others, it is part of the [Munich Quantum Software Stack (MQSS)](https://www.munich-quantum-valley.de/research/research-areas/mqss) ecosystem, which is being developed as part of the [Munich Quantum Valley (MQV)](https://www.munich-quantum-valley.de) initiative.
+The _[Munich Quantum Toolkit (MQT)](https://mqt.readthedocs.io)_ is developed by
+the [Chair for Design Automation](https://www.cda.cit.tum.de/) at the
+[Technical University of Munich](https://www.tum.de/) and supported by
+[MQSC](https://mq.sc). Among others, it is part of the
+[Munich Quantum Software Stack (MQSS)](https://www.munich-quantum-valley.de/research/research-areas/mqss)
+ecosystem, which is being developed as part of the
+[Munich Quantum Valley (MQV)](https://www.munich-quantum-valley.de) initiative.
 
 <p align="center">
   <picture>
@@ -38,7 +47,8 @@ Among others, it is part of the [Munich Quantum Software Stack (MQSS)](https://w
   </picture>
 </p>
 
-Thank you to all the contributors who have helped make the MQT IonShuttler a reality!
+Thank you to all the contributors who have helped make the MQT IonShuttler a
+reality!
 
 <p align="center">
   <a href="https://github.com/munich-quantum-toolkit/ionshuttler/graphs/contributors">
@@ -46,17 +56,21 @@ Thank you to all the contributors who have helped make the MQT IonShuttler a rea
   </a>
 </p>
 
-The MQT will remain free, open-source, and permissively licensed—now and in the future.
-We are firmly committed to keeping it open and actively maintained for the quantum computing community.
+The MQT will remain free, open-source, and permissively licensed—now and in the
+future. We are firmly committed to keeping it open and actively maintained for
+the quantum computing community.
 
 To support this endeavor, please consider:
 
-- Starring and sharing our repositories: https://github.com/munich-quantum-toolkit
-- Contributing code, documentation, tests, or examples via issues and pull requests
+- Starring and sharing our repositories:
+  <https://github.com/munich-quantum-toolkit>
+- Contributing code, documentation, tests, or examples via issues and pull
+  requests
 - Citing the MQT in your publications (see [Cite This](#cite-this))
-- Citing our research in your publications (see [References](https://mqt.readthedocs.io/projects/ionshuttler/en/latest/references.html))
+- Citing our research in your publications (see
+  [References](https://mqt.readthedocs.io/projects/ionshuttler/en/latest/references.html))
 - Using the MQT in research and teaching, and sharing feedback and use cases
-- Sponsoring us on GitHub: https://github.com/sponsors/munich-quantum-toolkit
+- Sponsoring us on GitHub: <https://github.com/sponsors/munich-quantum-toolkit>
 
 <p align="center">
   <a href="https://github.com/sponsors/munich-quantum-toolkit">
@@ -66,25 +80,30 @@ To support this endeavor, please consider:
 
 ## Getting Started
 
-`mqt.ionshuttler` is available via [PyPI](https://pypi.org/project/mqt.ionshuttler/).
+`mqt.ionshuttler` is available via
+[PyPI](https://pypi.org/project/mqt.ionshuttler/).
 
 ```console
-(.venv) $ pip install mqt.ionshuttler
+uv pip install mqt.ionshuttler
 ```
 
 To print information about the usage of the supported scripts, run:
 
 ```console
-(.venv) $ mqt-ionshuttler-exact --help
-(.venv) $ mqt-ionshuttler-heuristic --help
+mqt-ionshuttler-exact --help
+mqt-ionshuttler-heuristic --help
 ```
 
-**Detailed documentation and examples are available at [ReadTheDocs](https://mqt.readthedocs.io/projects/ionshuttler).**
+**Detailed documentation and examples are available at
+[ReadTheDocs](https://mqt.readthedocs.io/projects/ionshuttler).**
 
 ## System Requirements
 
-The MQT IonShuttler can be installed on all major operating systems with all [officially supported Python versions](https://devguide.python.org/versions/).
-Building (and running) is continuously tested under Linux, macOS, and Windows using the [latest available system versions for GitHub Actions](https://github.com/actions/runner-images).
+The MQT IonShuttler can be installed on all major operating systems with all
+[officially supported Python versions](https://devguide.python.org/versions/).
+Building (and running) is continuously tested under Linux, macOS, and Windows
+using the
+[latest available system versions for GitHub Actions](https://github.com/actions/runner-images).
 
 ## Cite This
 
@@ -92,7 +111,8 @@ Please cite the work that best fits your use case.
 
 ### MQT IonShuttler (the tool)
 
-When citing the software itself or results produced with it, cite the MQT IonShuttler paper:
+When citing the software itself or results produced with it, cite the MQT
+IonShuttler paper:
 
 ```bibtex
 @article{schoenberger2024shuttling,
@@ -129,20 +149,18 @@ When discussing the overall MQT project or its ecosystem, cite the MQT Handbook:
 
 ### Peer-Reviewed Research
 
-When citing the underlying methods and research, please reference the most relevant peer-reviewed publications from the list below:
+When citing the underlying methods and research, please reference the most
+relevant peer-reviewed publications from the list below:
 
-[[1]](https://arxiv.org/pdf/2311.03454)
-D. Schoenberger, S. Hillmich, M. Brandl, and R. Wille.
-Using Boolean Satisfiability for Exact Shuttling in Trapped-Ion Quantum Computers.
-_Asia and South Pacific Design Automation Conference_, 2024.
+[[1]](https://arxiv.org/pdf/2311.03454) D. Schoenberger, S. Hillmich, M. Brandl,
+and R. Wille. Using Boolean Satisfiability for Exact Shuttling in Trapped-Ion
+Quantum Computers. _Asia and South Pacific Design Automation Conference_, 2024.
 
-[[2]](https://arxiv.org/pdf/2402.14065)
-D. Schoenberger, S. Hillmich, M. Brandl, and R. Wille.
-Shuttling for Scalable Trapped-Ion Quantum Computers.
+[[2]](https://arxiv.org/pdf/2402.14065) D. Schoenberger, S. Hillmich, M. Brandl,
+and R. Wille. Shuttling for Scalable Trapped-Ion Quantum Computers.
 _IEEE Trans. on CAD of Integrated Circuits and Systems 44, 2144_, 2024.
 
-[[3]](https://arxiv.org/abs/2505.07928)
-D. Schoenberger and R. Wille
+[[3]](https://arxiv.org/abs/2505.07928) D. Schoenberger and R. Wille.
 Orchestrating Multi-Zone Shuttling in Trapped-Ion Quantum Computers.
 _IEEE International Conference on Quantum Computing and Engineering_, 2025.
 
@@ -150,7 +168,12 @@ _IEEE International Conference on Quantum Computing and Engineering_, 2025.
 
 ## Acknowledgements
 
-The Munich Quantum Toolkit has been supported by the European Research Council (ERC) under the European Union's Horizon 2020 research and innovation program (grant agreement No. 101001318), the Bavarian State Ministry for Science and Arts through the Distinguished Professorship Program, as well as the Munich Quantum Valley, which is supported by the Bavarian state government with funds from the Hightech Agenda Bayern Plus.
+The Munich Quantum Toolkit has been supported by the European Research Council
+(ERC) under the European Union's Horizon 2020 research and innovation program
+(grant agreement No. 101001318), the Bavarian State Ministry for Science and
+Arts through the Distinguished Professorship Program, as well as the Munich
+Quantum Valley, which is supported by the Bavarian state government with funds
+from the Hightech Agenda Bayern Plus.
 
 <p align="center">
   <picture>

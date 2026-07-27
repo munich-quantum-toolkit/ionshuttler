@@ -1,22 +1,29 @@
 # MQT IonShuttler
 
-The MQT IonShuttler is a tool for generating shuttling schedules for trapped-ion quantum computers with a grid-type Memory Zone based on the Quantum Charge Coupled Device (QCCD) architecture.
-It is developed as part of the _{doc}`Munich Quantum Toolkit (MQT) <mqt:index>`_.
+The MQT IonShuttler is a tool for generating shuttling schedules for trapped-ion
+quantum computers with a grid-type Memory Zone based on the Quantum Charge
+Coupled Device (QCCD) architecture. It is developed as part of the
+_{doc}`Munich Quantum Toolkit (MQT) <mqt:index>`_.
 
-We recommend you to start with the {doc}`installation instructions <installation>`.
-Then proceed with the sections below.
-If you are interested in the theory behind the MQT IonShuttler, have a look at the publications in the {doc}`publication list <references>`.
+We recommend you to start with the
+{doc}`installation instructions <installation>`. Then proceed with the sections
+below. If you are interested in the theory behind the MQT IonShuttler, have a
+look at the publications in the {doc}`publication list <references>`.
 
-We appreciate any feedback and contributions to the project.
-If you want to contribute, you can find more information in the {doc}`contribution guide <contributing>`.
-If you are having trouble with the installation or the usage of MQT QuSAT, please let us know on our {doc}`support page <support>`.
+We appreciate any feedback and contributions to the project. If you want to
+contribute, you can find more information in the
+{doc}`contribution guide <contributing>`. If you are having trouble with the
+installation or the usage of MQT QuSAT, please let us know on our
+{doc}`support page <support>`.
 
 ## Overview
 
 The MQT IonShuttler supports
 
-- **exact shuttling schedules** for small architectures with **a single processing zone (PZ)**, and
-- **heuristic shuttling schedules** for larger devices with **one _or_ multiple processing zones**.
+- **exact shuttling schedules** for small architectures with
+  **a single processing zone (PZ)**, and
+- **heuristic shuttling schedules** for larger devices with
+  **one _or_ multiple processing zones**.
 
 <p align="center">
   <a href="_static/qccd_device.pdf">
@@ -29,31 +36,34 @@ The MQT IonShuttler supports
 <p align="center">
 <b>Figure 1:</b> (<b>a</b>) Potential QCCD device with four processing zones; (<b>b</b>) corresponding graph abstraction.</p>
 
-The exact solution guarantees optimality but is limited to a single PZ, while the heuristic method scales to many qubits and PZs.
-In the heuristic workflow, an optional **compilation** feature (`use_dag`) allows for dynamic rescheduling of gates based on the current ion positions and dependencies, potentially reducing shuttling overhead compared to executing a fixed sequence.
+The exact solution guarantees optimality but is limited to a single PZ, while
+the heuristic method scales to many qubits and PZs. In the heuristic workflow,
+an optional **compilation** feature (`use_dag`) allows for dynamic rescheduling
+of gates based on the current ion positions and dependencies, potentially
+reducing shuttling overhead compared to executing a fixed sequence.
 
 ## Usage
 
 ### Exact Solution (single PZ)
 
 ```console
-(.venv) $ mqt-ionshuttler-exact --help
-(.venv) $ mqt-ionshuttler-exact inputs/algorithms_exact/qft_06.json
+mqt-ionshuttler-exact --help
+mqt-ionshuttler-exact inputs/algorithms_exact/qft_06.json
 ```
 
 The script supports an additional `--plot` argument to visualise the result.
-Architectures and algorithms are specified in JSON files.
-For examples, see [`inputs/algorithms_exact`](https://github.com/munich-quantum-toolkit/ionshuttler/blob/main/inputs/algorithms_exact/).
+Architectures and algorithms are specified in JSON files. For examples, see
+[`inputs/algorithms_exact`](https://github.com/munich-quantum-toolkit/ionshuttler/blob/main/inputs/algorithms_exact/).
 
 ### Heuristic Solution (single & multiple PZs)
 
 ```console
-(.venv) $ mqt-ionshuttler-heuristic --help
-(.venv) $ mqt-ionshuttler-heuristic inputs/algorithms_heuristic/qft_60_4pzs.json
+mqt-ionshuttler-heuristic --help
+mqt-ionshuttler-heuristic inputs/algorithms_heuristic/qft_60_4pzs.json
 ```
 
-Architectures and algorithms are specified in JSON files.
-For examples, see [`inputs/algorithms_heuristic`](https://github.com/munich-quantum-toolkit/ionshuttler/blob/main/inputs/algorithms_heuristic/).
+Architectures and algorithms are specified in JSON files. For examples, see
+[`inputs/algorithms_heuristic`](https://github.com/munich-quantum-toolkit/ionshuttler/blob/main/inputs/algorithms_heuristic/).
 
 ```{toctree}
 :hidden:
@@ -94,8 +104,13 @@ api/mqt/ionshuttler/index
 
 ## Contributors and Supporters
 
-The _[Munich Quantum Toolkit (MQT)](https://mqt.readthedocs.io)_ is developed by the [Chair for Design Automation](https://www.cda.cit.tum.de/) at the [Technical University of Munich](https://www.tum.de/) and supported by [MQSC](https://mq.sc).
-Among others, it is part of the [Munich Quantum Software Stack (MQSS)](https://www.munich-quantum-valley.de/research/research-areas/mqss) ecosystem, which is being developed as part of the [Munich Quantum Valley (MQV)](https://www.munich-quantum-valley.de) initiative.
+The _[Munich Quantum Toolkit (MQT)](https://mqt.readthedocs.io)_ is developed by
+the [Chair for Design Automation](https://www.cda.cit.tum.de/) at the
+[Technical University of Munich](https://www.tum.de/) and supported by
+[MQSC](https://mq.sc). Among others, it is part of the
+[Munich Quantum Software Stack (MQSS)](https://www.munich-quantum-valley.de/research/research-areas/mqss)
+ecosystem, which is being developed as part of the
+[Munich Quantum Valley (MQV)](https://www.munich-quantum-valley.de) initiative.
 
 <div style="margin-top: 0.5em">
 <div class="only-light" align="center">
@@ -106,7 +121,8 @@ Among others, it is part of the [Munich Quantum Software Stack (MQSS)](https://w
 </div>
 </div>
 
-Thank you to all the contributors who have helped make the MQT IonShuttler a reality!
+Thank you to all the contributors who have helped make the MQT IonShuttler a
+reality!
 
 <p align="center">
 <a href="https://github.com/munich-quantum-toolkit/ionshuttler/graphs/contributors">
@@ -114,16 +130,19 @@ Thank you to all the contributors who have helped make the MQT IonShuttler a rea
 </a>
 </p>
 
-The MQT will remain free, open-source, and permissively licensed—now and in the future.
-We are firmly committed to keeping it open and actively maintained for the quantum computing community.
+The MQT will remain free, open-source, and permissively licensed—now and in the
+future. We are firmly committed to keeping it open and actively maintained for
+the quantum computing community.
 
 To support this endeavor, please consider:
 
-- Starring and sharing our repositories: [https://github.com/munich-quantum-toolkit](https://github.com/munich-quantum-toolkit)
-- Contributing code, documentation, tests, or examples via issues and pull requests
+- Starring and sharing our repositories:
+  <https://github.com/munich-quantum-toolkit>
+- Contributing code, documentation, tests, or examples via issues and pull
+  requests
 - Citing the MQT in your publications (see {doc}`References <references>`)
 - Using the MQT in research and teaching, and sharing feedback and use cases
-- Sponsoring us on GitHub: [https://github.com/sponsors/munich-quantum-toolkit](https://github.com/sponsors/munich-quantum-toolkit)
+- Sponsoring us on GitHub: <https://github.com/sponsors/munich-quantum-toolkit>
 
 <p align="center">
 <iframe src="https://github.com/sponsors/munich-quantum-toolkit/button" title="Sponsor munich-quantum-toolkit" height="32" width="114" style="border: 0; border-radius: 6px;"></iframe>
