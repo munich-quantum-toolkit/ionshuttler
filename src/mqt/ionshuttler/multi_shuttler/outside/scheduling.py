@@ -91,12 +91,14 @@ def pick_pz_for_2_q_gate(graph: Graph, ion0: int, ion1: int) -> str:
 
 
 def assign_gate_to_pz(graph: Graph, gate: GateRef) -> str:
+    """Dispatch a gate ID or qubit tuple to the corresponding PZ assignment path."""
     if isinstance(gate, int):
         return _assign_gate_id_to_pz(graph, gate)
     return _choose_pz_for_qubits(graph, gate)
 
 
 def _assign_gate_id_to_pz(graph: Graph, gate_id: int) -> str:
+    """Assign a gate ID while validating preferences and locking two-qubit gates."""
     qubits = graph.get_gate_qubits(gate_id)
     preferred_pz = graph.get_preferred_pz_for_gate(gate_id)
     if preferred_pz is not None:
@@ -117,6 +119,7 @@ def _assign_gate_id_to_pz(graph: Graph, gate_id: int) -> str:
 
 
 def _choose_pz_for_qubits(graph: Graph, qubits: tuple[int, ...]) -> str:
+    """Choose a processing zone for a supported one- or two-qubit gate."""
     if len(qubits) not in {1, 2}:
         msg = f"Unsupported gate arity: {qubits}"
         raise ValueError(msg)
@@ -127,10 +130,8 @@ def _choose_pz_for_qubits(graph: Graph, qubits: tuple[int, ...]) -> str:
         raise ValueError(msg)
 
     if len(qubits) == 1:
-        chosen_pz = graph.map_to_pz[qubits[0]]
-    elif len(qubits) == 2:
-        chosen_pz = pick_pz_for_2_q_gate(graph, qubits[0], qubits[1])
-    return chosen_pz
+        return graph.map_to_pz[qubits[0]]
+    return pick_pz_for_2_q_gate(graph, qubits[0], qubits[1])
 
 
 def create_priority_queue(
@@ -176,12 +177,6 @@ def create_priority_queue(
             # add first gate of pz to next_gate_at_pz (if not already there)
             if pz_for_2_q_gate not in graph.next_gate_at_pz or graph.next_gate_at_pz[pz_for_2_q_gate] == ():
                 graph.next_gate_at_pz[pz_for_2_q_gate] = gate
-                # lock the processing zone for the 2-qubit gate for later iterations
-                # otherwise maybe pz changes if both move in a way, that favors a new pz
-                # -> could result in a bug, if the very next iterations
-                # change state back to old pz
-                if isinstance(gate, int):
-                    graph.locked_gates[gate] = pz_for_2_q_gate
 
             # add ions to unique_sequence
             for elem in qubits:
@@ -711,7 +706,7 @@ def update_entry_and_exit_cycles(
     # (now hard clause here, could be double of clauses above, but if no ion is moving to parking, above clause are not executed -> need this one)
     if (
         not pz.gate_execution_finished
-        and graph.next_gate_at_pz[pz.name]
+        and graph.next_gate_at_pz[pz.name] != ()
         and all(ion in ions_in_parking for ion in graph.get_next_gate_qubits(pz.name))
     ):
         pz.rotate_entry = False

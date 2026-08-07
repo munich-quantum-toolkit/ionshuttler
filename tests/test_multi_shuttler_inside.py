@@ -82,3 +82,20 @@ class TestMultiCompilation:
         _, next_gate_at_pz = create_priority_queue(cast("Graph", graph))
 
         assert next_gate_at_pz == {"pz1": 0, "pz2": 1}
+
+    def test_inside_priority_queue_respects_maximum_length_for_two_qubit_gate(self):
+        """A two-qubit gate should not overfill a one-ion priority queue."""
+        gate_info = {0: GateInfo(qubits=(0, 1), qasm="cx q[0],q[1];")}
+        graph = SimpleNamespace(
+            sequence=[0],
+            gate_info=gate_info,
+            get_gate_qubits=lambda gate: gate_info[gate].qubits if isinstance(gate, int) else gate,
+            get_preferred_pz_for_gate=lambda _gate_id: "pz1",
+            map_to_pz={0: "pz1", 1: "pz1"},
+            locked_gates={},
+            pzs=[SimpleNamespace(name="pz1")],
+        )
+
+        priority_queue, _ = create_priority_queue(cast("Graph", graph), max_length=1)
+
+        assert priority_queue == {0: "pz1"}

@@ -10,6 +10,7 @@ from unittest.mock import patch
 import networkx as nx
 import pytest
 from qiskit import QuantumCircuit
+from qiskit.circuit import Qubit
 from qiskit.converters import circuit_to_dagdependency
 from qiskit.dagcircuit import DAGDependency
 
@@ -20,7 +21,9 @@ from mqt.ionshuttler.multi_shuttler.circuit_parsing import (
     parse_qasm_circuit,
 )
 from mqt.ionshuttler.multi_shuttler.circuit_types import GateInfo, ParsedCircuit
+from mqt.ionshuttler.multi_shuttler.inside.graph import Graph as InsideGraph
 from mqt.ionshuttler.multi_shuttler.main import main
+from mqt.ionshuttler.multi_shuttler.outside import compilation as outside_compilation
 from mqt.ionshuttler.multi_shuttler.outside.compilation import (
     build_dag_gate_id_lookup,
     create_dag,
@@ -247,10 +250,16 @@ class TestMultiGraph:
 
     def test_inside_graph_get_gate_qubits_resolves_gate_ids(self):
         """The inside graph should resolve gate ids back to their qubit tuples."""
-        g = Graph()
+        g = InsideGraph()
         g.gate_info = {3: GateInfo(qubits=(1,), qasm="x q[1];")}
 
         assert g.get_gate_qubits(3) == (1,)
+
+    def test_get_next_gate_qubits_is_empty_before_scheduling(self):
+        """A new outside graph should have no next gate assigned."""
+        g = Graph()
+
+        assert g.get_next_gate_qubits("pz1") == ()
 
 
 # ===================================================================
@@ -381,6 +390,14 @@ class TestMultiCompilation:
         ]
 
         assert projected_qubits == [(0,), (0, 1)]
+
+    def test_build_qubit_to_global_index_includes_loose_qubits(self):
+        """Canonical DAG wire order should include qubits outside registers."""
+        dag = DAGDependency()
+        qubits = [Qubit(), Qubit()]
+        dag.add_qubits(qubits)
+
+        assert outside_compilation._build_qubit_to_global_index(dag) == {qubits[0]: 0, qubits[1]: 1}
 
     def test_find_best_gate_uses_global_multi_register_indices(self, tmp_path):
         """find_best_gate should score DAG nodes with global qubit indices."""

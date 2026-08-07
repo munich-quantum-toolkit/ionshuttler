@@ -40,6 +40,7 @@ class Graph(nx.Graph):
         self._pz_assignment_policy: str = "legacy"  # default
         self._gate_info: dict[int, GateInfo] = {}
         self._dag_gate_id_lookup: dict[int, int] = {}
+        self._next_gate_at_pz: dict[str, GateRef] = {}
         self.run_stats: RunStats = RunStats()
         self.path_cache: dict[Any, Any] = {}
         self.max_timesteps: int = 1_000_000
@@ -168,8 +169,6 @@ class Graph(nx.Graph):
 
     @property
     def gate_info(self) -> dict[int, GateInfo]:
-        if not hasattr(self, "_gate_info"):
-            self._gate_info = {}
         return self._gate_info
 
     @gate_info.setter
@@ -183,8 +182,6 @@ class Graph(nx.Graph):
 
     @property
     def gate_pz_assignment(self) -> dict[int, str]:
-        if not hasattr(self, "_gate_pz_assignment"):
-            self._gate_pz_assignment = {}
         return self._gate_pz_assignment
 
     @gate_pz_assignment.setter
@@ -195,6 +192,7 @@ class Graph(nx.Graph):
         return self.gate_pz_assignment.get(gate_id)
 
     def get_next_gate_qubits(self, pz_name: str) -> tuple[int, ...]:
+        """Return qubits for a PZ's next gate, or an empty tuple if unassigned."""
         gate = self.next_gate_at_pz.get(pz_name, ())
         if gate == ():
             return ()

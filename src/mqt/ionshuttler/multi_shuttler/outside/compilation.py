@@ -77,14 +77,8 @@ def remove_node(dag: DAGDependency, node: DAGDepNode) -> None:
 
 
 def _build_qubit_to_global_index(dag: DAGDependency) -> dict[Qubit, int]:
-    """Map DAG qubit objects to global indices across all quantum registers."""
-    qubit_to_global: dict[Qubit, int] = {}
-    offset = 0
-    for qreg in dag.qregs.values():
-        for local_idx, qubit in enumerate(qreg):
-            qubit_to_global[qubit] = offset + local_idx
-        offset += len(qreg)
-    return qubit_to_global
+    """Map DAG qubits to their canonical wire-order indices."""
+    return {qubit: index for index, qubit in enumerate(dag.qubits)}
 
 
 def find_best_gate(

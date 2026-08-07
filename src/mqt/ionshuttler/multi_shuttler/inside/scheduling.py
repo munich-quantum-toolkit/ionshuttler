@@ -92,12 +92,37 @@ def pick_pz_for_2_q_gate(graph: Graph, ion0: int, ion1: int) -> str:
 
 
 def assign_gate_to_pz(graph: Graph, gate: GateRef) -> str:
+    """Dispatch a gate ID or qubit tuple to the corresponding PZ assignment path.
+
+    Args:
+        graph: Inside architecture graph holding scheduling state.
+        gate: Stable gate ID or direct tuple of qubit IDs.
+
+    Returns:
+        The selected processing-zone name.
+    """
     if isinstance(gate, int):
         return _assign_gate_id_to_pz(graph, gate)
     return _choose_pz_for_qubits(graph, gate)
 
 
 def _assign_gate_id_to_pz(graph: Graph, gate_id: int) -> str:
+    """Assign a gate ID while validating preferences and locking two-qubit gates.
+
+    Args:
+        graph: Inside architecture graph holding scheduling state.
+        gate_id: Stable gate identifier to resolve and assign.
+
+    Returns:
+        The preferred, locked, or newly selected processing-zone name.
+
+    Raises:
+        ValueError: If the preferred processing-zone name is unknown.
+
+    Note:
+        The selected zone for a two-qubit gate is stored in
+        ``graph.locked_gates`` for later scheduling iterations.
+    """
     qubits = graph.get_gate_qubits(gate_id)
     preferred_pz = graph.get_preferred_pz_for_gate(gate_id)
     if preferred_pz is not None:
@@ -119,6 +144,18 @@ def _assign_gate_id_to_pz(graph: Graph, gate_id: int) -> str:
 
 
 def _choose_pz_for_qubits(graph: Graph, qubits: tuple[int, ...]) -> str:
+    """Choose a processing zone for a supported one- or two-qubit gate.
+
+    Args:
+        graph: Inside architecture graph holding current qubit placement.
+        qubits: One or two qubit IDs belonging to the gate.
+
+    Returns:
+        The selected processing-zone name.
+
+    Raises:
+        ValueError: If the gate does not have a supported arity.
+    """
     if len(qubits) == 1:
         return graph.map_to_pz[qubits[0]]
     if len(qubits) == 2:
@@ -163,7 +200,7 @@ def create_priority_queue(
             # add ion to unique_sequence
             if elem not in unique_sequence:
                 unique_sequence[elem] = pz_name
-                if len(unique_sequence) == max_length:
+                if len(unique_sequence) >= max_length:
                     break
 
         # 2-qubit gate
@@ -176,10 +213,12 @@ def create_priority_queue(
 
             # add ions to unique_sequence
             for elem in qubits:
+                if len(unique_sequence) >= max_length:
+                    break
                 if elem not in unique_sequence:
                     unique_sequence[elem] = pz_for_2_q_gate
-                    if len(unique_sequence) == max_length:
-                        break
+            if len(unique_sequence) >= max_length:
+                break
         else:
             msg = "len gate 0 or > 2? - can only process 1 or 2-qubit gates"
             raise ValueError(msg)

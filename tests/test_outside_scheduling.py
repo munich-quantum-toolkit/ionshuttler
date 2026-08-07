@@ -354,6 +354,46 @@ def test_create_priority_queue_accepts_gate_ids() -> None:
     assert next_gate_at_pz == {"PZ1": 0, "PZ2": 1}
 
 
+def test_update_entry_cycles_treats_gate_id_zero_as_assigned() -> None:
+    """Gate ID zero should activate the stop-moving-out-of-PZ rule."""
+    parking_edge: Edge = ((0.0, 0.0), (1.0, 0.0))
+    pz = SimpleNamespace(
+        name="PZ1",
+        entry_edge=((1.0, 0.0), (2.0, 0.0)),
+        parking_edge=parking_edge,
+        max_num_parking=2,
+        ion_to_park=None,
+        out_of_parking_cycle=None,
+        gate_execution_finished=False,
+        rotate_entry=True,
+    )
+    graph = cast(
+        "Graph",
+        SimpleNamespace(
+            next_gate_at_pz={"PZ1": 0},
+            get_next_gate_qubits=lambda _pz_name: (1,),
+            sequence=[],
+            locked_gates={},
+        ),
+    )
+
+    with (
+        patch("mqt.ionshuttler.multi_shuttler.outside.scheduling.find_ions_in_parking", return_value=[1]),
+        patch("mqt.ionshuttler.multi_shuttler.outside.scheduling.find_ion_in_edge", return_value=None),
+    ):
+        all_cycles = scheduling.update_entry_and_exit_cycles(
+            graph,
+            cast("ProcessingZone", pz),
+            {},
+            {},
+            None,
+            [],
+        )
+
+    assert pz.rotate_entry is False
+    assert all_cycles == {1: [parking_edge, parking_edge]}
+
+
 def test_calculate_next_edges_trap_edge_uses_find_next_edge_and_ordering() -> None:
     ion_edge: Edge = ((0.0, 0.0), (0.0, 1.0))
     candidate_next: Edge = ((0.0, 1.0), (1.0, 1.0))
