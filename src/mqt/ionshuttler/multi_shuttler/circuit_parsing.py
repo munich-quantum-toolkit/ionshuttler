@@ -22,7 +22,6 @@ _NO_QUBITS_EXTRACTED_MSG = (
 
 def is_qasm_file(file_path: Path) -> bool:
     """Return whether the file appears to contain an OpenQASM program."""
-
     with file_path.open(encoding="utf-8") as file:
         for _ in range(20):
             line = file.readline()
@@ -65,6 +64,7 @@ def normalize_qasm_registers(qasm_str: str, *, qreg_name: str = "q", creg_name: 
 
 def parse_qasm_circuit(filename: Path, *, normalize_registers: bool = True) -> ParsedCircuit:
     """Parse a QASM file into stable gate ids and per-gate metadata."""
+    assert is_qasm_file(filename), "The file is not a valid QASM file."
 
     qasm_str = filename.read_text(encoding="utf-8")
     if normalize_registers:

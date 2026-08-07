@@ -11,8 +11,7 @@ from mqt.ionshuttler.multi_shuttler.gate_partitioning_tabu import (
     compute_fine_grained_gate_partition,
 )
 
-pytest = cast("Any", importlib.import_module("pytest"))
-tabu = cast("Any", importlib.import_module("mqt.ionshuttler.multi_shuttler.gate_partitioning_tabu"))
+import pytest
 
 
 def _distance_matrix(num_pzs: int) -> list[list[float]]:

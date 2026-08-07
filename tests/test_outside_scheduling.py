@@ -12,7 +12,7 @@ from mqt.ionshuttler.multi_shuttler.outside.ion_types import Edge
 if TYPE_CHECKING:
     from mqt.ionshuttler.multi_shuttler.outside.processing_zone import ProcessingZone
 
-pytest = cast("Any", __import__("pytest"))
+import pytest
 
 NextEdges = dict[int, tuple[Edge, Edge]]
 

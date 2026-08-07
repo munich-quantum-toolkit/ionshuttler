@@ -127,8 +127,7 @@ def build_dag_gate_id_lookup(dag: DAGDependency, gate_info: dict[int, GateInfo])
     """Match DAG nodes to parsed gate ids by qubits and operation name."""
 
     gate_buckets: dict[tuple[tuple[int, ...], str], deque[int]] = defaultdict(deque)
-    for gate_id in sorted(gate_info):
-        metadata = gate_info[gate_id]
+    for gate_id, metadata in sorted(gate_info.items()):
         gate_name = re.split(r"[\(\s\[]", metadata.qasm)[0]
         gate_buckets[metadata.qubits, gate_name].append(gate_id)
 
@@ -159,8 +158,6 @@ def create_dag(filename: Path) -> DAGDependency:
 
 def create_initial_circuit(filename: Path) -> ParsedCircuit:
     """Return a canonicalized parsed circuit with stable gate ids."""
-
-    assert is_qasm_file(filename), "The file is not a valid QASM file."
     return parse_qasm_circuit(filename)
 
 
