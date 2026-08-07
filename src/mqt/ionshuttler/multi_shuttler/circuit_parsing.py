@@ -61,7 +61,20 @@ def normalize_qasm_registers(qasm_str: str, *, qreg_name: str = "q", creg_name: 
 
 
 def parse_qasm_circuit(filename: Path, *, normalize_registers: bool = True) -> ParsedCircuit:
-    """Parse a QASM file into stable gate ids and per-gate metadata."""
+    """Parse a QASM file into stable gate IDs and per-gate metadata.
+
+    Args:
+        filename: Path to the OpenQASM input file.
+        normalize_registers: Whether to canonicalize all registers before parsing.
+
+    Returns:
+        The ordered gate IDs and corresponding metadata.
+
+    Raises:
+        AssertionError: If the file does not contain an OpenQASM header.
+        ValueError: If qubits cannot be extracted from a gate line.
+        QASM2ParseError: If register normalization encounters invalid OpenQASM 2.
+    """
     assert is_qasm_file(filename), "The file is not a valid QASM file."
     qasm_str = filename.read_text(encoding="utf-8")
     if normalize_registers:

@@ -37,7 +37,11 @@ class FineGrainedTabuConfig:
     def __post_init__(self) -> None:
         """Validate configuration values at construction time."""
         for name in ("balance_penalty", "capacity_weight", "distance_weight_factor"):
-            if getattr(self, name) < 0:
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                msg = f"{name} must be a finite number."
+                raise ValueError(msg)
+            if value < 0:
                 msg = f"{name} must be non-negative."
                 raise ValueError(msg)
 
@@ -50,13 +54,23 @@ class FineGrainedTabuConfig:
             "max_layer_depth",
         ):
             value = getattr(self, name)
-            if value is not None and value <= 0:
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, int):
+                msg = f"{name} must be an integer when provided."
+                raise TypeError(msg)
+            if value <= 0:
                 msg = f"{name} must be positive when provided."
                 raise ValueError(msg)
 
         for name in ("max_iterations_factor", "slack_dropoff"):
             value = getattr(self, name)
-            if value is not None and value <= 0:
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                msg = f"{name} must be a finite number when provided."
+                raise ValueError(msg)
+            if value <= 0:
                 msg = f"{name} must be positive when provided."
                 raise ValueError(msg)
 
@@ -946,6 +960,28 @@ def _consider_supernode_moves(
     This helper checks every possible destination for the chosen supernode,
     skips tabu moves that are not worth overriding, and returns the best move it
     found together with the cached cost deltas needed by the caller.
+
+    Args:
+        contraction: Contracted representation of the current slice.
+        slice_index: Index of the slice containing the supernode.
+        supernode_id: Identifier of the supernode to evaluate.
+        num_pzs: Number of available processing zones.
+        slice_counts: Active-qubit counts per zone and slice.
+        slice_loads: Weighted loads per zone and slice.
+        active_counts_per_slice: Active-qubit counts keyed by supernode.
+        active_loads_per_slice: Weighted loads keyed by supernode.
+        qubit_assignments_by_slice: Current qubit-to-zone assignments.
+        distance_matrix: Optional processing-zone distance matrix.
+        slack_weights: Optional per-boundary movement weights.
+        capacity: Optional soft processing-zone capacity.
+        config: Objective weights and search configuration.
+        current_cost: Objective value of the current assignment.
+        best_cost: Best objective value reached so far.
+        tabu_set: Moves currently prohibited by tabu tenure.
+        best_move_state: Best candidate found before this evaluation.
+
+    Returns:
+        The best move evaluation found so far, including cached objective deltas.
     """
 
     best_move = best_move_state

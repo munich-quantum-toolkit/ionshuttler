@@ -211,13 +211,12 @@ def create_priority_queue(
             if pz_for_2_q_gate not in next_gate_at_pz or next_gate_at_pz[pz_for_2_q_gate] == ():
                 next_gate_at_pz[pz_for_2_q_gate] = gate
 
-            # add ions to unique_sequence
-            for elem in qubits:
-                if len(unique_sequence) >= max_length:
-                    break
-                if elem not in unique_sequence:
+            # Add both ions atomically; otherwise defer the complete gate.
+            missing_qubits = [elem for elem in qubits if elem not in unique_sequence]
+            if len(unique_sequence) + len(missing_qubits) <= max_length:
+                for elem in missing_qubits:
                     unique_sequence[elem] = pz_for_2_q_gate
-            if len(unique_sequence) >= max_length:
+            else:
                 break
         else:
             msg = "len gate 0 or > 2? - can only process 1 or 2-qubit gates"

@@ -62,12 +62,21 @@ class Graph(nx.Graph):
         self._gate_info = value
 
     def get_gate_qubits(self, gate: GateRef) -> tuple[int, ...]:
+        """Resolve an integer gate ID or pass through a direct qubit tuple.
+
+        Args:
+            gate: Stable gate ID backed by ``gate_info`` or a direct qubit tuple.
+
+        Returns:
+            The qubits referenced by the gate.
+        """
         if isinstance(gate, int):
             return self.gate_info[gate].qubits
         return gate
 
     @property
     def gate_pz_assignment(self) -> dict[int, str]:
+        """Return explicit gate-ID to processing-zone assignments."""
         return self._gate_pz_assignment
 
     @gate_pz_assignment.setter
@@ -75,6 +84,14 @@ class Graph(nx.Graph):
         self._gate_pz_assignment = value
 
     def get_preferred_pz_for_gate(self, gate_id: int) -> str | None:
+        """Return the preferred processing zone for a gate, if assigned.
+
+        Args:
+            gate_id: Stable gate identifier to query.
+
+        Returns:
+            The assigned processing-zone name, or ``None`` when unspecified.
+        """
         return self.gate_pz_assignment.get(gate_id)
 
     @property

@@ -318,6 +318,21 @@ def _rehome_after_2q(graph: Graph, ion_a: int, ion_b: int, pz_name: str) -> None
 
 
 def main(graph: Graph, dag: DAGDependency | None, cycle_or_paths: str, use_dag: bool, save_dag: bool = False) -> int:
+    """Run the outside-layout shuttle scheduler.
+
+    Args:
+        graph: Configured outside architecture and scheduling state.
+        dag: Optional dependency DAG used when ``use_dag`` is enabled.
+        cycle_or_paths: Conflict-resolution strategy used for movement.
+        use_dag: Whether to update scheduling from the dependency DAG.
+        save_dag: Whether to save DAG snapshots during scheduling.
+
+    Returns:
+        The number of simulated timesteps.
+
+    Raises:
+        AssertionError: If DAG mode is enabled without providing ``dag``.
+    """
     timestep = 0
     graph.state = get_ions(graph)
 

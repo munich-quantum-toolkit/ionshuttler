@@ -205,9 +205,20 @@ def shuttle(
 
 
 def main(graph: Graph, sequence: list[int] | None, cycle_or_paths: str, record_path: str | None = None) -> int:
-    """
-    If record_path is provided, writes:
-    { "timeline": [ { "t": 0, "ions": [...] }, { "t": 1, ... }, ... ] }
+    """Run the inside-layout shuttle scheduler.
+
+    Integer gate IDs in ``sequence`` require corresponding entries in
+    ``graph.gate_info``. When requested, timeline snapshots are written to
+    ``record_path``.
+
+    Args:
+        graph: Configured inside architecture and scheduling state.
+        sequence: Optional ordered stable gate IDs, replacing ``graph.sequence``.
+        cycle_or_paths: Conflict-resolution strategy used for movement.
+        record_path: Optional path for JSON timeline snapshots.
+
+    Returns:
+        The number of simulated timesteps.
     """
     timestep = 0
 

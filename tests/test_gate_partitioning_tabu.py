@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from mqt.ionshuttler.multi_shuttler import gate_partitioning_tabu as tabu
@@ -57,6 +59,7 @@ def test_config_defaults_match_prototype_reference_values() -> None:
 
 
 def test_config_rejects_non_positive_integer_limits() -> None:
+    """Configuration should reject non-positive integer search limits."""
     factories = (
         lambda: FineGrainedTabuConfig(max_iterations=0),
         lambda: FineGrainedTabuConfig(tabu_list_length=0),
@@ -72,6 +75,7 @@ def test_config_rejects_non_positive_integer_limits() -> None:
 
 
 def test_config_rejects_invalid_objective_parameters() -> None:
+    """Configuration should reject invalid objective weights and factors."""
     with pytest.raises(ValueError, match="balance_penalty must be non-negative"):
         FineGrainedTabuConfig(balance_penalty=-1.0)
     with pytest.raises(ValueError, match="max_iterations_factor must be positive"):
@@ -80,7 +84,47 @@ def test_config_rejects_invalid_objective_parameters() -> None:
         FineGrainedTabuConfig(slack_dropoff=-1.0)
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "max_iterations",
+        "tabu_list_length",
+        "candidate_list_length",
+        "per_slice_quota",
+        "refresh_every",
+        "max_layer_depth",
+    ],
+)
+@pytest.mark.parametrize("value", [True, 1.5])
+def test_config_rejects_boolean_and_fractional_integer_limits(field: str, value: object) -> None:
+    """Integer search limits should reject booleans and fractional values."""
+    kwargs: dict[str, Any] = {field: value}
+
+    with pytest.raises(TypeError, match="must be an integer"):
+        FineGrainedTabuConfig(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "balance_penalty",
+        "capacity_weight",
+        "distance_weight_factor",
+        "max_iterations_factor",
+        "slack_dropoff",
+    ],
+)
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_config_rejects_non_finite_numeric_settings(field: str, value: float) -> None:
+    """Objective settings and factors should contain only finite numbers."""
+    kwargs: dict[str, Any] = {field: value}
+
+    with pytest.raises(ValueError, match="must be a finite number"):
+        FineGrainedTabuConfig(**kwargs)
+
+
 def test_compute_partition_rejects_duplicate_gate_ids() -> None:
+    """Partitioning should reject sequences containing duplicate gate IDs."""
     with pytest.raises(ValueError, match="must not contain duplicate gate ids"):
         compute_fine_grained_gate_partition(
             [0, 0],

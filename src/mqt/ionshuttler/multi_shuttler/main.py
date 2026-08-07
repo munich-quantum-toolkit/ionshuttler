@@ -134,6 +134,24 @@ def _build_pz_distance_matrix(pzs: list[ProcessingZone]) -> list[list[float]]:
 
 
 def main(config: dict[str, Any]) -> int:
+    """Run the configured multi-shuttler compiler and scheduler.
+
+    The configuration must provide the architecture, algorithm name, circuit
+    source, and exactly one ion-count mode. ``gate_pz_assignment`` supplies
+    explicit gate-to-zone choices, while ``use_fine_grained_gate_partition``
+    requests automatic assignments; the two modes are mutually exclusive.
+
+    Args:
+        config: Runtime, architecture, circuit, and partitioning configuration.
+
+    Returns:
+        Zero when compilation and scheduling complete successfully.
+
+    Raises:
+        TypeError: If a typed configuration field has an invalid type.
+        ValueError: If required configuration is missing, inconsistent, or invalid.
+        FileNotFoundError: If the configured circuit input cannot be found.
+    """
     # --- Extract Parameters from Config ---
     arch = config.get("arch")
     num_pzs_config = config.get("num_pzs", 1)
