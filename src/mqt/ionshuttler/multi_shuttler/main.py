@@ -329,7 +329,7 @@ def main(config: dict[str, Any]) -> int:
     graph.map_to_pz = map_to_pz
 
     # Validation
-    unique_sequence_qubits = {qubit for gate in graph.sequence for qubit in graph.gate_qubits(gate)}
+    unique_sequence_qubits = {qubit for gate in graph.sequence for qubit in graph.get_gate_qubits(gate)}
     missing_qubits = unique_sequence_qubits - set(all_partition_elements)
     if missing_qubits:
         print(f"Error: Qubits {missing_qubits} from sequence are not in any partition.")

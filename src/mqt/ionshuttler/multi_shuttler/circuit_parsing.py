@@ -4,7 +4,7 @@ import re
 from typing import TYPE_CHECKING, cast
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
-from qiskit.qasm2 import dumps
+from qiskit.qasm2 import QASM2ParseError, dumps
 from qiskit.qasm3 import loads as load_qasm3
 
 from .circuit_types import GateInfo, ParsedCircuit
@@ -34,13 +34,11 @@ def is_qasm_file(file_path: Path) -> bool:
 
 def extract_qubits_from_gate(gate_line: str) -> list[int]:
     """Extract canonicalized qubit indices from a gate operation line."""
-
     return [int(match) for match in _QUBIT_PATTERN.findall(gate_line)]
 
 
 def normalize_qasm_registers(qasm_str: str, *, qreg_name: str = "q", creg_name: str = "c") -> str:
     """Rewrite all quantum registers into a single canonical register order."""
-
     circuit = _load_quantum_circuit(qasm_str)
     clbit_map: dict[object, object] = {}
 
@@ -65,7 +63,6 @@ def normalize_qasm_registers(qasm_str: str, *, qreg_name: str = "q", creg_name: 
 def parse_qasm_circuit(filename: Path, *, normalize_registers: bool = True) -> ParsedCircuit:
     """Parse a QASM file into stable gate ids and per-gate metadata."""
     assert is_qasm_file(filename), "The file is not a valid QASM file."
-
     qasm_str = filename.read_text(encoding="utf-8")
     if normalize_registers:
         qasm_str = normalize_qasm_registers(qasm_str)
@@ -97,5 +94,5 @@ def _iter_gate_lines(qasm_str: str) -> Iterator[str]:
 def _load_quantum_circuit(qasm_str: str) -> QuantumCircuit:
     try:
         return QuantumCircuit.from_qasm_str(qasm_str)
-    except Exception:
+    except QASM2ParseError:
         return cast("QuantumCircuit", load_qasm3(qasm_str))

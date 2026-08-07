@@ -34,6 +34,32 @@ class FineGrainedTabuConfig:
     seed: int | None = 0
     max_layer_depth: int | None = None
 
+    def __post_init__(self) -> None:
+        """Validate configuration values at construction time."""
+        for name in ("balance_penalty", "capacity_weight", "distance_weight_factor"):
+            if getattr(self, name) < 0:
+                msg = f"{name} must be non-negative."
+                raise ValueError(msg)
+
+        for name in (
+            "max_iterations",
+            "tabu_list_length",
+            "candidate_list_length",
+            "per_slice_quota",
+            "refresh_every",
+            "max_layer_depth",
+        ):
+            value = getattr(self, name)
+            if value is not None and value <= 0:
+                msg = f"{name} must be positive when provided."
+                raise ValueError(msg)
+
+        for name in ("max_iterations_factor", "slack_dropoff"):
+            value = getattr(self, name)
+            if value is not None and value <= 0:
+                msg = f"{name} must be positive when provided."
+                raise ValueError(msg)
+
     def resolve_max_iterations(self, num_qubits: int) -> int:
         """Resolve max_iterations_factor, which scales the iteration budget with the number of qubits."""
 
@@ -46,16 +72,16 @@ class FineGrainedTabuConfig:
 
 @dataclass(slots=True)
 class GatePartitionResult:
-    """Output of the fine-grained tabu partitioner that contains both the resulting partitioning and additional optimization run metadata.
+    """Partitioning and optimization metadata produced by the tabu search.
 
     Attributes:
         gate_partition_by_pz: Gate ids grouped by processing zone in execution order.
-        gate_assignment: Direct gate-id to processing-zone mapping.      -> This is the main output used by runtime code.
-        time_slices: Relaxed gate slices used by the optimizer.      (For tuning/debugging purposes)
-        qubit_assignments_by_slice: Per-slice qubit-to-cluster assignments.      (For tuning/debugging purposes)
-        cost_before: Objective value before tabu refinement.      (For tuning/debugging purposes)
-        cost_after: Best objective value reached by tabu refinement.      (For tuning/debugging purposes)
-        move_distance_total: Aggregate move distance between adjacent slices.      (For tuning/debugging purposes)
+        gate_assignment: Direct gate-id to processing-zone mapping used by the runtime code.
+        time_slices: Relaxed gate slices used by the optimizer.
+        qubit_assignments_by_slice: Per-slice qubit-to-cluster assignments.
+        cost_before: Objective value before tabu refinement.
+        cost_after: Best objective value reached by tabu refinement.
+        move_distance_total: Aggregate move distance between adjacent slices.
         optimization_time: Wall-clock time spent in the tabu loop in seconds.
     """
 
@@ -88,6 +114,17 @@ class _SliceContraction:
     required_unary: set[int]
     cluster_assignment: list[int] | None
     cluster_loads: list[int] | None
+
+
+@dataclass(slots=True)
+class _MoveEvaluation:
+    """Best candidate move and its cached objective deltas."""
+
+    move: tuple[int, _Supernode, int] | None = None
+    score: float = math.inf
+    capacity_delta: float = 0.0
+    distance_delta: float = 0.0
+    balance_delta: float = 0.0
 
 
 def compute_fine_grained_gate_partition(
@@ -234,6 +271,9 @@ def _validate_gate_inputs(
     missing_gate_ids = [gate_id for gate_id in sequence if gate_id not in gate_info]
     if missing_gate_ids:
         msg = f"Sequence references unknown gate ids: {missing_gate_ids[:5]}"
+        raise ValueError(msg)
+    if len(sequence) != len(set(sequence)):
+        msg = "Sequence must not contain duplicate gate ids."
         raise ValueError(msg)
 
 
@@ -529,8 +569,8 @@ def _contract_supernodes(
     """
 
     union_find = _UnionFind(list(qubits))
-    for left, right in required_edges.items():
-        union_find.union(left, right)
+    for edge in required_edges:
+        union_find.union(*edge)
 
     components: dict[int, list[int]] = {}
     for qubit in qubits:
@@ -748,11 +788,7 @@ def _optimize_gate_partition(
             )
             candidate_pool = _build_candidate_pool(candidate_scores_by_slice, candidate_k, per_slice_quota)
 
-        best_move: tuple[int, _Supernode, int] | None = None
-        best_move_score = math.inf
-        best_move_capacity_delta = 0.0
-        best_move_distance_delta = 0.0
-        best_move_balance_delta = 0.0
+        best_move = _MoveEvaluation()
 
         while True:
             move_sources = candidate_pool
@@ -760,13 +796,7 @@ def _optimize_gate_partition(
                 # fall-back no candidate list -> exhaustive search over all possible moves
                 for slice_index, contraction in enumerate(slice_contractions):
                     for supernode_id in range(len(contraction.supernodes)):
-                        (
-                            best_move,
-                            best_move_score,
-                            best_move_capacity_delta,
-                            best_move_distance_delta,
-                            best_move_balance_delta,
-                        ) = _consider_supernode_moves(
+                        best_move = _consider_supernode_moves(
                             contraction=contraction,
                             slice_index=slice_index,
                             supernode_id=supernode_id,
@@ -783,25 +813,13 @@ def _optimize_gate_partition(
                             current_cost=current_cost,
                             best_cost=best_cost,
                             tabu_set=tabu_set,
-                            best_move_state=(
-                                best_move,
-                                best_move_score,
-                                best_move_capacity_delta,
-                                best_move_distance_delta,
-                                best_move_balance_delta,
-                            ),
+                            best_move_state=best_move,
                         )
             else:
                 # With candidate list -> only evaluate the k most promising nodes
                 for slice_index, supernode_id in move_sources:
                     contraction = slice_contractions[slice_index]
-                    (
-                        best_move,
-                        best_move_score,
-                        best_move_capacity_delta,
-                        best_move_distance_delta,
-                        best_move_balance_delta,
-                    ) = _consider_supernode_moves(
+                    best_move = _consider_supernode_moves(
                         contraction=contraction,
                         slice_index=slice_index,
                         supernode_id=supernode_id,
@@ -818,16 +836,10 @@ def _optimize_gate_partition(
                         current_cost=current_cost,
                         best_cost=best_cost,
                         tabu_set=tabu_set,
-                        best_move_state=(
-                            best_move,
-                            best_move_score,
-                            best_move_capacity_delta,
-                            best_move_distance_delta,
-                            best_move_balance_delta,
-                        ),
+                        best_move_state=best_move,
                     )
 
-            if best_move is not None or candidate_list_length is None:
+            if best_move.move is not None or candidate_list_length is None:
                 break
             if candidate_k is None or candidate_k >= total_candidate_pairs:
                 break
@@ -845,10 +857,10 @@ def _optimize_gate_partition(
                 )
             candidate_pool = _build_candidate_pool(candidate_scores_by_slice, candidate_k, per_slice_quota)
 
-        if best_move is None:
+        if best_move.move is None:
             break
 
-        slice_index, supernode, target_cluster = best_move
+        slice_index, supernode, target_cluster = best_move.move
         previous_cluster = assignments_by_slice[slice_index][supernode.id]
         assignments_by_slice[slice_index][supernode.id] = target_cluster
         active_count = active_counts_per_slice[slice_index].get(supernode.id, 0)
@@ -861,10 +873,10 @@ def _optimize_gate_partition(
             if 0 <= qubit < num_qubits:
                 qubit_assignments_by_slice[slice_index][qubit] = target_cluster
 
-        capacity_cost += best_move_capacity_delta
-        distance_cost += best_move_distance_delta
-        balance_cost += best_move_balance_delta
-        current_cost = best_move_score
+        capacity_cost += best_move.capacity_delta
+        distance_cost += best_move.distance_delta
+        balance_cost += best_move.balance_delta
+        current_cost = best_move.score
 
         tabu_entry = (slice_index, supernode.id, previous_cluster)
         _append_tabu_move(tabu_list, tabu_set, tabu_entry)
@@ -927,8 +939,8 @@ def _consider_supernode_moves(
     current_cost: float,
     best_cost: float,
     tabu_set: set[tuple[int, int, int]],
-    best_move_state: tuple[tuple[int, _Supernode, int] | None, float, float, float, float],
-) -> tuple[tuple[int, _Supernode, int] | None, float, float, float, float]:
+    best_move_state: _MoveEvaluation,
+) -> _MoveEvaluation:
     """Evaluate all target clusters for one supernode.
 
     This helper checks every possible destination for the chosen supernode,
@@ -936,13 +948,7 @@ def _consider_supernode_moves(
     found together with the cached cost deltas needed by the caller.
     """
 
-    (
-        best_move,
-        best_move_score,
-        best_move_capacity_delta,
-        best_move_distance_delta,
-        best_move_balance_delta,
-    ) = best_move_state
+    best_move = best_move_state
     supernode = contraction.supernodes[supernode_id]
     current_cluster = qubit_assignments_by_slice[slice_index][supernode.qubits[0]]
 
@@ -991,21 +997,17 @@ def _consider_supernode_moves(
         move_key = (slice_index, supernode.id, target_cluster)
         if move_key in tabu_set and candidate_cost >= best_cost:
             continue
-        if candidate_cost < best_move_score:
+        if candidate_cost < best_move.score:
             # Aspiration criterion: allow overriding tabu status when move is globally best so far
-            best_move = (slice_index, supernode, target_cluster)
-            best_move_score = candidate_cost
-            best_move_capacity_delta = capacity_delta
-            best_move_distance_delta = distance_delta
-            best_move_balance_delta = balance_delta
+            best_move = _MoveEvaluation(
+                move=(slice_index, supernode, target_cluster),
+                score=candidate_cost,
+                capacity_delta=capacity_delta,
+                distance_delta=distance_delta,
+                balance_delta=balance_delta,
+            )
 
-    return (
-        best_move,
-        best_move_score,
-        best_move_capacity_delta,
-        best_move_distance_delta,
-        best_move_balance_delta,
-    )
+    return best_move
 
 
 def _append_tabu_move(
@@ -1266,7 +1268,8 @@ def _build_slack_weights(
         for qubit in active_qubits:
             if 0 <= qubit < num_qubits:
                 next_active[qubit] = slice_index
-        next_active_per_slice.insert(0, list(next_active))
+        next_active_per_slice.append(list(next_active))
+    next_active_per_slice.reverse()
 
     weights: list[list[float]] = []
     for slice_index in range(num_slices - 1):
@@ -1363,6 +1366,7 @@ def _compute_supernode_scores_for_slice(
     nxt = qubit_assignments_by_slice[slice_index + 1] if slice_index < len(qubit_assignments_by_slice) - 1 else None
     counts = slice_counts[slice_index]
     loads = slice_loads[slice_index]
+    mean_load = sum(loads) / len(loads) if loads else 0.0
 
     for supernode in contraction.supernodes:
         total = 0.0
@@ -1386,7 +1390,6 @@ def _compute_supernode_scores_for_slice(
             overflow_penalty = (counts[cluster] - capacity) * loads[cluster]
         total += capacity_weight * overflow_penalty
 
-        mean_load = sum(loads) / len(loads) if loads else 0.0
         total += balance_penalty * max(0.0, loads[cluster] - mean_load)
         scores[supernode.id] = total
     return scores

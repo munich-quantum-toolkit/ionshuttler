@@ -83,7 +83,7 @@ def find_pz_order(graph: Graph, gate_info_list: dict[str, list[int]]) -> list[st
     # find next processing zone that will execute a gate
     pz_order = []
     for gate in graph.sequence:
-        qubits = graph.gate_qubits(gate)
+        qubits = graph.get_gate_qubits(gate)
         if len(qubits) == 1:
             ion = qubits[0]
             for pz in graph.pzs:
@@ -261,7 +261,7 @@ def main(graph: Graph, sequence: list[int] | None, cycle_or_paths: str, record_p
         for i in range(min(len(graph.pzs), len(graph.sequence))):
             # only continue if previous ion was processed
             gate = graph.sequence[i]
-            qubits = graph.gate_qubits(gate)
+            qubits = graph.get_gate_qubits(gate)
 
             if len(qubits) == 2:
                 ion1, ion2 = qubits
@@ -269,7 +269,7 @@ def main(graph: Graph, sequence: list[int] | None, cycle_or_paths: str, record_p
                     state1 = graph.state[ion1]
                     state2 = graph.state[ion2]
                     next_gate_qubits = (
-                        () if next_gate_at_pz[pz.name] == () else graph.gate_qubits(next_gate_at_pz[pz.name])
+                        () if next_gate_at_pz[pz.name] == () else graph.get_gate_qubits(next_gate_at_pz[pz.name])
                     )
                     # append ion to in_process if it is in the correct processing zone
                     if state1 == pz.edge_idc and ion1 in next_gate_qubits and ion2 in next_gate_qubits:
@@ -301,7 +301,7 @@ def main(graph: Graph, sequence: list[int] | None, cycle_or_paths: str, record_p
             if not previous_ion_processed:
                 break
             gate = graph.sequence[i]
-            qubits = graph.gate_qubits(gate)
+            qubits = graph.get_gate_qubits(gate)
             ion_processed = False
             # wenn auf weg zu pz in anderer pz -> wird processed?
             # Problem nur für 2-qubit gate? -> TODO fix

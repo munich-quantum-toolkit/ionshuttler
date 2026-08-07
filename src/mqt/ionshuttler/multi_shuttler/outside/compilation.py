@@ -35,6 +35,7 @@ __all__ = [
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from qiskit.circuit import Qubit
     from qiskit.dagcircuit import DAGDepNode
 
     from ..circuit_types import GateInfo, ParsedCircuit
@@ -75,10 +76,9 @@ def remove_node(dag: DAGDependency, node: DAGDepNode) -> None:
     dag._multi_graph.remove_node(node.node_id)
 
 
-def _build_qubit_to_global_index(dag: DAGDependency) -> dict[object, int]:
+def _build_qubit_to_global_index(dag: DAGDependency) -> dict[Qubit, int]:
     """Map DAG qubit objects to global indices across all quantum registers."""
-
-    qubit_to_global: dict[object, int] = {}
+    qubit_to_global: dict[Qubit, int] = {}
     offset = 0
     for qreg in dag.qregs.values():
         for local_idx, qubit in enumerate(qreg):
@@ -92,7 +92,7 @@ def find_best_gate(
     front_layer: list[DAGDepNode],
     dist_map: dict[int, dict[str, int]],
     gate_info_map: dict[DAGDepNode, str],
-    qubit_to_global: dict[object, int],
+    qubit_to_global: dict[Qubit, int],
 ) -> DAGDepNode:
     """Find the best gate to execute based on distance."""
     min_gate_cost = math.inf
@@ -218,7 +218,7 @@ def create_updated_sequence_destructive(
                     remove_node(working_dag, first_gate_to_execute)
                     seq.append(graph.dag_gate_id_lookup[first_gate_to_execute.node_id])
 
-    flat_seq = [qubit for gate in seq for qubit in graph.gate_qubits(gate)]
+    flat_seq = [qubit for gate in seq for qubit in graph.get_gate_qubits(gate)]
 
     return seq, flat_seq, dag_dep
 

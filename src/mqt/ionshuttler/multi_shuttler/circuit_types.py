@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+GateRef = int | tuple[int, ...]
+
 
 @dataclass(frozen=True, slots=True)
 class GateInfo:

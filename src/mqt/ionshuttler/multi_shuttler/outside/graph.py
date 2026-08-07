@@ -8,12 +8,9 @@ import networkx as nx
 from .graph_utils import create_dist_dict, create_idc_dictionary, get_idx_from_idc
 
 if TYPE_CHECKING:
-    from ..circuit_types import GateInfo
+    from ..circuit_types import GateInfo, GateRef
     from .ion_types import Edge, Node
     from .processing_zone import ProcessingZone
-
-
-GateRef = int | tuple[int, ...]
 
 
 @dataclass
@@ -179,7 +176,7 @@ class Graph(nx.Graph):
     def gate_info(self, value: dict[int, GateInfo]) -> None:
         self._gate_info = value
 
-    def gate_qubits(self, gate: GateRef) -> tuple[int, ...]:
+    def get_gate_qubits(self, gate: GateRef) -> tuple[int, ...]:
         if isinstance(gate, int):
             return self.gate_info[gate].qubits
         return gate
@@ -194,14 +191,14 @@ class Graph(nx.Graph):
     def gate_pz_assignment(self, value: dict[int, str]) -> None:
         self._gate_pz_assignment = value
 
-    def preferred_pz_for_gate(self, gate_id: int) -> str | None:
+    def get_preferred_pz_for_gate(self, gate_id: int) -> str | None:
         return self.gate_pz_assignment.get(gate_id)
 
-    def next_gate_qubits(self, pz_name: str) -> tuple[int, ...]:
+    def get_next_gate_qubits(self, pz_name: str) -> tuple[int, ...]:
         gate = self.next_gate_at_pz.get(pz_name, ())
         if gate == ():
             return ()
-        return self.gate_qubits(gate)
+        return self.get_gate_qubits(gate)
 
     @property
     def in_process(self) -> dict[str, list[int]]:
@@ -228,17 +225,15 @@ class Graph(nx.Graph):
         self._map_to_pz = value
 
     @property
-    def next_gate_at_pz(self) -> dict[str, int | tuple[()]]:
+    def next_gate_at_pz(self) -> dict[str, GateRef]:
         return self._next_gate_at_pz
 
     @next_gate_at_pz.setter
-    def next_gate_at_pz(self, value: dict[str, int | tuple[()]]) -> None:
+    def next_gate_at_pz(self, value: dict[str, GateRef]) -> None:
         self._next_gate_at_pz = value
 
     @property
     def dag_gate_id_lookup(self) -> dict[int, int]:
-        if not hasattr(self, "_dag_gate_id_lookup"):
-            self._dag_gate_id_lookup = {}
         return self._dag_gate_id_lookup
 
     @dag_gate_id_lookup.setter

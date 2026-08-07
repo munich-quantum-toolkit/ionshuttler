@@ -21,12 +21,10 @@ from .graph_utils import get_idx_from_idc
 from .paths import create_path_via_bfs_directional, find_nonfree_paths
 
 if TYPE_CHECKING:
+    from ..circuit_types import GateRef
     from .graph import Graph
     from .ion_types import Edge, Node
     from .processing_zone import ProcessingZone
-
-
-GateRef = int | tuple[int, ...]
 
 
 def preprocess(graph: Graph, priority_queue: dict[int, str]) -> None:
@@ -94,30 +92,37 @@ def pick_pz_for_2_q_gate(graph: Graph, ion0: int, ion1: int) -> str:
 
 
 def assign_gate_to_pz(graph: Graph, gate: GateRef) -> str:
-    qubits = graph.gate_qubits(gate)
-    gate_id = gate if isinstance(gate, int) else None
+    if isinstance(gate, int):
+        return _assign_gate_id_to_pz(graph, gate)
+    return _choose_pz_for_qubits(graph, gate)
 
-    if gate_id is not None:
-        preferred_pz = graph.preferred_pz_for_gate(gate_id)
-        if preferred_pz is not None:
-            pz_names = {pz.name for pz in graph.pzs}
-            if preferred_pz not in pz_names:
-                msg = f"Unknown preferred processing zone: {preferred_pz}"
-                raise ValueError(msg)
-            if len(qubits) == 2:
-                graph.locked_gates[gate_id] = preferred_pz
-            return preferred_pz
 
+def _assign_gate_id_to_pz(graph: Graph, gate_id: int) -> str:
+    qubits = graph.get_gate_qubits(gate_id)
+    preferred_pz = graph.get_preferred_pz_for_gate(gate_id)
+    if preferred_pz is not None:
+        pz_names = {pz.name for pz in graph.pzs}
+        if preferred_pz not in pz_names:
+            msg = f"Unknown preferred processing zone: {preferred_pz}"
+            raise ValueError(msg)
+        if len(qubits) == 2:
+            graph.locked_gates[gate_id] = preferred_pz
+        return preferred_pz
+
+    if len(qubits) == 2 and gate_id in graph.locked_gates:
+        return graph.locked_gates[gate_id]
+
+    chosen_pz = _choose_pz_for_qubits(graph, qubits)
+    if len(qubits) == 2:
+        graph.locked_gates[gate_id] = chosen_pz
+    return chosen_pz
+
+
+def _choose_pz_for_qubits(graph: Graph, qubits: tuple[int, ...]) -> str:
     if len(qubits) == 1:
         return graph.map_to_pz[qubits[0]]
-
     if len(qubits) == 2:
-        if gate_id is not None and gate_id in graph.locked_gates:
-            return graph.locked_gates[gate_id]
-        chosen_pz = pick_pz_for_2_q_gate(graph, qubits[0], qubits[1])
-        if gate_id is not None:
-            graph.locked_gates[gate_id] = chosen_pz
-        return chosen_pz
+        return pick_pz_for_2_q_gate(graph, qubits[0], qubits[1])
 
     msg = f"Unsupported gate arity: {qubits}"
     raise ValueError(msg)
@@ -127,7 +132,7 @@ def create_priority_queue(
     graph: Graph,
     sequence: list[GateRef] | None = None,
     max_length: int = 10,
-) -> tuple[dict[int, str], dict[str, GateRef | tuple[()]]]:
+) -> tuple[dict[int, str], dict[str, GateRef]]:
     """
     Create a priority queue based on a given graph and sequence of gates.
     Also creates a dictionary of the next gate of each processing zone.
@@ -143,9 +148,9 @@ def create_priority_queue(
     """
     sequence_to_use = graph.sequence if sequence is None else sequence
     unique_sequence: dict[int, str] = OrderedDict()
-    next_gate_at_pz: dict[str, GateRef | tuple[()]] = {}
+    next_gate_at_pz: dict[str, GateRef] = {}
     for gate in sequence_to_use:
-        qubits = graph.gate_qubits(gate)
+        qubits = graph.get_gate_qubits(gate)
         # 1-qubit gate
         if len(qubits) == 1:
             elem = qubits[0]
@@ -208,7 +213,7 @@ def create_gate_info_list(graph: Graph) -> dict[str, list[int]]:
     # create list of next gate at each processing zone
     gate_info_list: dict[str, list[int]] = {pz.name: [] for pz in graph.pzs}
     for gate in graph.sequence:
-        qubits = graph.gate_qubits(gate)
+        qubits = graph.get_gate_qubits(gate)
         if len(qubits) == 1:
             elem = qubits[0]
             pz = assign_gate_to_pz(graph, gate)

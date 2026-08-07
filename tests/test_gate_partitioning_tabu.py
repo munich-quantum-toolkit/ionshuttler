@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from mqt.ionshuttler.multi_shuttler import gate_partitioning_tabu as tabu
 from mqt.ionshuttler.multi_shuttler.circuit_types import GateInfo
 from mqt.ionshuttler.multi_shuttler.gate_partitioning_tabu import (
     FineGrainedTabuConfig,
@@ -12,10 +13,23 @@ from mqt.ionshuttler.multi_shuttler.gate_partitioning_tabu import (
 
 
 def _distance_matrix(num_pzs: int) -> list[list[float]]:
+    """Create a symmetric unit-distance matrix.
+
+    Args:
+        num_pzs: Number of processing zones represented by the matrix.
+
+    Returns:
+        A square matrix with zero diagonal entries and unit distances elsewhere.
+    """
     return [[0.0 if i == j else 1.0 for j in range(num_pzs)] for i in range(num_pzs)]
 
 
 def _sample_gate_info() -> dict[int, GateInfo]:
+    """Return representative one- and two-qubit gate metadata.
+
+    Returns:
+        A mapping from stable gate IDs to sample ``GateInfo`` entries.
+    """
     return {
         0: GateInfo(qubits=(0, 1), qasm="cx q[0],q[1];"),
         1: GateInfo(qubits=(2, 3), qasm="cx q[2],q[3];"),
@@ -40,6 +54,40 @@ def test_config_defaults_match_prototype_reference_values() -> None:
     assert config.randomize_initial is False
     assert config.seed == 0
     assert config.max_layer_depth is None
+
+
+def test_config_rejects_non_positive_integer_limits() -> None:
+    factories = (
+        lambda: FineGrainedTabuConfig(max_iterations=0),
+        lambda: FineGrainedTabuConfig(tabu_list_length=0),
+        lambda: FineGrainedTabuConfig(candidate_list_length=-1),
+        lambda: FineGrainedTabuConfig(per_slice_quota=0),
+        lambda: FineGrainedTabuConfig(refresh_every=-1),
+        lambda: FineGrainedTabuConfig(max_layer_depth=0),
+    )
+
+    for factory in factories:
+        with pytest.raises(ValueError, match="must be positive"):
+            factory()
+
+
+def test_config_rejects_invalid_objective_parameters() -> None:
+    with pytest.raises(ValueError, match="balance_penalty must be non-negative"):
+        FineGrainedTabuConfig(balance_penalty=-1.0)
+    with pytest.raises(ValueError, match="max_iterations_factor must be positive"):
+        FineGrainedTabuConfig(max_iterations_factor=0.0)
+    with pytest.raises(ValueError, match="slack_dropoff must be positive"):
+        FineGrainedTabuConfig(slack_dropoff=-1.0)
+
+
+def test_compute_partition_rejects_duplicate_gate_ids() -> None:
+    with pytest.raises(ValueError, match="must not contain duplicate gate ids"):
+        compute_fine_grained_gate_partition(
+            [0, 0],
+            {0: GateInfo(qubits=(0,), qasm="x q[0];")},
+            ["pz1"],
+            _distance_matrix(1),
+        )
 
 
 def test_compute_partition_returns_runtime_neutral_result() -> None:
@@ -92,7 +140,7 @@ def test_multi_qubit_projection_stays_within_one_cluster() -> None:
         capacity=2,
     )
 
-    for slice_gate_ids, qubit_assignment in zip(result.time_slices, result.qubit_assignments_by_slice, strict=False):
+    for slice_gate_ids, qubit_assignment in zip(result.time_slices, result.qubit_assignments_by_slice, strict=True):
         for gate_id in slice_gate_ids:
             qubits = gate_info[gate_id].qubits
             if not qubits:
@@ -155,7 +203,7 @@ def test_consider_supernode_moves_returns_pre_move_balance_delta() -> None:
     )
     slice_loads = [[5, 1]]
 
-    best_move, _best_score, _capacity_delta, _distance_delta, balance_delta = tabu._consider_supernode_moves(
+    best_move = tabu._consider_supernode_moves(
         contraction=contraction,
         slice_index=0,
         supernode_id=0,
@@ -172,11 +220,11 @@ def test_consider_supernode_moves_returns_pre_move_balance_delta() -> None:
         current_cost=0.0,
         best_cost=0.0,
         tabu_set=set(),
-        best_move_state=(None, float("inf"), 0.0, 0.0, 0.0),
+        best_move_state=tabu._MoveEvaluation(),
     )
 
-    assert best_move == (0, contraction.supernodes[0], 1)
-    assert balance_delta == pytest.approx(tabu._balance_delta(slice_loads[0], 0, 1, 2, 2))
+    assert best_move.move == (0, contraction.supernodes[0], 1)
+    assert best_move.balance_delta == pytest.approx(tabu._balance_delta(slice_loads[0], 0, 1, 2, 2))
 
     moved_slice_loads = [3, 3]
-    assert balance_delta != pytest.approx(tabu._balance_delta(moved_slice_loads, 0, 1, 2, 2))
+    assert best_move.balance_delta != pytest.approx(tabu._balance_delta(moved_slice_loads, 0, 1, 2, 2))

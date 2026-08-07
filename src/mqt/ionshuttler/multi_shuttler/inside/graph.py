@@ -7,12 +7,9 @@ import networkx as nx
 from .graph_utils import create_idc_dictionary
 
 if TYPE_CHECKING:
-    from ..circuit_types import GateInfo
+    from ..circuit_types import GateInfo, GateRef
     from .ion_types import Edge, Node
     from .processing_zone import ProcessingZone
-
-
-GateRef = int | tuple[int, ...]
 
 
 class Graph(nx.Graph):
@@ -64,7 +61,7 @@ class Graph(nx.Graph):
     def gate_info(self, value: dict[int, GateInfo]) -> None:
         self._gate_info = value
 
-    def gate_qubits(self, gate: GateRef) -> tuple[int, ...]:
+    def get_gate_qubits(self, gate: GateRef) -> tuple[int, ...]:
         if isinstance(gate, int):
             return self.gate_info[gate].qubits
         return gate
@@ -77,7 +74,7 @@ class Graph(nx.Graph):
     def gate_pz_assignment(self, value: dict[int, str]) -> None:
         self._gate_pz_assignment = value
 
-    def preferred_pz_for_gate(self, gate_id: int) -> str | None:
+    def get_preferred_pz_for_gate(self, gate_id: int) -> str | None:
         return self.gate_pz_assignment.get(gate_id)
 
     @property

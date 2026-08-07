@@ -13,7 +13,12 @@ from qiskit import QuantumCircuit
 from qiskit.converters import circuit_to_dagdependency
 from qiskit.dagcircuit import DAGDependency
 
-from mqt.ionshuttler.multi_shuttler.circuit_parsing import extract_qubits_from_gate, is_qasm_file
+from mqt.ionshuttler.multi_shuttler import circuit_parsing
+from mqt.ionshuttler.multi_shuttler.circuit_parsing import (
+    extract_qubits_from_gate,
+    is_qasm_file,
+    parse_qasm_circuit,
+)
 from mqt.ionshuttler.multi_shuttler.circuit_types import GateInfo, ParsedCircuit
 from mqt.ionshuttler.multi_shuttler.main import main
 from mqt.ionshuttler.multi_shuttler.outside.compilation import (
@@ -233,19 +238,19 @@ class TestMultiGraph:
         assert isinstance(idc_dict, dict)
         assert len(idc_dict) > 0
 
-    def test_gate_qubits_resolve_gate_ids(self):
+    def test_get_gate_qubits_resolves_gate_ids(self):
         """The graph should resolve gate ids back to their qubit tuples."""
         g = Graph()
         g.gate_info = {5: GateInfo(qubits=(2, 4), qasm="cx q[2],q[4];")}
 
-        assert g.gate_qubits(5) == (2, 4)
+        assert g.get_gate_qubits(5) == (2, 4)
 
-    def test_inside_graph_gate_qubits_resolve_gate_ids(self):
+    def test_inside_graph_get_gate_qubits_resolves_gate_ids(self):
         """The inside graph should resolve gate ids back to their qubit tuples."""
         g = Graph()
         g.gate_info = {3: GateInfo(qubits=(1,), qasm="x q[1];")}
 
-        assert g.gate_qubits(3) == (1,)
+        assert g.get_gate_qubits(3) == (1,)
 
 
 # ===================================================================
@@ -284,6 +289,25 @@ class TestMultiCompilation:
         assert parsed.sequence == list(range(len(parsed.sequence)))
         assert len(parsed.gate_info) == len(parsed.sequence)
         assert parsed.qubit_sequence == create_initial_sequence(qasm_file_qft6)
+
+    def test_parse_qasm_circuit_rejects_non_qasm_file(self, tmp_path):
+        """The centralized parser should reject files without an OpenQASM header."""
+        input_file = tmp_path / "not_qasm.txt"
+        input_file.write_text("x q[0];", encoding="utf-8")
+
+        with pytest.raises(AssertionError, match="not a valid QASM file"):
+            parse_qasm_circuit(input_file)
+
+    def test_qasm_loader_does_not_mask_unrelated_runtime_errors(self):
+        """Only QASM 2 parse failures should trigger the QASM 3 fallback."""
+        with (
+            patch.object(QuantumCircuit, "from_qasm_str", side_effect=RuntimeError("unexpected failure")),
+            patch.object(circuit_parsing, "load_qasm3") as load_qasm3,
+            pytest.raises(RuntimeError, match="unexpected failure"),
+        ):
+            circuit_parsing._load_quantum_circuit("OPENQASM 2.0;")
+
+        load_qasm3.assert_not_called()
 
     def test_create_initial_circuit_normalizes_registers(self, tmp_path):
         """create_initial_circuit should canonicalize multi-register inputs."""
@@ -565,8 +589,9 @@ class TestMultiShuttlerMain:
             assert graph.gate_pz_assignment == {0: "pz1"}
             return 0
 
-        with patch("mqt.ionshuttler.multi_shuttler.main.run_shuttle_main", side_effect=_capture_graph):
+        with patch("mqt.ionshuttler.multi_shuttler.main.run_shuttle_main", side_effect=_capture_graph) as run_main:
             assert main(config) == 0
+        run_main.assert_called_once()
 
     def test_main_computes_fine_grained_gate_assignment_when_enabled(self, heuristic_config_1pz):
         """main() should compute and thread a fine-grained gate assignment when enabled."""
@@ -586,11 +611,12 @@ class TestMultiShuttlerMain:
                 "mqt.ionshuttler.multi_shuttler.main.compute_fine_grained_gate_assignment",
                 return_value={0: "pz1"},
             ) as compute_assignment,
-            patch("mqt.ionshuttler.multi_shuttler.main.run_shuttle_main", side_effect=_capture_graph),
+            patch("mqt.ionshuttler.multi_shuttler.main.run_shuttle_main", side_effect=_capture_graph) as run_main,
         ):
             assert main(config) == 0
 
         compute_assignment.assert_called_once()
+        run_main.assert_called_once()
 
     def test_main_skips_fine_grained_gate_assignment_when_disabled(self, heuristic_config_1pz):
         """main() should keep the current flow unchanged when fine-grained partitioning is disabled."""
@@ -606,8 +632,9 @@ class TestMultiShuttlerMain:
 
         with (
             patch("mqt.ionshuttler.multi_shuttler.main.compute_fine_grained_gate_assignment") as compute_assignment,
-            patch("mqt.ionshuttler.multi_shuttler.main.run_shuttle_main", side_effect=_capture_graph),
+            patch("mqt.ionshuttler.multi_shuttler.main.run_shuttle_main", side_effect=_capture_graph) as run_main,
         ):
             assert main(config) == 0
 
         compute_assignment.assert_not_called()
+        run_main.assert_called_once()

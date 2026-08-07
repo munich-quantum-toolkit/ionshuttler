@@ -16,7 +16,6 @@ def parse_qasm(filename: Path) -> list[tuple[int, ...]]:
 
 def create_initial_circuit(filename: Path) -> ParsedCircuit:
     """Return a canonicalized parsed circuit with stable gate ids."""
-
     return parse_qasm_circuit(filename)
 
 
