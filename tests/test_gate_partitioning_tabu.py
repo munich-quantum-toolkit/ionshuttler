@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import importlib
-from typing import Any, cast
+import pytest
 
 from mqt.ionshuttler.multi_shuttler.circuit_types import GateInfo
 from mqt.ionshuttler.multi_shuttler.gate_partitioning_tabu import (
     FineGrainedTabuConfig,
     compute_fine_grained_gate_partition,
 )
-
-import pytest
 
 
 def _distance_matrix(num_pzs: int) -> list[list[float]]:
