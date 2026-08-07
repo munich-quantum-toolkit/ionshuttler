@@ -529,7 +529,7 @@ def _contract_supernodes(
     """
 
     union_find = _UnionFind(list(qubits))
-    for left, right in required_edges:
+    for left, right in required_edges.items():
         union_find.union(left, right)
 
     components: dict[int, list[int]] = {}
