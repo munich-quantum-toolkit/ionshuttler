@@ -7,6 +7,7 @@ import networkx as nx
 from .graph_utils import create_idc_dictionary
 
 if TYPE_CHECKING:
+    from ..circuit_types import GateInfo, GateRef
     from .ion_types import Edge, Node
     from .processing_zone import ProcessingZone
 
@@ -15,8 +16,10 @@ class Graph(nx.Graph):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._executed_gates_next = []
-        self._in_process = []
         self._locked_gates = {}
+        self._gate_info = {}
+        self._gate_pz_assignment = {}
+        self._in_process = []
 
     @property
     def executed_gates_next(self) -> list[dict[str, Any]]:
@@ -43,12 +46,53 @@ class Graph(nx.Graph):
         self._pzs = value
 
     @property
-    def locked_gates(self) -> dict[tuple[int, ...], str]:
+    def locked_gates(self) -> dict[int, str]:
         return self._locked_gates
 
     @locked_gates.setter
-    def locked_gates(self, value: dict[tuple[int, ...], str]) -> None:
+    def locked_gates(self, value: dict[int, str]) -> None:
         self._locked_gates = value
+
+    @property
+    def gate_info(self) -> dict[int, GateInfo]:
+        return self._gate_info
+
+    @gate_info.setter
+    def gate_info(self, value: dict[int, GateInfo]) -> None:
+        self._gate_info = value
+
+    def get_gate_qubits(self, gate: GateRef) -> tuple[int, ...]:
+        """Resolve an integer gate ID or pass through a direct qubit tuple.
+
+        Args:
+            gate: Stable gate ID backed by ``gate_info`` or a direct qubit tuple.
+
+        Returns:
+            The qubits referenced by the gate.
+        """
+        if isinstance(gate, int):
+            return self.gate_info[gate].qubits
+        return gate
+
+    @property
+    def gate_pz_assignment(self) -> dict[int, str]:
+        """Return explicit gate-ID to processing-zone assignments."""
+        return self._gate_pz_assignment
+
+    @gate_pz_assignment.setter
+    def gate_pz_assignment(self, value: dict[int, str]) -> None:
+        self._gate_pz_assignment = value
+
+    def get_preferred_pz_for_gate(self, gate_id: int) -> str | None:
+        """Return the preferred processing zone for a gate, if assigned.
+
+        Args:
+            gate_id: Stable gate identifier to query.
+
+        Returns:
+            The assigned processing-zone name, or ``None`` when unspecified.
+        """
+        return self.gate_pz_assignment.get(gate_id)
 
     @property
     def state(self) -> dict[int, Edge]:
@@ -75,11 +119,11 @@ class Graph(nx.Graph):
         self._arch = value
 
     @property
-    def sequence(self) -> list[tuple[int, ...]]:
+    def sequence(self) -> list[int]:
         return self._sequence
 
     @sequence.setter
-    def sequence(self, value: list[tuple[int, ...]]) -> None:
+    def sequence(self, value: list[int]) -> None:
         self._sequence = value
 
     @property

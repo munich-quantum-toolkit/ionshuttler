@@ -8,6 +8,7 @@ import networkx as nx
 from .graph_utils import create_dist_dict, create_idc_dictionary, get_idx_from_idc
 
 if TYPE_CHECKING:
+    from ..circuit_types import GateInfo, GateRef
     from .ion_types import Edge, Node
     from .processing_zone import ProcessingZone
 
@@ -35,7 +36,11 @@ class Graph(nx.Graph):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.executed_gates_next: list[dict[str, object]] = []
+        self._gate_pz_assignment: dict[int, str] = {}
         self._pz_assignment_policy: str = "legacy"  # default
+        self._gate_info: dict[int, GateInfo] = {}
+        self._dag_gate_id_lookup: dict[int, int] = {}
+        self._next_gate_at_pz: dict[str, GateRef] = {}
         self.run_stats: RunStats = RunStats()
         self.path_cache: dict[Any, Any] = {}
         self.max_timesteps: int = 1_000_000
@@ -147,20 +152,51 @@ class Graph(nx.Graph):
         self._state = value
 
     @property
-    def sequence(self) -> list[tuple[int, ...]]:
+    def sequence(self) -> list[int]:
         return self._sequence
 
     @sequence.setter
-    def sequence(self, value: list[tuple[int, ...]]) -> None:
+    def sequence(self, value: list[int]) -> None:
         self._sequence = value
 
     @property
-    def locked_gates(self) -> dict[tuple[int, ...], str]:
+    def locked_gates(self) -> dict[int, str]:
         return self._locked_gates
 
     @locked_gates.setter
-    def locked_gates(self, value: dict[tuple[int, ...], str]) -> None:
+    def locked_gates(self, value: dict[int, str]) -> None:
         self._locked_gates = value
+
+    @property
+    def gate_info(self) -> dict[int, GateInfo]:
+        return self._gate_info
+
+    @gate_info.setter
+    def gate_info(self, value: dict[int, GateInfo]) -> None:
+        self._gate_info = value
+
+    def get_gate_qubits(self, gate: GateRef) -> tuple[int, ...]:
+        if isinstance(gate, int):
+            return self.gate_info[gate].qubits
+        return gate
+
+    @property
+    def gate_pz_assignment(self) -> dict[int, str]:
+        return self._gate_pz_assignment
+
+    @gate_pz_assignment.setter
+    def gate_pz_assignment(self, value: dict[int, str]) -> None:
+        self._gate_pz_assignment = value
+
+    def get_preferred_pz_for_gate(self, gate_id: int) -> str | None:
+        return self.gate_pz_assignment.get(gate_id)
+
+    def get_next_gate_qubits(self, pz_name: str) -> tuple[int, ...]:
+        """Return qubits for a PZ's next gate, or an empty tuple if unassigned."""
+        gate = self.next_gate_at_pz.get(pz_name, ())
+        if gate == ():
+            return ()
+        return self.get_gate_qubits(gate)
 
     @property
     def in_process(self) -> dict[str, list[int]]:
@@ -187,12 +223,20 @@ class Graph(nx.Graph):
         self._map_to_pz = value
 
     @property
-    def next_gate_at_pz(self) -> dict[str, tuple[int, ...]]:
+    def next_gate_at_pz(self) -> dict[str, GateRef]:
         return self._next_gate_at_pz
 
     @next_gate_at_pz.setter
-    def next_gate_at_pz(self, value: dict[str, tuple[int, ...]]) -> None:
+    def next_gate_at_pz(self, value: dict[str, GateRef]) -> None:
         self._next_gate_at_pz = value
+
+    @property
+    def dag_gate_id_lookup(self) -> dict[int, int]:
+        return self._dag_gate_id_lookup
+
+    @dag_gate_id_lookup.setter
+    def dag_gate_id_lookup(self, value: dict[int, int]) -> None:
+        self._dag_gate_id_lookup = value
 
     @property
     def dist_dict(self) -> dict[str, dict[Edge, list[Node]]]:
