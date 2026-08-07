@@ -146,52 +146,17 @@ preview = true
 docstring-code-format = true
 
 [tool.ruff.lint]
-select = [
-    "E", "F", "W",  # flake8
-    "A",            # flake8-builtins
-    "ARG",          # flake8-unused-arguments
-    "B",            # flake8-bugbear
-    "C4",           # flake8-comprehensions
-    "EM",           # flake8-errmsg
-    "EXE",          # flake8-executable
-    "I",            # isort
-    "ICN",          # flake8-import-conventions
-    "ISC",          # flake8-implicit-str-concat
-    "N",            # flake8-naming
-    "PGH",          # pygrep-hooks
-    "PIE",          # flake8-pie
-    "PL",           # pylint
-    "PT",           # flake8-pytest-style
-    "PTH",          # flake8-use-pathlib
-    "PYI",          # flake8-pyi
-    "Q",            # flake8-quotes
-    "RET",          # flake8-return
-    "RSE",          # flake8-raise
-    "RUF",          # Ruff-specific
-    "SIM",          # flake8-simplify
-    "TC",           # flake8-type-checking
-    "TID",          # flake8-tidy-imports
-    "TRY",          # tryceratops
-    "UP",           # pyupgrade
-    "YTT"           # flake8-2020
-]
+select = ["ALL"]
 ignore = [
-    # Default ignores
-    "C90",      # <...> too complex
-    "COM812",   # Conflicts with formatter
-    "PLR09",    # Too many <...>
-    "PLR2004",  # Magic value used in comparison
-    "S101",     # Use of assert detected
-    "S404",     # `subprocess` module is possibly insecure
-    "TID252",   # Prefer absolute imports over relative imports from parent modules
-    # Additional, temporary ignores
-    # After a refactor, these should no longer be necessary
-    "ARG001",   # Unused function argument
-    "E501",     # Line too long
-    "PLC0415",  # Import should be at top of file
-    "PLR1702",  # Too many nested blocks
-    "PLR6301",  # Method <...> could be a function, class method, or static method
-    "PLW0717",  # Try clause contains too many statements
+  "C90",
+  "COM812",
+  "PLR09",
+  "PLR1702",
+  "PLR2004",
+  "RUF201",
+  "S101",
+  "S404",
+  "TID252",
 ]
 future-annotations = true
 
@@ -199,7 +164,72 @@ future-annotations = true
 known-first-party = ["mqt.ionshuttler"]
 
 [tool.ruff.lint.per-file-ignores]
-"docs/**" = ["T20", "INP001"]
+"src/mqt/ionshuttler/multi_shuttler/**" = [
+  "ANN",
+  "ARG001",
+  "BLE001",
+  "CPY001",
+  "D",
+  "DOC",
+  "DTZ005",
+  "E501",
+  "ERA001",
+  "FBT",
+  "FIX002",
+  "FURB",
+  "NPY002",
+  "PERF",
+  "PLC0415",
+  "PLR6301",
+  "PLW0717",
+  "S110",
+  "S112",
+  "S311",
+  "SLF001",
+  "T20",
+  "TD",
+]
+"src/mqt/ionshuttler/single_shuttler/**" = [
+  "ANN",
+  "ARG001",
+  "BLE001",
+  "CPY001",
+  "D",
+  "DOC",
+  "DTZ005",
+  "E501",
+  "ERA001",
+  "FBT",
+  "FIX002",
+  "FURB",
+  "NPY002",
+  "PERF",
+  "PLC0415",
+  "PLR6301",
+  "PLW0717",
+  "S110",
+  "S112",
+  "S311",
+  "SLF001",
+  "T20",
+  "TD",
+]
+"tests/*.py" = [
+  "ANN",
+  "BLE001",
+  "CPY001",
+  "D",
+  "DOC",
+  "ERA001",
+  "FLY002",
+  "PLC0415",
+  "PLR6301",
+  "SLF001",
+]
+"docs/**" = ["ANN", "CPY001", "D", "INP001", "PLR6301", "T20"]
+"noxfile.py" = ["ANN", "CPY001", "D", "DOC", "PLC0415"]
+"sitecustomize.py" = ["CPY001", "D"]
+"src/mqt/ionshuttler/__init__.py" = ["CPY001", "D"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
