@@ -122,13 +122,13 @@ class Architecture:
         """
         if not isinstance(data, dict):
             msg = "architecture must be a JSON object"
-            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Preserve source behavior.
+            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Input validation uses ValueError.
         mapping = cast("dict[str, object]", data)
 
         num_sites = mapping.get("num_sites")
         if not isinstance(num_sites, int):
             msg = "architecture.num_sites must be an integer"
-            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Preserve source behavior.
+            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Input validation uses ValueError.
 
         processing_zones_raw = mapping.get("processing_zones")
         processing_zones = None

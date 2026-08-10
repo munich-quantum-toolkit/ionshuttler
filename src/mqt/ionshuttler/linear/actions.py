@@ -75,7 +75,7 @@ class SchedulableAction(Action):
             return
         if isinstance(duration, bool) or not isinstance(duration, int):
             msg = "action duration must be an integer"
-            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Preserve source behavior.
+            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Model validation uses ValueError.
         if duration < 1:
             msg = "action duration must be >= 1"
             raise ValueError(msg)
@@ -237,7 +237,7 @@ class SingleQubitGate(GateAction):
             return
         if isinstance(duration, bool) or not isinstance(duration, int):
             msg = "action duration must be an integer"
-            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Preserve source behavior.
+            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Model validation uses ValueError.
         if self.virtual:
             if duration != 0:
                 msg = "virtual single-qubit gate duration must be 0"

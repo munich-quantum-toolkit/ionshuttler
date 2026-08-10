@@ -66,7 +66,7 @@ class FieldProfile:
 
     @classmethod
     def from_dict(cls, data: object, num_sites: int | None = None) -> FieldProfile:
-        """Construct a profile from structured or legacy mapping data.
+        """Construct a profile from structured or site-to-value mapping data.
 
         Args:
             data: JSON-style field-profile mapping.
@@ -80,7 +80,7 @@ class FieldProfile:
         """
         if not isinstance(data, dict):
             msg = "field_profile must be a JSON object"
-            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Preserve source behavior.
+            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Input validation uses ValueError.
         mapping = cast("dict[str, object]", data)
 
         if "site_field" in mapping or "default_field" in mapping:

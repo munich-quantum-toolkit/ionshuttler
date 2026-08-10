@@ -10,6 +10,9 @@ We recommend you to start with the
 below. If you are interested in the theory behind the MQT IonShuttler, have a
 look at the publications in the {doc}`publication list <references>`.
 
+To compile a Qiskit or QASM circuit for a one-dimensional hardware layout from
+Python, see the {doc}`Linear compiler guide <linear_compiler>`.
+
 We appreciate any feedback and contributions to the project. If you want to
 contribute, you can find more information in the
 {doc}`contribution guide <contributing>`. If you are having trouble with the
@@ -78,6 +81,8 @@ self
 :maxdepth: 1
 
 installation
+linear_compiler
+linear_hardware_model
 references
 ```
 
@@ -90,6 +95,7 @@ references
 contributing
 ai_usage
 tooling
+linear_design
 support
 ```
 
