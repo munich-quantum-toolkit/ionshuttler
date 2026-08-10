@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import heapq
 import logging
 from dataclasses import dataclass
 from heapq import heappop, heappush
@@ -112,7 +111,8 @@ class _SearchContext:
     transport_timing: TransportTiming
 
 
-Frontier = list[tuple[int, int, _SearchNode]]
+FrontierEntry = tuple[int, int, _SearchNode]
+Frontier = list[FrontierEntry]
 
 
 @dataclass
@@ -622,8 +622,43 @@ def _push_frontier(
         range(len(frontier)),
         key=lambda index: (frontier[index][0], frontier[index][1]),
     )
-    frontier.pop(worst_index)
-    heapq.heapify(frontier)
+    last_entry = frontier.pop()
+    if worst_index < len(frontier):
+        frontier[worst_index] = last_entry
+        _sift_up(frontier, worst_index)
+
+
+def _sift_up(frontier: Frontier, position: int) -> None:
+    """Repair a heap after replacing one entry with its previous last entry."""
+    end = len(frontier)
+    start = position
+    new_entry = frontier[position]
+    child = 2 * position + 1
+    while child < end:
+        right = child + 1
+        if right < end and not _frontier_entry_precedes(frontier[child], frontier[right]):
+            child = right
+        frontier[position] = frontier[child]
+        position = child
+        child = 2 * position + 1
+    frontier[position] = new_entry
+    _sift_down(frontier, start, position)
+
+
+def _sift_down(frontier: Frontier, start: int, position: int) -> None:
+    new_entry = frontier[position]
+    while position > start:
+        parent = (position - 1) >> 1
+        parent_entry = frontier[parent]
+        if not _frontier_entry_precedes(new_entry, parent_entry):
+            break
+        frontier[position] = parent_entry
+        position = parent
+    frontier[position] = new_entry
+
+
+def _frontier_entry_precedes(left: FrontierEntry, right: FrontierEntry) -> bool:
+    return (left[0], left[1]) < (right[0], right[1])
 
 
 def _heuristic(state: State, context: _SearchContext) -> int:

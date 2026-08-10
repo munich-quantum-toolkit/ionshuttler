@@ -9,6 +9,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from collections import Counter
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -16,10 +20,11 @@ import pytest
 import mqt.ionshuttler.linear.search as search_module
 from mqt.ionshuttler.linear.actions import AdvanceTime, Rx, Ry, Rzz, Shuttle
 from mqt.ionshuttler.linear.architecture import Architecture
-from mqt.ionshuttler.linear.config import LinearCompilerConfig, SearchConfig
+from mqt.ionshuttler.linear.config import GateTiming, LinearCompilerConfig, SearchConfig
 from mqt.ionshuttler.linear.expand import replay_path
+from mqt.ionshuttler.linear.parser import parse_qasm_file
 from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
-from mqt.ionshuttler.linear.state import State, create_initial_state
+from mqt.ionshuttler.linear.state import State, create_initial_state, has_pending_timed_work
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -653,3 +658,65 @@ def test_larger_schedule_remains_deterministic_and_replayable() -> None:
     assert result.path == expected
     assert result.num_timesteps == 6
     assert_replays(result, initial_state, architecture, [0, 1, 2, 3], gates, predecessors)
+
+
+def test_six_qubit_qft_matches_frozen_schedule() -> None:
+    """Keep a substantial production schedule exactly reproducible."""
+    qasm_path = Path(__file__).parent / "fixtures" / "qft_6.qasm"
+    num_qubits, gate_list, predecessors, _ = parse_qasm_file(
+        qasm_path,
+        gate_timing=GateTiming(),
+    )
+    architecture = Architecture(
+        num_sites=9,
+        processing_zones={"pz1": [2, 3], "pz2": [5, 6]},
+    )
+    initial_state = create_initial_state(num_qubits, architecture)
+    gates = dict(enumerate(gate_list))
+
+    result = search_module.search(
+        initial_state,
+        list(gates),
+        gates,
+        architecture,
+        predecessors,
+    )
+
+    serialized_actions = [action.to_dict() for action in result.path]
+    encoded_actions = json.dumps(
+        serialized_actions,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    assert result.status is CompilationStatus.SUCCESS
+    assert len(gates) == 143
+    assert len(result.path) == 426
+    assert result.num_timesteps == 219
+    assert Counter(type(action).__name__ for action in result.path) == {
+        "AdvanceTime": 219,
+        "PhysicalSwap": 36,
+        "Rx": 5,
+        "Ry": 54,
+        "Rz": 45,
+        "Rzz": 39,
+        "Shuttle": 28,
+    }
+    assert hashlib.sha256(encoded_actions, usedforsecurity=False).hexdigest() == (
+        "1557943f721c4019943a4a768cf1598e0f58f986d910b59a068a79c5e03d93b8"
+    )
+    assert result.final_state is not None
+    assert result.final_state.completed_gates == frozenset(gates)
+    replayed_state = initial_state
+    for action in result.path:
+        if isinstance(action, AdvanceTime):
+            assert has_pending_timed_work(replayed_state)
+        replayed_state = replay_path(
+            replayed_state,
+            architecture,
+            [action],
+            list(gates),
+            gates,
+            predecessors=predecessors,
+        )
+    assert replayed_state == result.final_state
+    assert initial_state.completed_gates == frozenset()
