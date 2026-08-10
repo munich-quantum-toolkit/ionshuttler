@@ -5,4 +5,4 @@
 #
 # Licensed under the MIT License
 
-"""Tests for the Linear ion-shuttling compiler."""
+"""Linear ion-shuttling compiler backend."""

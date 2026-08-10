@@ -1,4 +1,10 @@
-# Copyright (c) 2026 Munich Quantum Software Company GmbH
+# Copyright (c) 2026 Chair for Design Automation, TUM
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
+
 """Tests for the frozen Linear compiler source contract."""
 
 from __future__ import annotations
@@ -44,3 +50,28 @@ def test_production_default_golden_contract(production_default_golden: dict[str,
     final_state = _as_string_keyed_dict(production_default_golden["expected_final_state"])
     assert final_state["completed_gates"] == [0, 1, 2]
     assert final_state["time"] == 5
+
+
+def test_production_default_golden_contains_no_gratuitous_idle_time(
+    production_default_golden: dict[str, object],
+) -> None:
+    """Freeze the source schedule's pending-work-only time-advance policy."""
+    expected_result = _as_string_keyed_dict(production_default_golden["expected_result"])
+    actions = expected_result["actions"]
+    assert isinstance(actions, list)
+
+    scheduled_until = 0
+    advance_times: list[int] = []
+    for raw_action in actions:
+        action = _as_string_keyed_dict(raw_action)
+        start_time = action["start_time"]
+        duration = action["duration"]
+        assert isinstance(start_time, int)
+        assert isinstance(duration, int)
+        if action["type"] == "AdvanceTime":
+            assert start_time < scheduled_until
+            advance_times.append(start_time)
+        else:
+            scheduled_until = max(scheduled_until, start_time + duration)
+
+    assert advance_times == [0, 1, 2, 3, 4]
