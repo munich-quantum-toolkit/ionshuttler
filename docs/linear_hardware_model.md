@@ -79,7 +79,7 @@ uncertainty in operation time.
 ## Physical and virtual rotations
 
 The default hardware catalog provides `Rx`, `Ry`, `Rz`, and `Rzz`, a common
-trapped-ion gate set. ``Rxx` and `Ryy` gates are also implemented and can be
+trapped-ion gate set. `Rxx` and `Ryy` gates are also implemented and can be
 enabled explicitly for different hardware models.
 
 `Rx` and `Ry` rotations are physical by default: they occupy their ion and its

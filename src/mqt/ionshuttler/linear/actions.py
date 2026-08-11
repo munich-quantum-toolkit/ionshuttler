@@ -730,6 +730,15 @@ def is_adjacent(pos_a: int, pos_b: int) -> bool:
 
 
 def _construct_action(action_type: type[Action], values: Mapping[str, object]) -> Action:
+    """Construct an action from validated field values.
+
+    Args:
+        action_type: Action class to instantiate.
+        values: Constructor arguments keyed by field name.
+
+    Returns:
+        The constructed action.
+    """
     constructor = cast("Any", action_type)
     return cast("Action", constructor(**values))
 
@@ -738,10 +747,30 @@ def _construct_gate_action(
     action_type: type[GateAction],
     values: Mapping[str, object],
 ) -> GateAction:
+    """Construct a gate action from validated field values.
+
+    Args:
+        action_type: Gate class to instantiate.
+        values: Constructor arguments keyed by field name.
+
+    Returns:
+        The constructed gate action.
+    """
     return cast("GateAction", _construct_action(action_type, values))
 
 
 def _require_circuit_name(gate_type: type[GateAction]) -> str:
+    """Return the circuit name declared by a gate class.
+
+    Args:
+        gate_type: Gate class to inspect.
+
+    Returns:
+        The declared circuit name.
+
+    Raises:
+        ValueError: If the gate class has no circuit name.
+    """
     name = gate_type.circuit_name
     if name is None:
         msg = f"gate type {gate_type.__name__} does not define a circuit name"
@@ -756,6 +785,17 @@ def _require_instruction_shape(
     *,
     num_ions: int,
 ) -> None:
+    """Validate the operand and parameter counts for a circuit instruction.
+
+    Args:
+        gate_type: Gate class receiving the instruction.
+        ions: Ion identifiers supplied by the instruction.
+        parameters: Numeric parameters supplied by the instruction.
+        num_ions: Required number of ion operands.
+
+    Raises:
+        ValueError: If the gate lacks a circuit name or the counts do not match.
+    """
     if len(ions) != num_ions or len(parameters) != len(gate_type.parameter_names):
         msg = (
             f"operation {_require_circuit_name(gate_type)!r} requires {num_ions} ions "
@@ -765,6 +805,18 @@ def _require_instruction_shape(
 
 
 def _field_default(action_type: type[Action], name: str) -> object:
+    """Return a declared default value from an action dataclass.
+
+    Args:
+        action_type: Action class containing the field.
+        name: Field whose default is required.
+
+    Returns:
+        The field's default value.
+
+    Raises:
+        ValueError: If the field is absent or has no default.
+    """
     model_field = next((item for item in fields(action_type) if item.name == name), None)
     if model_field is None or model_field.default is MISSING:
         msg = f"{action_type.__name__} must define a default {name}"
@@ -773,6 +825,18 @@ def _field_default(action_type: type[Action], name: str) -> object:
 
 
 def _require_int(data: Mapping[str, object], key: str) -> int:
+    """Read an integer from serialized action data.
+
+    Args:
+        data: Serialized action fields.
+        key: Field to read.
+
+    Returns:
+        The integer value.
+
+    Raises:
+        ValueError: If the field is absent or is not an integer.
+    """
     value = data.get(key)
     if isinstance(value, bool) or not isinstance(value, int):
         msg = f"{key} must be an integer"
@@ -781,6 +845,18 @@ def _require_int(data: Mapping[str, object], key: str) -> int:
 
 
 def _require_number(data: Mapping[str, object], key: str) -> float:
+    """Read a numeric value from serialized action data.
+
+    Args:
+        data: Serialized action fields.
+        key: Field to read.
+
+    Returns:
+        The value converted to a float.
+
+    Raises:
+        ValueError: If the field is absent or is not numeric.
+    """
     value = data.get(key)
     if isinstance(value, bool) or not isinstance(value, int | float):
         msg = f"{key} must be numeric"
@@ -789,6 +865,18 @@ def _require_number(data: Mapping[str, object], key: str) -> float:
 
 
 def _require_optional_number(data: Mapping[str, object], key: str) -> float | None:
+    """Read an optional numeric value from serialized action data.
+
+    Args:
+        data: Serialized action fields.
+        key: Field to read.
+
+    Returns:
+        The value converted to a float, or ``None``.
+
+    Raises:
+        ValueError: If a non-null value is not numeric.
+    """
     value = data.get(key)
     if value is None:
         return None
@@ -799,6 +887,18 @@ def _require_optional_number(data: Mapping[str, object], key: str) -> float | No
 
 
 def _require_str(data: Mapping[str, object], key: str) -> str:
+    """Read a string from serialized action data.
+
+    Args:
+        data: Serialized action fields.
+        key: Field to read.
+
+    Returns:
+        The string value.
+
+    Raises:
+        ValueError: If the field is absent or is not a string.
+    """
     value = data.get(key)
     if not isinstance(value, str):
         msg = f"{key} must be a string"
@@ -807,6 +907,19 @@ def _require_str(data: Mapping[str, object], key: str) -> str:
 
 
 def _require_bool(data: Mapping[str, object], key: str, *, default: bool) -> bool:
+    """Read a Boolean from serialized action data.
+
+    Args:
+        data: Serialized action fields.
+        key: Field to read.
+        default: Value used when the field is absent.
+
+    Returns:
+        The Boolean value.
+
+    Raises:
+        ValueError: If the value is not Boolean.
+    """
     value = data.get(key, default)
     if not isinstance(value, bool):
         msg = f"{key} must be a boolean"
@@ -820,6 +933,19 @@ def _require_duration(
     default: int,
     allow_zero: bool = False,
 ) -> int:
+    """Read and validate an action duration.
+
+    Args:
+        data: Serialized action fields.
+        default: Duration used when the field is absent.
+        allow_zero: Whether zero is an accepted duration.
+
+    Returns:
+        The validated duration.
+
+    Raises:
+        ValueError: If the duration is not an integer or is below the minimum.
+    """
     value = data.get("duration", default)
     if isinstance(value, bool) or not isinstance(value, int):
         msg = "duration must be an integer"

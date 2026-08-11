@@ -155,6 +155,7 @@ from mqt.ionshuttler.linear.actions import TwoQubitGate
 
 @dataclass(frozen=True)
 class CX(TwoQubitGate):
+    circuit_name = "cx"
     duration: int = 2
 ```
 
@@ -179,9 +180,7 @@ hardware state, the action class additionally provides its available instances.
 catalog. The compiler recognizes the class's `circuit_name` in either QASM or
 Qiskit input. `TwoQubitGate` checks the two operands and constructs the custom
 gate; parameterized gate families can declare their parameter names or override
-`from_instruction` when they need different lowering behavior. native
-trapped-ion operations and are commonly decomposed into native single-qubit
-rotations and entangling gates.
+`from_instruction` when they need different lowering behavior.
 
 Note that CX is used here as a familiar example. Controlled-X gates are not
 typically native in real-world trapped ion hardware. The default catalog uses

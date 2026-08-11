@@ -240,6 +240,18 @@ def parse_qasm_file_with_dependencies(
 def _gate_type_registry(
     gate_types: Sequence[type[GateAction]] | None,
 ) -> dict[str, type[GateAction]]:
+    """Index available gate classes by their circuit names.
+
+    Args:
+        gate_types: Gate classes to register, or ``None`` for the built-in gates.
+
+    Returns:
+        Gate classes keyed by lowercase circuit name.
+
+    Raises:
+        TypeError: If an entry is not a ``GateAction`` subclass.
+        ValueError: If multiple classes declare the same circuit name.
+    """
     registry: dict[str, type[GateAction]] = {}
     for gate_type in _BUILTIN_GATE_TYPES if gate_types is None else gate_types:
         if not isinstance(gate_type, type) or not issubclass(gate_type, GateAction):
@@ -260,6 +272,18 @@ def _gate_record_from_qasm_line(
     line: str,
     gate_types: Mapping[str, type[GateAction]],
 ) -> GateRecord | None:
+    """Read one supported gate instruction from a QASM line.
+
+    Args:
+        line: QASM statement to inspect.
+        gate_types: Available gate classes keyed by circuit name.
+
+    Returns:
+        The parsed gate record, or ``None`` if the line is not a supported gate statement.
+
+    Raises:
+        ValueError: If the gate is unavailable or a parameter expression is unsupported.
+    """
     match = _GATE_PATTERN.match(line)
     if match is None:
         return None
@@ -286,6 +310,18 @@ def _records_from_qasm(
     qasm: str,
     gate_types: Mapping[str, type[GateAction]],
 ) -> tuple[int, list[GateRecord], DependencyBreaks]:
+    """Extract gate records and dependency breaks from QASM text.
+
+    Args:
+        qasm: OpenQASM source text.
+        gate_types: Available gate classes keyed by circuit name.
+
+    Returns:
+        The qubit count, gate records, and dependency breaks.
+
+    Raises:
+        ValueError: If the input is malformed, unsupported, or references invalid qubits.
+    """
     num_qubits: int | None = None
     records: list[GateRecord] = []
     dependency_break_targets: dict[int, set[int] | None] = {}
@@ -343,6 +379,18 @@ def _records_from_quantum_circuit(
     circuit: QuantumCircuit,
     gate_types: Mapping[str, type[GateAction]],
 ) -> tuple[int, list[GateRecord], DependencyBreaks]:
+    """Extract gate records and dependency breaks from a Qiskit circuit.
+
+    Args:
+        circuit: Qiskit circuit to inspect.
+        gate_types: Available gate classes keyed by circuit name.
+
+    Returns:
+        The qubit count, gate records, and dependency breaks.
+
+    Raises:
+        ValueError: If an operation is unavailable, unsupported, or has invalid operands or parameters.
+    """
     records: list[GateRecord] = []
     dependency_breaks: dict[int, set[int]] = {}
     measurement_seen = False
@@ -396,6 +444,15 @@ def _build_parsed_circuit(
 
 
 def _lower_gate(record: GateRecord, timing: GateTiming) -> GateAction:
+    """Construct a schedulable gate from a parsed circuit record.
+
+    Args:
+        record: Gate class, parameters, and ion operands to lower.
+        timing: Hardware gate timing used during construction.
+
+    Returns:
+        The constructed gate action.
+    """
     gate_type, parameters, ions = record
     return gate_type.from_instruction(ions, parameters, timing)
 
@@ -512,6 +569,15 @@ def _numeric_parameter(value: object, operation_name: str) -> float:
 
 
 def _validate_gate_records(records: list[GateRecord], num_qubits: int) -> None:
+    """Validate register size and qubit references in parsed gate records.
+
+    Args:
+        records: Parsed gate records to validate.
+        num_qubits: Number of qubits declared by the circuit.
+
+    Raises:
+        ValueError: If the register is empty or a gate has invalid qubit operands.
+    """
     if num_qubits < 1:
         msg = "quantum register must contain at least one qubit"
         raise ValueError(msg)
