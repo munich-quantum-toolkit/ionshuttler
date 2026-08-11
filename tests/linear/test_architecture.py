@@ -78,10 +78,13 @@ def test_field_profile_defaults_and_architecture_integration() -> None:
     assert profile.field_at(2) == pytest.approx(1.0)
     assert architecture.field_at(3) == pytest.approx(-0.5)
     assert architecture.has_nontrivial_field_profile()
-    assert not Architecture(
+    zero_profile_architecture = Architecture(
         num_sites=4,
         field_profile=FieldProfile(num_sites=4, site_field=(), default_field=0.0),
-    ).has_nontrivial_field_profile()
+    )
+    assert zero_profile_architecture.has_nontrivial_field_profile()
+    assert "field_profile" in zero_profile_architecture.to_dict()
+    assert not Architecture(num_sites=4).has_nontrivial_field_profile()
 
 
 def test_architecture_round_trips_through_json() -> None:
@@ -113,6 +116,25 @@ def test_architecture_load_reads_utf8_json(tmp_path: Path) -> None:
         processing_zones={"pz": [0, 1, 2, 3]},
         field_profile=FieldProfile(num_sites=4, site_field=((1, 0.5),)),
     )
+
+
+def test_bare_field_mapping_infers_its_site_count(tmp_path: Path) -> None:
+    """Size a standalone field profile from its largest site index."""
+    profile_path = tmp_path / "field_profile.json"
+    profile_path.write_text('{"0": 0.25, "3": -0.5}', encoding="utf-8")
+
+    profile = FieldProfile.load(profile_path)
+
+    assert profile.num_sites == 4
+    assert profile.field_at(0) == pytest.approx(0.25)
+    assert profile.field_at(1) == pytest.approx(1.0)
+    assert profile.field_at(3) == pytest.approx(-0.5)
+
+
+def test_empty_field_mapping_requires_an_explicit_site_count() -> None:
+    """Reject a standalone empty mapping whose size cannot be inferred."""
+    with pytest.raises(ValueError, match="num_sites is required"):
+        FieldProfile.from_dict({})
 
 
 def test_architecture_and_field_profile_reject_invalid_shapes() -> None:

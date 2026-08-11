@@ -5,12 +5,12 @@
 #
 # Licensed under the MIT License
 
-"""Find Linear schedules with exhaustive or rolling-horizon search."""
+"""Find Linear schedules with quality-oriented or exact search settings."""
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from heapq import heappop, heappush
 from itertools import count
 from time import perf_counter
@@ -27,18 +27,25 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from mqt.ionshuttler.linear.architecture import Architecture
-    from mqt.ionshuttler.linear.config import SearchConfig
+    from mqt.ionshuttler.linear.config import HeuristicMode, SearchConfig
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class _TimeBudget:
+    """Track elapsed time and an optional search deadline."""
+
     start_time: float
     deadline: float | None
 
     @classmethod
     def start(cls, max_compile_time: float | None) -> _TimeBudget:
+        """Start a budget with an optional duration in seconds.
+
+        Returns:
+            A running time budget.
+        """
         now = perf_counter()
         return cls(
             start_time=now,
@@ -46,21 +53,31 @@ class _TimeBudget:
         )
 
     def expired(self) -> bool:
+        """Return whether the deadline has passed."""
         return self.deadline is not None and perf_counter() >= self.deadline
 
     def elapsed(self) -> float:
+        """Return elapsed wall-clock time in seconds."""
         return perf_counter() - self.start_time
 
 
 @dataclass(frozen=True)
 class _SearchPolicy:
+    """Collect the candidate modes and limits used during search."""
+
     generation_schedule: tuple[GenerationMode, ...]
     iterative_diving: bool
     num_solutions: int
     max_frontier_size: int | None
+    heuristic_mode: HeuristicMode
 
     @classmethod
     def from_config(cls, config: SearchConfig) -> _SearchPolicy:
+        """Create a search policy from user-facing settings.
+
+        Returns:
+            The corresponding internal search policy.
+        """
         modes = (
             (GenerationMode.INFORMED, GenerationMode.UNINFORMED)
             if config.informed_action_prioritization
@@ -71,13 +88,16 @@ class _SearchPolicy:
             iterative_diving=config.iterative_diving_search,
             num_solutions=config.num_solutions,
             max_frontier_size=config.max_frontier_size,
+            heuristic_mode=config.heuristic_mode,
         )
 
     @property
     def initial_mode(self) -> GenerationMode:
+        """First candidate-generation mode to explore."""
         return self.generation_schedule[0]
 
     def next_mode(self, current: GenerationMode) -> GenerationMode | None:
+        """Return the broader mode following ``current``, if any."""
         try:
             index = self.generation_schedule.index(current) + 1
         except ValueError:
@@ -87,6 +107,8 @@ class _SearchPolicy:
 
 @dataclass(frozen=True)
 class _SearchNode:
+    """Store one compiler state and the schedule prefix that reached it."""
+
     state: State
     path: tuple[Action, ...]
     cost_value: int
@@ -96,6 +118,8 @@ class _SearchNode:
 
 @dataclass(frozen=True)
 class _FoundSolution:
+    """Store a completed schedule and its final state and cost."""
+
     path: tuple[Action, ...]
     final_state: State
     cost_value: int
@@ -103,6 +127,8 @@ class _FoundSolution:
 
 @dataclass(frozen=True)
 class _SearchContext:
+    """Collect immutable circuit, hardware, and search-policy inputs."""
+
     architecture: Architecture
     gate_order: Sequence[int]
     gates: Mapping[int, GateAction]
@@ -117,6 +143,8 @@ Frontier = list[FrontierEntry]
 
 @dataclass
 class _SearchProgress:
+    """Track frontier state, best-known paths, and completed solutions."""
+
     frontier: Frontier
     tie_breaker: count
     current_node: _SearchNode | None
@@ -132,6 +160,8 @@ class _SearchProgress:
 
 @dataclass
 class _RollingProgress:
+    """Accumulate committed schedule windows and their explored-node count."""
+
     state: State
     schedule: list[Action]
     explored_nodes: int = 0
@@ -662,6 +692,8 @@ def _frontier_entry_precedes(left: FrontierEntry, right: FrontierEntry) -> bool:
 
 
 def _heuristic(state: State, context: _SearchContext) -> int:
+    if context.policy.heuristic_mode == "zero":
+        return 0
     return heuristic(
         state,
         context.architecture,
@@ -737,16 +769,11 @@ def _with_public_metadata(
     architecture: Architecture,
     initial_state: State,
 ) -> CompilationResult:
-    return CompilationResult(
-        status=result.status,
-        path=result.path,
-        num_timesteps=result.num_timesteps,
+    return replace(
+        result,
         wall_clock_s=budget.elapsed(),
-        score=result.score,
-        final_state=result.final_state,
         architecture=architecture,
         initial_state=initial_state,
-        explored_nodes=result.explored_nodes,
     )
 
 

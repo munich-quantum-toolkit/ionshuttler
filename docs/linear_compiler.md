@@ -57,7 +57,7 @@ result = LinearCompiler(architecture).compile(
 The positions must be distinct, lie within the architecture, and match the
 number of circuit qubits. See also the
 {doc}`trapped-ion hardware model <linear_hardware_model>` for further details on
-the hadware abstraction.
+the hardware abstraction.
 
 ### Circuit inputs
 
@@ -139,15 +139,17 @@ compiler = LinearCompiler(architecture, config=config)
 `rx`, `ry`, and `rz` may be selected as virtual single-qubit gates through
 `GateTiming.virtual_single_qubit_gates`. Virtual rotations must have zero
 duration and remain in the logical schedule without reserving hardware time.
-`rz` is virtual by default, reflecting a common trapped-ion implementation.
+`rz` is virtual by default, reflecting a common trapped-ion implementation. When
+reproducing a schedule created with different timing assumptions, pass those
+durations explicitly.
 
 ## Choose a search profile
 
-The compiler uses A* search: it compares the time already used with an estimate
-of the work still needed and explores promising schedules first
+The compiler uses A-star search: it compares the time already used with an
+estimate of the work still needed and explores promising schedules first
 {cite:p}`hart1968formal`. This estimate is called a *heuristic*. An admissible
-heuristic never overestimates the remaining cost; with the usual unrestricted A*
-conditions, that property is what supports an optimality guarantee.
+heuristic never overestimates the remaining cost; with the usual unrestricted
+A-star conditions, that property is what supports an optimality guarantee.
 
 The Linear heuristic combines estimated ion movement with remaining gate depth.
 Because movements and gates may overlap, this estimate is
@@ -170,6 +172,7 @@ config = LinearCompilerConfig(
         max_frontier_size=1000,
         max_compile_time=1800.0,
         use_dependencies=True,
+        heuristic_mode="quality",
     )
 )
 ```
@@ -184,6 +187,7 @@ config = LinearCompilerConfig(
 | `max_frontier_size`              | Limits stored alternatives. Smaller bounds reduce memory, but discarded candidates can contain the best or only solution. Use `None` to retain an unbounded frontier.                                                                                                  |
 | `max_compile_time`               | Shared wall-clock budget in seconds. A finite value prevents unexpectedly long runs; `None` removes the time limit.                                                                                                                                                    |
 | `use_dependencies`               | `True` respects circuit dependencies while allowing independent gates to overlap. `False` conservatively schedules gates in their input order and may increase the makespan.                                                                                           |
+| `heuristic_mode`                 | `"quality"` uses the faster default estimate, which is not guaranteed to be admissible. `"zero"` uses no remaining-cost estimate; it is admissible, but usually explores many more states.                                                                             |
 
 A useful, more thorough profile for small circuits is:
 
@@ -195,6 +199,7 @@ search = SearchConfig(
     num_solutions=10,
     max_frontier_size=None,
     max_compile_time=None,
+    heuristic_mode="quality",
 )
 ```
 
@@ -203,6 +208,31 @@ several solutions. Runtime and memory can grow rapidly. Because the heuristic is
 not guaranteed admissible and the search stops after the requested number of
 solutions, this remains a quality-oriented search rather than an exact
 optimality mode.
+
+For small instances where a minimum-makespan result matters more than search
+speed, all quality-oriented shortcuts can be disabled:
+
+```python
+exact_search = SearchConfig(
+    horizon=None,
+    committed_gates=1,
+    iterative_diving_search=False,
+    informed_action_prioritization=False,
+    num_solutions=1,
+    max_frontier_size=None,
+    max_compile_time=None,
+    use_dependencies=True,
+    heuristic_mode="zero",
+)
+```
+
+This turns the search into an unrestricted uniform-cost search. The first
+complete schedule therefore has the minimum makespan among the schedules
+represented by the configured hardware and compiler action model. Runtime and
+memory can grow very quickly, so this profile is mainly useful for small
+circuits, reference results, and comparisons. A timeout, frontier bound, rolling
+horizon, iterative dive, or narrowed action generation removes that optimality
+guarantee.
 
 ## Understand the result
 
@@ -223,7 +253,8 @@ inspect the reached placement and completed gates.
 
 Always check `status` before treating a result as a complete schedule. Invalid
 input and configuration errors raise exceptions instead of returning `FAILED`.
-Use `result.save(...)` and
+Use `result.save(...)` to write beneath `outputs/results/json` in the current
+working directory by default, or pass `directory` explicitly. Use
 {py:meth}`~mqt.ionshuttler.linear.CompilationResult.load` for explicit JSON
 output; compilation does not create caches or result files on its own.
 

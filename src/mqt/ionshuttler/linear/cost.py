@@ -5,7 +5,7 @@
 #
 # Licensed under the MIT License
 
-"""Cost estimates used to choose promising schedules."""
+"""Cost estimates used to choose promising schedules, not admissible."""
 
 from __future__ import annotations
 
@@ -51,6 +51,9 @@ def heuristic(
     predecessors: Mapping[int, frozenset[int]] | None = None,
 ) -> int:
     """Estimate the work still needed to finish the requested gates.
+
+    Movement and gate execution can overlap, so this estimate may overstate
+    the remaining schedule time and does not guarantee an optimal result.
 
     Returns:
         A nonnegative estimate combining ion movement and remaining gate depth.

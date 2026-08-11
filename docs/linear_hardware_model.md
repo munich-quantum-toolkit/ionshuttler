@@ -2,15 +2,17 @@
 
 The Linear compiler models a one-dimensional quantum charge-coupled device
 (QCCD): ions are stored at discrete trap sites, moved through the device, and
-brought into designated processing zones for quantum operations. This follows
-the central QCCD idea of separating storage from interaction regions and using
-controlled ion transport to assemble the qubits needed for each operation
+brought into designated processing zones for quantum operations, also referred
+to as *laser interaction zones* (LIZ). This follows the central QCCD idea of
+separating storage from interaction regions and using controlled ion transport
+to assemble the qubits needed for each operation
 {cite:p}`kielpinski2002architecture,schoenberger2024shuttling`.
 
-The model lives at the scheduling level. It describes where ions may be, which
-operations may occur together, and how long those operations occupy hardware
-resources. It does not attempt to reproduce electrode waveforms, motional-mode
-dynamics, or laser pulses. Those belong to lower control and physics layers.
+The model lives at the scheduling level (see also {doc}`linear_design`). It
+describes where ions may be, which operations may occur together, and how long
+those operations occupy hardware resources. It does not attempt to reproduce
+electrode waveforms, motional-mode dynamics, or laser pulses. Those belong to
+(absent) lower control and physics layers.
 
 ## A chain of discrete sites
 
@@ -21,7 +23,7 @@ The device is represented as an ordered set of sites:
   ions above a linear segmented trap. Colored site markers identify two
   processing-zone regions, arrows indicate shuttling and swapping, and bar
   heights sketch a position-dependent field profile.">
-  <figcaption><b>Figure 1:</b> Scheduling-level view of ions, linear interaction
+  <figcaption><b>Figure 1:</b> Scheduling-level view of ions ("Q"), processing
   zones, transport operations, and a site-dependent field profile.</figcaption>
 </figure>
 

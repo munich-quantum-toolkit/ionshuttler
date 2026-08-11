@@ -38,10 +38,19 @@ def test_state_normalizes_tuple_backed_mappings_and_is_hashable() -> None:
         pzs_busy_until=(("pz_1", 2), ("pz_0", 0)),
         time=2,
     )
+    equivalent_state = State(
+        positions=((0, 1), (1, 4)),
+        completed_gates=frozenset({1}),
+        in_progress_gates=((2, 4), (3, 5)),
+        ions_busy_until=((0, 0), (1, 3)),
+        pzs_busy_until=(("pz_0", 0), ("pz_1", 2)),
+        time=2,
+    )
 
     assert state.positions == ((0, 1), (1, 4))
     assert state.in_progress_gates == ((2, 4), (3, 5))
-    assert hash(state)
+    assert state == equivalent_state
+    assert hash(state) == hash(equivalent_state)
     assert to_dict(state) == {0: 1, 1: 4}
     assert in_progress_dict(state) == {2: 4, 3: 5}
     assert ions_busy_dict(state) == {0: 0, 1: 3}
@@ -54,6 +63,22 @@ def test_state_metadata_uses_site_occupancy() -> None:
 
     assert to_site_occupancy(state, 5) == [None, 0, 1, None, None]
     assert to_metadata_dict(state, 5) == {"site_occupancy": [None, 0, 1, None, None]}
+
+
+@pytest.mark.parametrize("position", [-1, 5])
+def test_state_metadata_rejects_positions_outside_the_architecture(position: int) -> None:
+    """Report the ion and invalid site instead of indexing outside the array."""
+    state = State(
+        positions=((3, position),),
+        completed_gates=frozenset(),
+        in_progress_gates=(),
+        ions_busy_until=((3, 0),),
+        pzs_busy_until=(),
+        time=0,
+    )
+
+    with pytest.raises(ValueError, match=rf"ion 3 occupies invalid site {position}"):
+        to_site_occupancy(state, 5)
 
 
 @pytest.mark.parametrize(

@@ -399,22 +399,20 @@ def _good_moves(
     if not considered_ions:
         return []
 
+    zone_sites = tuple(site for sites in (architecture.processing_zones or {}).values() for site in sites)
     moves: list[ActionCandidate] = []
     for ion, position in state.positions:
         if ion in busy_ions or ion not in considered_ions or architecture.get_processing_zone(position) is not None:
             continue
-        distance = _distance_to_processing_zone(position, architecture)
+        distance = _distance_to_processing_zone(position, zone_sites)
         if distance is None:
             continue
         for delta in (-1, 1):
             destination = position + delta
-            next_distance = _distance_to_processing_zone(destination, architecture)
-            if (
-                0 <= destination < architecture.num_sites
-                and destination not in occupied
-                and next_distance is not None
-                and next_distance < distance
-            ):
+            if not 0 <= destination < architecture.num_sites:
+                continue
+            next_distance = _distance_to_processing_zone(destination, zone_sites)
+            if destination not in occupied and next_distance is not None and next_distance < distance:
                 moves.append((
                     Shuttle(
                         ion=ion,
@@ -435,6 +433,7 @@ def _good_moves(
                 pos_b,
                 considered_ions,
                 architecture,
+                zone_sites,
             ):
                 moves.append((
                     PhysicalSwap(
@@ -475,8 +474,7 @@ def _considered_ions(
     return ions
 
 
-def _distance_to_processing_zone(position: int, architecture: Architecture) -> int | None:
-    zone_sites = [site for sites in (architecture.processing_zones or {}).values() for site in sites]
+def _distance_to_processing_zone(position: int, zone_sites: tuple[int, ...]) -> int | None:
     return min((abs(position - site) for site in zone_sites), default=None)
 
 
@@ -487,6 +485,7 @@ def _is_good_swap(
     pos_b: int,
     considered_ions: set[int],
     architecture: Architecture,
+    zone_sites: tuple[int, ...],
 ) -> bool:
     improvements = 0
     for ion, current_position, next_position in (
@@ -497,8 +496,8 @@ def _is_good_swap(
             continue
         if architecture.get_processing_zone(current_position) is not None:
             continue
-        current_distance = _distance_to_processing_zone(current_position, architecture)
-        next_distance = _distance_to_processing_zone(next_position, architecture)
+        current_distance = _distance_to_processing_zone(current_position, zone_sites)
+        next_distance = _distance_to_processing_zone(next_position, zone_sites)
         if current_distance is None or next_distance is None:
             continue
         if next_distance > current_distance:
@@ -517,7 +516,7 @@ def _gate_ions_are_free(gate: GateAction, busy_ions: set[int]) -> bool:
 
 
 def _gate_duration(gate: GateAction) -> int:
-    duration = vars(gate).get("duration")
+    duration = getattr(gate, "duration", None)
     if isinstance(duration, bool) or not isinstance(duration, int):
         msg = "gate action does not define an integer duration"
         raise TypeError(msg)

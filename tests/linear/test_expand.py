@@ -166,7 +166,7 @@ def test_expand_carries_the_exact_gate_id_for_equal_actions() -> None:
         predecessors={4: frozenset(), 7: frozenset({4}), 9: frozenset()},
     )
 
-    gate_children = [(action, gate_id, child) for action, gate_id, child in children if gate_id]
+    gate_children = [(action, gate_id, child) for action, gate_id, child in children if gate_id is not None]
     assert [(action, gate_id) for action, gate_id, _ in gate_children] == [
         (first, 4),
         (independent, 9),
@@ -235,14 +235,6 @@ def test_uninformed_generation_is_the_remaining_full_action_set() -> None:
     architecture = Architecture(num_sites=5, processing_zones={"pz": [2, 3]})
     state = make_state(((0, 0), (1, 4)), pzs_busy=(("pz", 0),))
     gates = {0: Rzz(ion_a=0, ion_b=1, theta=1.0)}
-    full = generate_actions_by_mode(state, architecture, [0], gates)
-    informed = generate_actions_by_mode(
-        state,
-        architecture,
-        [0],
-        gates,
-        options=ExpansionOptions(mode=GenerationMode.INFORMED),
-    )
     uninformed = generate_actions_by_mode(
         state,
         architecture,
@@ -251,7 +243,7 @@ def test_uninformed_generation_is_the_remaining_full_action_set() -> None:
         options=ExpansionOptions(mode=GenerationMode.UNINFORMED),
     )
 
-    assert uninformed == [action for action in full if action not in informed]
+    assert uninformed == []
 
 
 def test_generation_accepts_an_additional_gate_action_type() -> None:

@@ -10,10 +10,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 SINGLE_QUBIT_GATE_NAMES = frozenset({"rx", "ry", "rz"})
 TWO_QUBIT_GATE_NAMES = frozenset({"rxx", "ryy", "rzz"})
 GATE_NAMES = SINGLE_QUBIT_GATE_NAMES | TWO_QUBIT_GATE_NAMES
+HeuristicMode = Literal["quality", "zero"]
 
 
 @dataclass(frozen=True)
@@ -116,7 +118,10 @@ class SearchConfig:
 
     A finite ``horizon`` plans a few gates at a time and commits
     ``committed_gates`` before planning again. Set ``horizon`` to ``None`` to
-    search the complete circuit at once.
+    search the complete circuit at once. The default ``quality`` heuristic
+    finds useful schedules faster but may overestimate their remaining time.
+    The ``zero`` heuristic is admissible and supports exact search when all
+    other limits and shortcuts are also disabled.
     """
 
     horizon: int | None = 3
@@ -127,6 +132,7 @@ class SearchConfig:
     max_frontier_size: int | None = 1000
     max_compile_time: float | None = 1800.0
     use_dependencies: bool = True
+    heuristic_mode: HeuristicMode = "quality"
 
     def __post_init__(self) -> None:
         """Ensure all search limits are meaningful and mutually consistent.
@@ -159,6 +165,12 @@ class SearchConfig:
             if not isinstance(getattr(self, name), bool):
                 msg = f"{name} must be a boolean"
                 raise TypeError(msg)
+        if not isinstance(self.heuristic_mode, str):
+            msg = "heuristic_mode must be a string"
+            raise TypeError(msg)
+        if self.heuristic_mode not in {"quality", "zero"}:
+            msg = "heuristic_mode must be 'quality' or 'zero'"
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True)
@@ -188,6 +200,11 @@ def _normalize_virtual_gates(gate_names: object) -> frozenset[str]:
 
 
 def _require_integer_at_least(value: object, name: str, *, minimum: int) -> None:
+    """Require a non-Boolean integer at or above a minimum.
+
+    Raises:
+        ValueError: If the value is Boolean, noninteger, or below ``minimum``.
+    """
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         msg = f"{name} must be an integer >= {minimum}"
         raise ValueError(msg)
@@ -199,6 +216,7 @@ __all__ = [
     "TWO_QUBIT_GATE_NAMES",
     "GateTiming",
     "HardwareTiming",
+    "HeuristicMode",
     "LinearCompilerConfig",
     "SearchConfig",
     "TransportTiming",

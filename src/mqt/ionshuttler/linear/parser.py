@@ -28,7 +28,7 @@ GateRecord = tuple[str, float, tuple[int, ...]]
 DependencyBreaks = dict[int, frozenset[int]]
 CircuitInput = QuantumCircuit | str | Path
 
-_DEFAULT_GATE_TIMING = GateTiming(rxx=1, ryy=1, rzz=1)
+_DEFAULT_GATE_TIMING = GateTiming()
 _SINGLE_GATE_PATTERN = re.compile(r"^(rx|ry|rz)\((.+)\)\s+q\[(\d+)\];$")
 _TWO_QUBIT_GATE_PATTERN = re.compile(r"^(rxx|ryy|rzz)\((.+)\)\s+q\[(\d+)\],\s*q\[(\d+)\];$")
 _QASM2_QREG_PATTERN = re.compile(r"^qreg\s+q\[(\d+)\];$")
@@ -231,7 +231,7 @@ def _records_from_qasm(qasm: str) -> tuple[int, list[GateRecord], DependencyBrea
                 continue
             msg = f"Unsupported QASM syntax: {line}"
             raise ValueError(msg)
-        if line in {"OPENQASM 2.0;", "OPENQASM 3;"}:
+        if line in {"OPENQASM 2.0;", "OPENQASM 3;", "OPENQASM 3.0;"}:
             header_seen = True
             continue
         if line in {'include "qelib1.inc";', 'include "stdgates.inc";'}:
@@ -403,7 +403,8 @@ def _resolve_gate_timing(
     if gate_durations is None:
         return _DEFAULT_GATE_TIMING
     normalized = {gate_name.lower(): duration for gate_name, duration in gate_durations.items()}
-    durations = {gate_name: _duration_override(gate_name, normalized) for gate_name in sorted(GATE_NAMES)}
+    durations = _DEFAULT_GATE_TIMING.gate_durations
+    durations.update({gate_name: duration for gate_name, duration in normalized.items() if gate_name in GATE_NAMES})
     return GateTiming(
         rx=durations["rx"],
         ry=durations["ry"],
@@ -412,22 +413,6 @@ def _resolve_gate_timing(
         ryy=durations["ryy"],
         rzz=durations["rzz"],
     )
-
-
-def _duration_override(gate_name: str, durations: Mapping[str, int]) -> int:
-    default = 0 if gate_name == "rz" else 1
-    duration = durations.get(gate_name, default)
-    if isinstance(duration, bool) or not isinstance(duration, int):
-        msg = f"duration for gate {gate_name!r} must be an integer"
-        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Keep public validation behavior.
-    if gate_name == "rz":
-        if duration != 0:
-            msg = "duration for virtual gate 'rz' must be 0"
-            raise ValueError(msg)
-    elif duration < 1:
-        msg = f"duration for gate {gate_name!r} must be >= 1"
-        raise ValueError(msg)
-    return duration
 
 
 def _safe_eval(expression: str) -> float:

@@ -20,10 +20,15 @@ import pytest
 import mqt.ionshuttler.linear.search as search_module
 from mqt.ionshuttler.linear.actions import AdvanceTime, Rx, Ry, Rzz, Shuttle
 from mqt.ionshuttler.linear.architecture import Architecture
-from mqt.ionshuttler.linear.config import GateTiming, LinearCompilerConfig, SearchConfig
+from mqt.ionshuttler.linear.config import GateTiming, HeuristicMode, LinearCompilerConfig, SearchConfig
 from mqt.ionshuttler.linear.expand import replay_path
 from mqt.ionshuttler.linear.parser import parse_qasm_file
-from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
+from mqt.ionshuttler.linear.result import (
+    CompilationResult,
+    CompilationStatus,
+    DDInsertionRecord,
+    GlobalDDRecord,
+)
 from mqt.ionshuttler.linear.state import State, create_initial_state, has_pending_timed_work
 
 if TYPE_CHECKING:
@@ -40,6 +45,7 @@ def exhaustive_config(
     num_solutions: int = 1,
     max_frontier_size: int | None = None,
     max_compile_time: float | None = None,
+    heuristic_mode: HeuristicMode = "quality",
 ) -> LinearCompilerConfig:
     """Build an exhaustive-search configuration for focused tests."""
     return LinearCompilerConfig(
@@ -51,6 +57,7 @@ def exhaustive_config(
             num_solutions=num_solutions,
             max_frontier_size=max_frontier_size,
             max_compile_time=max_compile_time,
+            heuristic_mode=heuristic_mode,
         )
     )
 
@@ -78,6 +85,25 @@ def assert_replays(
     )
 
 
+def test_zero_heuristic_compiles_with_exact_search_profile() -> None:
+    """Compile a small circuit with every quality-oriented shortcut disabled."""
+    architecture = Architecture(num_sites=1)
+    initial_state = create_initial_state(1, architecture)
+    gate = Rx(ion=0, theta=0.5)
+
+    result = search_module.search(
+        initial_state,
+        [0],
+        {0: gate},
+        architecture,
+        config=exhaustive_config(heuristic_mode="zero"),
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.score == 1
+    assert result.path == [gate, AdvanceTime()]
+
+
 def test_exhaustive_search_schedules_and_completes_a_gate() -> None:
     """Start an available gate and wait until it finishes."""
     architecture = Architecture(num_sites=2)
@@ -98,6 +124,44 @@ def test_exhaustive_search_schedules_and_completes_a_gate() -> None:
     assert result.score == 1
     assert_replays(result, initial_state, architecture, [0], gates)
     assert initial_state.completed_gates == frozenset()
+
+
+def test_exhaustive_search_preserves_additional_result_records(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep result extensions when public search metadata is attached."""
+    architecture = Architecture(num_sites=1)
+    initial_state = create_initial_state(1, architecture)
+    dd_record = DDInsertionRecord(
+        ion=0,
+        window=(0, 1),
+        scheme_name="echo",
+        gate_timesteps=(0,),
+    )
+    global_record = GlobalDDRecord(
+        scheme_name="periodic",
+        pulse_timesteps=(0,),
+        spacing=1,
+    )
+    internal_result = CompilationResult(
+        status=CompilationStatus.SUCCESS,
+        path=[],
+        num_timesteps=0,
+        dd_insertions=(dd_record,),
+        global_dd_records=(global_record,),
+    )
+    monkeypatch.setattr(search_module, "_search_with_budget", lambda *_args: internal_result)
+
+    result = search_module.exhaustive_search(
+        initial_state,
+        architecture,
+        [],
+        {},
+        config=exhaustive_config(),
+    )
+
+    assert result.dd_insertions == (dd_record,)
+    assert result.global_dd_records == (global_record,)
+    assert result.architecture is architecture
+    assert result.initial_state is initial_state
 
 
 def test_two_qubit_gate_routes_ions_into_one_processing_zone() -> None:

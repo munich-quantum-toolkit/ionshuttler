@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
 from math import pi
 
 import pytest
@@ -22,10 +23,32 @@ from mqt.ionshuttler.linear.actions import (
     Rz,
     Rzz,
     Shuttle,
+    TransportAction,
 )
 from mqt.ionshuttler.linear.architecture import Architecture
 from mqt.ionshuttler.linear.state import State, has_pending_timed_work
 from mqt.ionshuttler.linear.validation import is_action_valid, is_adjacent, is_transport_layer_valid
+
+
+@dataclass(frozen=True)
+class _ParkingTransfer(TransportAction):
+    """Move an ion to a hardware-defined parking site."""
+
+    ion: int
+    destination: int
+    enabled: bool = True
+    duration: int = 1
+
+    def is_valid(self, state: State, architecture: Architecture) -> bool:
+        """Return whether the parking transfer is enabled and stays on the device."""
+        return self.enabled and self.ion in dict(state.positions) and 0 <= self.destination < architecture.num_sites
+
+    def apply(self, state: State, architecture: Architecture) -> State:
+        """Move the ion to its parking site."""
+        del architecture
+        positions = dict(state.positions)
+        positions[self.ion] = self.destination
+        return replace(state, positions=tuple(sorted(positions.items())))
 
 
 def _state(
@@ -36,6 +59,7 @@ def _state(
     in_progress_gates: tuple[tuple[int, int], ...] = (),
     time: int = 0,
 ) -> State:
+    """Build a state with free ions and a free processing zones by default."""
     return State(
         positions=positions,
         completed_gates=frozenset(),
@@ -174,5 +198,28 @@ def test_transport_layer_rejects_conflicting_or_repeated_actions() -> None:
     assert not is_transport_layer_valid(
         state,
         (Shuttle(ion=0, src=0, dst=1), Shuttle(ion=0, src=0, dst=1)),
+        architecture,
+    )
+    assert not is_transport_layer_valid(
+        _state(((0, 0), (1, 1))),
+        (Shuttle(ion=0, src=0, dst=1), Shuttle(ion=1, src=1, dst=0)),
+        architecture,
+    )
+
+
+def test_transport_layer_uses_custom_action_validity_and_transition() -> None:
+    """Honor custom transport rules and include their final positions in conflicts."""
+    architecture = Architecture(num_sites=4)
+    state = _state(((0, 0), (1, 2)), pzs_busy_until=(("all_sites", 0),))
+
+    assert is_transport_layer_valid(state, (_ParkingTransfer(ion=0, destination=1),), architecture)
+    assert not is_transport_layer_valid(
+        state,
+        (_ParkingTransfer(ion=0, destination=1, enabled=False),),
+        architecture,
+    )
+    assert not is_transport_layer_valid(
+        state,
+        (_ParkingTransfer(ion=0, destination=2),),
         architecture,
     )

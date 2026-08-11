@@ -89,6 +89,16 @@ class CompilationResult:
     global_dd_records: tuple[GlobalDDRecord, ...] = ()
     explored_nodes: int | None = None
 
+    def __post_init__(self) -> None:
+        """Ensure state metadata can be interpreted unambiguously.
+
+        Raises:
+            ValueError: If an initial state is provided without its architecture.
+        """
+        if self.initial_state is not None and self.architecture is None:
+            msg = "architecture is required when initial_state is provided"
+            raise ValueError(msg)
+
     @classmethod
     def from_dict(
         cls,
@@ -225,7 +235,7 @@ class CompilationResult:
     def save(
         self,
         filename: str | Path,
-        directory: str | Path = "../outputs/results/json/",
+        directory: str | Path = "outputs/results/json",
     ) -> Path:
         """Write the result to a UTF-8 JSON file.
 
@@ -316,7 +326,7 @@ def _two_qubit_gate_from_dict(action_type: str, data: dict[str, object]) -> Acti
         ion_a=_require_int(data, "ion_a"),
         ion_b=_require_int(data, "ion_b"),
         theta=_require_number(data, "theta"),
-        duration=_require_positive_duration(data),
+        duration=_require_positive_duration(data, default=2),
     )
 
 
@@ -537,8 +547,8 @@ def _require_nonnegative_duration(data: Mapping[str, object], *, default: int) -
     return duration
 
 
-def _require_positive_duration(data: Mapping[str, object]) -> int:
-    duration = _require_int_with_default(data, "duration", 1)
+def _require_positive_duration(data: Mapping[str, object], *, default: int = 1) -> int:
+    duration = _require_int_with_default(data, "duration", default)
     if duration < 1:
         msg = "action duration must be >= 1"
         raise ValueError(msg)

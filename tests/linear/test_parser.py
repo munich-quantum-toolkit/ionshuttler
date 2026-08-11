@@ -60,11 +60,12 @@ def test_parse_qasm2_supports_native_gate_set_and_arithmetic() -> None:
     ]
 
 
-def test_parse_limited_qasm3_ignores_metadata_and_trailing_measurements() -> None:
+@pytest.mark.parametrize("version", ["3", "3.0"])
+def test_parse_limited_qasm3_ignores_metadata_and_trailing_measurements(version: str) -> None:
     """Accept QASM 3 declarations while ignoring barriers and final measurements."""
     num_qubits, gates = parse_qasm_to_gate_sequence(
-        """
-        OPENQASM 3;
+        f"""
+        OPENQASM {version};
         include "stdgates.inc";
         qubit[2] q;
         bit[2] c;
@@ -132,17 +133,33 @@ def test_duration_overrides_keep_unspecified_gate_defaults() -> None:
     assert gates[0].duration == 2
     assert gates[2] == Rz(ion=2, theta=math.pi / 8)
     assert gates[3].duration == 4
-    assert gates[4].duration == 1
+    assert gates[4].duration == 2
 
     with pytest.raises(ValueError, match="virtual gate 'rz'"):
         parse_qasm_to_gate_sequence(QASM2_ALL_GATES, gate_durations={"rz": 1})
 
 
-@pytest.mark.parametrize("duration", [0, -1, True, 1.5])
-def test_duration_overrides_reject_invalid_physical_durations(duration: object) -> None:
+def test_duration_overrides_allow_zero_duration_physical_gates() -> None:
+    """Keep compact duration overrides consistent with the hardware timing model."""
+    with pytest.warns(UserWarning, match="physical single-qubit gate"):
+        _, gates = parse_qasm_to_gate_sequence(QASM2_ALL_GATES, gate_durations={"rx": 0})
+
+    assert isinstance(gates[0], Rx)
+    assert gates[0].duration == 0
+    assert not gates[0].virtual
+
+
+@pytest.mark.parametrize(
+    ("duration", "error_type"),
+    [(-1, ValueError), (True, ValueError), (1.5, TypeError)],
+)
+def test_duration_overrides_reject_invalid_physical_durations(
+    duration: object,
+    error_type: type[Exception],
+) -> None:
     """Reject physical gate durations that cannot be scheduled."""
     durations = cast("dict[str, int]", {"rx": duration})
-    with pytest.raises(ValueError, match="duration for gate"):
+    with pytest.raises(error_type, match="duration"):
         parse_qasm_to_gate_sequence(QASM2_ALL_GATES, gate_durations=durations)
 
 

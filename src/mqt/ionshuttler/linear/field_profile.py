@@ -105,7 +105,13 @@ class FieldProfile:
                 default_field=float(default_field),
             )
 
-        inferred_num_sites = num_sites if num_sites is not None else 0
+        if num_sites is None:
+            if not mapping:
+                msg = "num_sites is required when loading an empty field_profile mapping"
+                raise ValueError(msg)
+            inferred_num_sites = max(int(site) for site in mapping) + 1
+        else:
+            inferred_num_sites = num_sites
         return cls(
             num_sites=inferred_num_sites,
             site_field=tuple(

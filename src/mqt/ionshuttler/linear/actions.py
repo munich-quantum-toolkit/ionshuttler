@@ -86,7 +86,7 @@ class SchedulableAction(Action):
         Raises:
             TypeError: If a subclass does not define an integer duration.
         """
-        duration = vars(self).get("duration")
+        duration = getattr(self, "duration", None)
         if isinstance(duration, bool) or not isinstance(duration, int):
             msg = "action does not define a validated integer duration"
             raise TypeError(msg)
@@ -372,7 +372,7 @@ class Rxx(TwoQubitGate):
     """Rotate two ions around the xx axis."""
 
     theta: float
-    duration: int = 1
+    duration: int = 2
 
 
 @dataclass(frozen=True)
@@ -380,7 +380,7 @@ class Ryy(TwoQubitGate):
     """Rotate two ions around the yy axis."""
 
     theta: float
-    duration: int = 1
+    duration: int = 2
 
 
 @dataclass(frozen=True)
@@ -388,7 +388,7 @@ class Rzz(TwoQubitGate):
     """Rotate two ions around the zz axis."""
 
     theta: float
-    duration: int = 1
+    duration: int = 2
 
 
 @dataclass(frozen=True)
@@ -405,8 +405,7 @@ class GlobalPulse(GateAction):
 
     def apply(self, state: State, architecture: Architecture) -> State:
         """Return the state with hardware availability unchanged."""
-        del architecture
-        assert self.duration >= 1
+        del self, architecture
         return state
 
     def to_dict(self) -> dict[str, object]:

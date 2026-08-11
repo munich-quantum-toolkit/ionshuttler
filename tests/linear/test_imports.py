@@ -10,31 +10,16 @@
 from __future__ import annotations
 
 import importlib
+import pkgutil
 
-import pytest
 
-
-@pytest.mark.parametrize(
-    "module_name",
-    [
-        "mqt.ionshuttler.linear",
-        "mqt.ionshuttler.linear.actions",
-        "mqt.ionshuttler.linear.architecture",
-        "mqt.ionshuttler.linear.compiler",
-        "mqt.ionshuttler.linear.config",
-        "mqt.ionshuttler.linear.cost",
-        "mqt.ionshuttler.linear.expand",
-        "mqt.ionshuttler.linear.field_profile",
-        "mqt.ionshuttler.linear.parser",
-        "mqt.ionshuttler.linear.result",
-        "mqt.ionshuttler.linear.search",
-        "mqt.ionshuttler.linear.state",
-        "mqt.ionshuttler.linear.validation",
-    ],
-)
-def test_linear_module_imports(module_name: str) -> None:
+def test_linear_module_imports() -> None:
     """Import every Linear module without optional downstream dependencies."""
-    assert importlib.import_module(module_name) is not None
+    package = importlib.import_module("mqt.ionshuttler.linear")
+    module_names = [module.name for module in pkgutil.iter_modules(package.__path__, prefix=f"{package.__name__}.")]
+
+    assert module_names
+    assert all(importlib.import_module(module_name) is not None for module_name in module_names)
 
 
 def test_package_exports_only_the_supported_facade() -> None:

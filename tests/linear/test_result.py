@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -40,14 +41,16 @@ from mqt.ionshuttler.linear.state import State, create_initial_state
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from pathlib import Path
 
 
 @dataclass(frozen=True)
 class _Marker(Action):
+    """Inert action used to exercise an explicitly supplied result decoder."""
+
     label: str
 
     def apply(self, state: State, architecture: Architecture) -> State:
+        """Return an unchanged copy of the state."""
         del architecture
         return replace(state)
 
@@ -95,7 +98,7 @@ def test_result_exports_schedule_and_metadata() -> None:
                 "ion_b": 1,
                 "theta": 0.5,
                 "start_time": 1,
-                "duration": 1,
+                "duration": 2,
             },
         ],
         "dd_insertions": [],
@@ -136,6 +139,22 @@ def test_result_round_trips_every_builtin_action() -> None:
     assert loaded.wall_clock_s == pytest.approx(0.25)
     assert loaded.score == 7
     assert loaded.to_dict() == result.to_dict()
+
+
+def test_two_qubit_action_without_serialized_duration_uses_hardware_default() -> None:
+    """Use the standard two-timestep duration when serialized data omits the field."""
+    loaded = CompilationResult.from_dict({
+        "actions": [
+            {
+                "type": "Rzz",
+                "ion_a": 0,
+                "ion_b": 1,
+                "theta": 0.5,
+            },
+        ],
+    })
+
+    assert loaded.path == [Rzz(ion_a=0, ion_b=1, theta=0.5)]
 
 
 def test_default_virtuality_is_omitted_but_nondefault_modes_are_explicit() -> None:
@@ -257,6 +276,37 @@ def test_result_save_and_load(tmp_path: Path) -> None:
     assert output_path == tmp_path / "schedule.json"
     assert output_path.read_text(encoding="utf-8") == result.to_json()
     assert loaded.to_dict() == result.to_dict()
+
+
+def test_result_save_uses_a_stable_working_directory_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep default result files beneath the current working directory."""
+    monkeypatch.chdir(tmp_path)
+    result = CompilationResult(
+        status=CompilationStatus.SUCCESS,
+        path=[],
+        num_timesteps=0,
+    )
+
+    output_path = result.save("schedule")
+
+    assert output_path == Path("outputs/results/json/schedule.json")
+    assert (tmp_path / output_path).is_file()
+
+
+def test_result_requires_architecture_for_initial_state() -> None:
+    """Reject initial-state metadata that has no hardware interpretation."""
+    initial_state = create_initial_state(1, Architecture(num_sites=1))
+
+    with pytest.raises(ValueError, match="architecture is required"):
+        CompilationResult(
+            status=CompilationStatus.SUCCESS,
+            path=[],
+            num_timesteps=0,
+            initial_state=initial_state,
+        )
 
 
 def test_result_omits_search_only_state_from_json() -> None:

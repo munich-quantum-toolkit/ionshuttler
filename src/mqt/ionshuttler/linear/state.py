@@ -83,9 +83,15 @@ def to_site_occupancy(state: State, num_sites: int) -> list[int | None]:
 
     Returns:
         Ion identifiers indexed by site, with ``None`` for empty sites.
+
+    Raises:
+        ValueError: If an ion position is outside the requested site range.
     """
     site_occupancy: list[int | None] = [None] * num_sites
     for ion, position in state.positions:
+        if not 0 <= position < num_sites:
+            msg = f"ion {ion} occupies invalid site {position}; expected a site within [0, {num_sites - 1}]"
+            raise ValueError(msg)
         site_occupancy[position] = ion
     return site_occupancy
 

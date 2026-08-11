@@ -70,8 +70,8 @@ class Architecture:
         return self._field_profile().field_at(site)
 
     def has_nontrivial_field_profile(self) -> bool:
-        """Return whether any site has a nonzero configured field."""
-        return any(value for _, value in self._field_profile().site_field)
+        """Return whether any site differs from the unit field profile."""
+        return _has_nontrivial_field_profile(self._field_profile())
 
     def sites_share_processing_zone(self, *sites: int) -> bool:
         """Return whether all supplied sites belong to one processing zone."""
@@ -95,7 +95,7 @@ class Architecture:
             },
         }
         field_profile = self._field_profile()
-        if field_profile.default_field - 1.0 or any(value - 1.0 for _, value in field_profile.site_field):
+        if _has_nontrivial_field_profile(field_profile):
             result["field_profile"] = field_profile.to_dict()
         return result
 
@@ -217,6 +217,13 @@ def _valid_two_qubit_site_pairs(
 ) -> tuple[tuple[int, int], ...]:
     return tuple(
         (left, right) for zone_sites in processing_zones.values() for left, right in combinations(zone_sites, 2)
+    )
+
+
+def _has_nontrivial_field_profile(field_profile: FieldProfile) -> bool:
+    return any(
+        value != 1.0  # ruff: ignore[float-equality-comparison] - One is the exact default field value.
+        for _, value in field_profile.site_field
     )
 
 

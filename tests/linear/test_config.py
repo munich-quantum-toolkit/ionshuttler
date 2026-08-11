@@ -16,6 +16,7 @@ import pytest
 from mqt.ionshuttler.linear.config import (
     GateTiming,
     HardwareTiming,
+    HeuristicMode,
     LinearCompilerConfig,
     SearchConfig,
     TransportTiming,
@@ -42,6 +43,7 @@ def test_compiler_config_uses_ready_to_run_defaults() -> None:
         max_frontier_size=1000,
         max_compile_time=1800.0,
         use_dependencies=True,
+        heuristic_mode="quality",
     )
 
 
@@ -109,3 +111,20 @@ def test_search_config_rejects_invalid_bounds(
     """Reject search settings that cannot define a bounded compilation."""
     with pytest.raises(ValueError, match=message):
         factory()
+
+
+def test_search_config_accepts_zero_heuristic() -> None:
+    """Allow an admissible zero estimate for exact search profiles."""
+    assert SearchConfig(heuristic_mode="zero").heuristic_mode == "zero"
+
+
+def test_search_config_rejects_unknown_heuristic() -> None:
+    """Reject heuristic selectors the compiler does not understand."""
+    with pytest.raises(ValueError, match="'quality' or 'zero'"):
+        SearchConfig(heuristic_mode=cast("HeuristicMode", "distance"))
+
+
+def test_search_config_requires_a_string_heuristic_selector() -> None:
+    """Report a clear type error for malformed heuristic selectors."""
+    with pytest.raises(TypeError, match="must be a string"):
+        SearchConfig(heuristic_mode=cast("HeuristicMode", 0))

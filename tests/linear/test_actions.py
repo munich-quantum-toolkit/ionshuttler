@@ -17,6 +17,7 @@ import pytest
 from mqt.ionshuttler.linear.actions import (
     Action,
     AdvanceTime,
+    GateAction,
     GateSpec,
     GlobalPulse,
     PhysicalAction,
@@ -33,6 +34,7 @@ from mqt.ionshuttler.linear.actions import (
     TwoQubitGate,
 )
 from mqt.ionshuttler.linear.architecture import Architecture
+from mqt.ionshuttler.linear.expand import apply
 from mqt.ionshuttler.linear.state import State
 from mqt.ionshuttler.linear.validation import is_action_valid
 
@@ -56,6 +58,19 @@ class _CustomAction(PhysicalAction):
         return replace(state, ions_busy_until=tuple(sorted(ions_busy.items())))
 
 
+@dataclass(frozen=True, slots=True)
+class _CalibrationGate(GateAction):
+    """Example custom gate with a fixed two-timestep duration."""
+
+    duration: int = 2
+
+    def apply(self, state: State, architecture: Architecture) -> State:
+        """Return an unchanged state after reading the validated duration."""
+        del architecture
+        assert self._duration() == self.duration
+        return state
+
+
 def test_action_values_are_immutable_and_hashable() -> None:
     """Keep actions stable so the compiler can compare and store them reliably."""
     actions: tuple[SchedulableAction, ...] = (
@@ -73,6 +88,23 @@ def test_action_values_are_immutable_and_hashable() -> None:
 
     assert len(set(actions)) == len(actions)
     assert Shuttle(ion=0, src=1, dst=2) == actions[0]
+
+
+def test_custom_gate_duration_is_available_to_the_compiler() -> None:
+    """Read the duration exposed by a custom hardware gate."""
+    architecture = Architecture(num_sites=1)
+    state = State(
+        positions=((0, 0),),
+        completed_gates=frozenset(),
+        in_progress_gates=(),
+        ions_busy_until=((0, 0),),
+        pzs_busy_until=(("all_sites", 0),),
+        time=0,
+    )
+
+    updated = apply(state, architecture, _CalibrationGate(), gate_id=4)
+
+    assert updated.in_progress_gates == ((4, 2),)
 
 
 def test_scheduled_actions_reject_invalid_durations() -> None:
@@ -201,7 +233,7 @@ def test_advance_time_owns_scheduler_clock_and_completion_transition() -> None:
     assert updated.pzs_busy_until == state.pzs_busy_until
 
 
-def test_action_serialization_is_intrinsic_and_source_compatible() -> None:
+def test_action_serialization_uses_each_actions_intrinsic_data() -> None:
     """Let each action describe itself while omitting an unchanged virtuality default."""
     assert Shuttle(ion=0, src=1, dst=2).to_dict() == {
         "type": "Shuttle",

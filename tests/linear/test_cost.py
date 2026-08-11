@@ -41,6 +41,7 @@ def test_cost_is_elapsed_schedule_time() -> None:
 def test_distance_chooses_the_closest_valid_site_pair() -> None:
     """Allow either ion ordering when choosing a processing-zone pair."""
     assert min_distance_to_valid_pair(0, 4, ((1, 3), (5, 6))) == 1
+    assert min_distance_to_valid_pair(0, 4, ()) == 0
 
 
 def test_two_qubit_estimate_uses_any_two_sites_in_one_zone() -> None:
