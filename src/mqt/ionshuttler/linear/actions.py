@@ -5,17 +5,24 @@
 #
 # Licensed under the MIT License
 
-"""Actions supported by the Linear hardware model and compiler."""
+"""Actions supported by the Linear hardware model and compiler.
+
+Malformed serialized action values raise ``ValueError`` because they represent
+invalid saved data rather than incorrect Python API argument types.
+"""
 
 from __future__ import annotations
 
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import MISSING, dataclass, field, fields, replace
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
+
     from mqt.ionshuttler.linear.architecture import Architecture
+    from mqt.ionshuttler.linear.config import GateTiming, TransportTiming
     from mqt.ionshuttler.linear.state import State
 
 
@@ -30,6 +37,41 @@ class Action(ABC):
     """
 
     individually_unconstrained: ClassVar[bool] = True
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, object]) -> Action:
+        """Restore an action from its serialized dataclass fields.
+
+        Actions containing nested values can override this method.
+
+        Returns:
+            The restored action.
+
+        Raises:
+            ValueError: If the saved fields cannot construct the action.
+        """
+        values = {model_field.name: data[model_field.name] for model_field in fields(cls) if model_field.name in data}
+        constructor = cast("Any", cls)
+        try:
+            return cast("Action", constructor(**values))
+        except TypeError as error:
+            msg = f"invalid serialized {cls.__name__} action"
+            raise ValueError(msg) from error
+
+    @classmethod
+    def available_actions(
+        cls,
+        state: State,
+        architecture: Architecture,
+        transport_timing: TransportTiming,
+    ) -> Iterable[Action]:
+        """Return instances this action type makes available in a given state.
+
+        Action types that are not generated directly by the compiler return no
+        instances by default.
+        """
+        del cls, state, architecture, transport_timing
+        return ()
 
     def is_valid(self, state: State, architecture: Architecture) -> bool:
         """Return whether this action can start in the current state.
@@ -117,6 +159,43 @@ class Shuttle(TransportAction):
     dst: int
     duration: int = 1
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, object]) -> Action:
+        """Restore a shuttle from serialized fields.
+
+        Returns:
+            The restored shuttle.
+        """
+        return cls(
+            ion=_require_int(data, "ion"),
+            src=_require_int(data, "src"),
+            dst=_require_int(data, "dst"),
+            duration=_require_duration(data, default=1),
+        )
+
+    @classmethod
+    def available_actions(
+        cls,
+        state: State,
+        architecture: Architecture,
+        transport_timing: TransportTiming,
+    ) -> Iterable[Action]:
+        """Return shuttles to adjacent empty sites for every free ion."""
+        occupied = {position for _, position in state.positions}
+        busy_ions = {ion for ion, free_time in state.ions_busy_until if free_time > state.time}
+        return (
+            cls(
+                ion=ion,
+                src=position,
+                dst=destination,
+                duration=transport_timing.shuttle,
+            )
+            for ion, position in state.positions
+            if ion not in busy_ions
+            for destination in (position - 1, position + 1)
+            if 0 <= destination < architecture.num_sites and destination not in occupied
+        )
+
     def is_valid(self, state: State, architecture: Architecture) -> bool:
         """Return whether the ion can move into an adjacent empty site."""
         positions = dict(state.positions)
@@ -155,6 +234,45 @@ class PhysicalSwap(TransportAction):
     pos_a: int
     pos_b: int
     duration: int = 1
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, object]) -> Action:
+        """Restore a physical swap from serialized fields.
+
+        Returns:
+            The restored swap.
+        """
+        return cls(
+            ion_a=_require_int(data, "ion_a"),
+            ion_b=_require_int(data, "ion_b"),
+            pos_a=_require_int(data, "pos_a"),
+            pos_b=_require_int(data, "pos_b"),
+            duration=_require_duration(data, default=1),
+        )
+
+    @classmethod
+    def available_actions(
+        cls,
+        state: State,
+        architecture: Architecture,
+        transport_timing: TransportTiming,
+    ) -> Iterable[Action]:
+        """Return adjacent swaps between pairs of free ions."""
+        del architecture
+        busy_ions = {ion for ion, free_time in state.ions_busy_until if free_time > state.time}
+        free_ions = [(ion, position) for ion, position in state.positions if ion not in busy_ions]
+        return (
+            cls(
+                ion_a=ion_a,
+                ion_b=ion_b,
+                pos_a=pos_a,
+                pos_b=pos_b,
+                duration=transport_timing.swap,
+            )
+            for index, (ion_a, pos_a) in enumerate(free_ions)
+            for ion_b, pos_b in free_ions[index + 1 :]
+            if is_adjacent(pos_a, pos_b)
+        )
 
     def is_valid(self, state: State, architecture: Architecture) -> bool:
         """Return whether two free ions occupy the specified adjacent sites."""
@@ -197,6 +315,25 @@ class PhysicalSwap(TransportAction):
 class GateAction(PhysicalAction):
     """A gate operation supported by the hardware model."""
 
+    circuit_name: ClassVar[str | None] = None
+    parameter_names: ClassVar[tuple[str, ...]] = ()
+
+    @classmethod
+    def from_instruction(
+        cls,
+        ions: tuple[int, ...],
+        parameters: tuple[float, ...],
+        timing: GateTiming,
+    ) -> GateAction:
+        """Create a gate from frontend-independent circuit operands.
+
+        Raises:
+            ValueError: If the gate type does not support circuit lowering.
+        """
+        del ions, parameters, timing
+        msg = f"gate type {cls.__name__} does not define circuit lowering"
+        raise ValueError(msg)
+
 
 @dataclass(frozen=True)
 class GateSpec:
@@ -218,6 +355,47 @@ class SingleQubitGate(GateAction):
 
     ion: int
     virtual: bool = field(default=False, kw_only=True)
+    parameter_names: ClassVar[tuple[str, ...]] = ("theta",)
+
+    @classmethod
+    def from_instruction(
+        cls,
+        ions: tuple[int, ...],
+        parameters: tuple[float, ...],
+        timing: GateTiming,
+    ) -> GateAction:
+        """Create a single-ion rotation from normalized circuit operands.
+
+        Returns:
+            The lowered gate.
+        """
+        _require_instruction_shape(cls, ions, parameters, num_ions=1)
+        name = _require_circuit_name(cls)
+        values: dict[str, object] = {
+            "ion": ions[0],
+            **dict(zip(cls.parameter_names, parameters, strict=True)),
+        }
+        if name in timing.gate_durations:
+            values["duration"] = timing.duration_for(name)
+            values["virtual"] = timing.is_virtual(name)
+        return _construct_gate_action(cls, values)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, object]) -> Action:
+        """Restore a single-ion gate from serialized fields.
+
+        Returns:
+            The restored gate.
+        """
+        default_duration = cast("int", _field_default(cls, "duration"))
+        default_virtual = cast("bool", _field_default(cls, "virtual"))
+        values: dict[str, object] = {
+            "ion": _require_int(data, "ion"),
+            "duration": _require_duration(data, default=default_duration, allow_zero=True),
+            "virtual": _require_bool(data, "virtual", default=default_virtual),
+        }
+        values.update({name: _require_number(data, name) for name in cls.parameter_names})
+        return _construct_action(cls, values)
 
     def __post_init__(self) -> None:
         """Validate virtuality and duration consistency.
@@ -285,10 +463,51 @@ class SingleQubitGate(GateAction):
 
 @dataclass(frozen=True)
 class TwoQubitGate(GateAction):
-    """A rotation acting on two ions in the same processing zone."""
+    """A gate acting on two ions in the same processing zone."""
 
     ion_a: int
     ion_b: int
+
+    @classmethod
+    def from_instruction(
+        cls,
+        ions: tuple[int, ...],
+        parameters: tuple[float, ...],
+        timing: GateTiming,
+    ) -> GateAction:
+        """Create a two-ion gate from normalized circuit operands.
+
+        Returns:
+            The lowered gate.
+        """
+        _require_instruction_shape(cls, ions, parameters, num_ions=2)
+        name = _require_circuit_name(cls)
+        values: dict[str, object] = {
+            "ion_a": ions[0],
+            "ion_b": ions[1],
+            **dict(zip(cls.parameter_names, parameters, strict=True)),
+        }
+        if name in timing.gate_durations:
+            values["duration"] = timing.duration_for(name)
+        return _construct_gate_action(cls, values)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, object]) -> Action:
+        """Restore a two-ion gate from serialized fields.
+
+        Returns:
+            The restored gate.
+        """
+        values: dict[str, object] = {
+            "ion_a": _require_int(data, "ion_a"),
+            "ion_b": _require_int(data, "ion_b"),
+            "duration": _require_duration(
+                data,
+                default=cast("int", _field_default(cls, "duration")),
+            ),
+        }
+        values.update({name: _require_number(data, name) for name in cls.parameter_names})
+        return _construct_action(cls, values)
 
     def is_valid(self, state: State, architecture: Architecture) -> bool:
         """Return whether both free ions occupy one free processing zone."""
@@ -340,6 +559,7 @@ class Rx(SingleQubitGate):
 
     theta: float
     duration: int = 1
+    circuit_name: ClassVar[str] = "rx"
 
 
 @dataclass(frozen=True)
@@ -348,6 +568,7 @@ class Ry(SingleQubitGate):
 
     theta: float
     duration: int = 1
+    circuit_name: ClassVar[str] = "ry"
 
 
 @dataclass(frozen=True)
@@ -362,6 +583,7 @@ class Rz(SingleQubitGate):
     theta: float
     duration: int = 0
     virtual: bool = field(default=True, kw_only=True)
+    circuit_name: ClassVar[str] = "rz"
 
 
 @dataclass(frozen=True)
@@ -370,6 +592,8 @@ class Rxx(TwoQubitGate):
 
     theta: float
     duration: int = 2
+    circuit_name: ClassVar[str] = "rxx"
+    parameter_names: ClassVar[tuple[str, ...]] = ("theta",)
 
 
 @dataclass(frozen=True)
@@ -378,6 +602,8 @@ class Ryy(TwoQubitGate):
 
     theta: float
     duration: int = 2
+    circuit_name: ClassVar[str] = "ryy"
+    parameter_names: ClassVar[tuple[str, ...]] = ("theta",)
 
 
 @dataclass(frozen=True)
@@ -386,6 +612,8 @@ class Rzz(TwoQubitGate):
 
     theta: float
     duration: int = 2
+    circuit_name: ClassVar[str] = "rzz"
+    parameter_names: ClassVar[tuple[str, ...]] = ("theta",)
 
 
 @dataclass(frozen=True)
@@ -399,6 +627,21 @@ class GlobalPulse(GateAction):
 
     gate: GateSpec
     duration: int = 1
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, object]) -> Action:
+        """Restore a global pulse and its nested gate description.
+
+        Returns:
+            The restored pulse.
+        """
+        return cls(
+            gate=GateSpec(
+                gate_name=_require_str(data, "gate_name"),
+                theta=_require_optional_number(data, "theta"),
+            ),
+            duration=_require_duration(data, default=1),
+        )
 
     def apply(self, state: State, architecture: Architecture) -> State:
         """Return the state with hardware availability unchanged."""
@@ -415,6 +658,28 @@ class GlobalPulse(GateAction):
         }
 
 
+DEFAULT_ACTION_TYPES: tuple[type[Action], ...] = (
+    PhysicalSwap,
+    Shuttle,
+    Rx,
+    Ry,
+    Rz,
+    Rzz,
+)
+
+BUILTIN_ACTION_TYPES: tuple[type[Action], ...] = (
+    PhysicalSwap,
+    Shuttle,
+    Rx,
+    Ry,
+    Rz,
+    Rxx,
+    Ryy,
+    Rzz,
+    GlobalPulse,
+)
+
+
 @dataclass(frozen=True)
 class AdvanceTime(SchedulableAction):
     """Move the schedule forward by one timestep.
@@ -425,6 +690,16 @@ class AdvanceTime(SchedulableAction):
     """
 
     timestep_increment: ClassVar[int] = 1
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, object]) -> Action:
+        """Restore the scheduler's AdvanceTime marker.
+
+        Returns:
+            The restored marker.
+        """
+        _require_duration(data, default=1)
+        return cls()
 
     def apply(self, state: State, architecture: Architecture) -> State:
         """Advance time and finish operations due by the next timestep.
@@ -454,7 +729,111 @@ def is_adjacent(pos_a: int, pos_b: int) -> bool:
     return abs(pos_a - pos_b) == 1
 
 
+def _construct_action(action_type: type[Action], values: Mapping[str, object]) -> Action:
+    constructor = cast("Any", action_type)
+    return cast("Action", constructor(**values))
+
+
+def _construct_gate_action(
+    action_type: type[GateAction],
+    values: Mapping[str, object],
+) -> GateAction:
+    return cast("GateAction", _construct_action(action_type, values))
+
+
+def _require_circuit_name(gate_type: type[GateAction]) -> str:
+    name = gate_type.circuit_name
+    if name is None:
+        msg = f"gate type {gate_type.__name__} does not define a circuit name"
+        raise ValueError(msg)
+    return name
+
+
+def _require_instruction_shape(
+    gate_type: type[GateAction],
+    ions: tuple[int, ...],
+    parameters: tuple[float, ...],
+    *,
+    num_ions: int,
+) -> None:
+    if len(ions) != num_ions or len(parameters) != len(gate_type.parameter_names):
+        msg = (
+            f"operation {_require_circuit_name(gate_type)!r} requires {num_ions} ions "
+            f"and {len(gate_type.parameter_names)} parameters"
+        )
+        raise ValueError(msg)
+
+
+def _field_default(action_type: type[Action], name: str) -> object:
+    model_field = next((item for item in fields(action_type) if item.name == name), None)
+    if model_field is None or model_field.default is MISSING:
+        msg = f"{action_type.__name__} must define a default {name}"
+        raise ValueError(msg)
+    return model_field.default
+
+
+def _require_int(data: Mapping[str, object], key: str) -> int:
+    value = data.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        msg = f"{key} must be an integer"
+        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error]
+    return value
+
+
+def _require_number(data: Mapping[str, object], key: str) -> float:
+    value = data.get(key)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        msg = f"{key} must be numeric"
+        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error]
+    return float(value)
+
+
+def _require_optional_number(data: Mapping[str, object], key: str) -> float | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        msg = f"{key} must be numeric or null"
+        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error]
+    return float(value)
+
+
+def _require_str(data: Mapping[str, object], key: str) -> str:
+    value = data.get(key)
+    if not isinstance(value, str):
+        msg = f"{key} must be a string"
+        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error]
+    return value
+
+
+def _require_bool(data: Mapping[str, object], key: str, *, default: bool) -> bool:
+    value = data.get(key, default)
+    if not isinstance(value, bool):
+        msg = f"{key} must be a boolean"
+        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error]
+    return value
+
+
+def _require_duration(
+    data: Mapping[str, object],
+    *,
+    default: int,
+    allow_zero: bool = False,
+) -> int:
+    value = data.get("duration", default)
+    if isinstance(value, bool) or not isinstance(value, int):
+        msg = "duration must be an integer"
+        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error]
+    minimum = 0 if allow_zero else 1
+    if value < minimum:
+        msg = f"action duration must be >= {minimum}"
+        raise ValueError(msg)
+    return value
+
+
 __all__ = [
+    "BUILTIN_ACTION_TYPES",
+    "DEFAULT_ACTION_TYPES",
     "Action",
     "AdvanceTime",
     "GateAction",

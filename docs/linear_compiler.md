@@ -68,11 +68,12 @@ the hardware abstraction.
 - a {py:class}`pathlib.Path` to a UTF-8 QASM file.
 
 Strings are always treated as QASM text. Use `Path("circuit.qasm")` for a file.
-The supported gates are `rx`, `ry`, `rz`, `rxx`, `ryy`, and `rzz`. Rotation
-parameters must be numeric when compilation begins. Barriers and final
-measurements are accepted but do not become scheduled hardware operations.
-Unsupported or malformed circuits raise an exception before schedule search
-starts.
+The default gate set is `rx`, `ry`, `rz`, and `rzz`, a common trapped-ion gate
+set. Additional implemented gates may be enabled through the compiler's
+`action_types`. Rotation parameters must be numeric when compilation begins.
+Barriers and final measurements are accepted but do not become scheduled
+hardware operations. Unsupported or malformed circuits raise an exception before
+schedule search starts.
 
 ## Describe the architecture
 
@@ -115,7 +116,8 @@ take. Defaults are measured in compiler timesteps:
 | Swap adjacent ions                |                3 |
 | `rx`, `ry`                        |                1 |
 | `rz`                              |       0, virtual |
-| `rxx`, `ryy`, `rzz`               |                2 |
+| `rzz`                             |                2 |
+| Optional `rxx`, `ryy`             |                2 |
 
 For example:
 
@@ -249,7 +251,8 @@ The result status describes why compilation stopped:
 `result.num_timesteps` is the schedule makespan in compiler timesteps, while
 `result.wall_clock_s` is the time spent compiling. `result.score` is the final
 schedule time when one is available. The in-memory `final_state` can be used to
-inspect the reached placement and completed gates.
+inspect the reached placement and completed gates. `result.action_types` records
+the ordered hardware capability catalog used for the compilation.
 
 Always check `status` before treating a result as a complete schedule. Invalid
 input and configuration errors raise exceptions instead of returning `FAILED`.

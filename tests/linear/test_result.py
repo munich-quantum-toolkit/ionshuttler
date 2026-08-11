@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import pytest
 
@@ -38,9 +38,6 @@ from mqt.ionshuttler.linear.result import (
     GlobalDDRecord,
 )
 from mqt.ionshuttler.linear.state import State, create_initial_state
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
 
 
 @dataclass(frozen=True)
@@ -82,6 +79,7 @@ def test_result_exports_schedule_and_metadata() -> None:
         "num_timesteps": 1,
         "wall_clock_s": 0.0,
         "score": None,
+        "action_types": [],
         "actions": [
             {
                 "type": "Shuttle",
@@ -309,6 +307,17 @@ def test_result_requires_architecture_for_initial_state() -> None:
         )
 
 
+def test_result_rejects_duplicate_capability_names() -> None:
+    """Keep serialized capability provenance unambiguous."""
+    with pytest.raises(ValueError, match="must not contain duplicates"):
+        CompilationResult(
+            status=CompilationStatus.SUCCESS,
+            path=[],
+            num_timesteps=0,
+            action_types=("Rx", "Rx"),
+        )
+
+
 def test_result_omits_search_only_state_from_json() -> None:
     """Keep runtime search state outside the portable result schema."""
     architecture = Architecture(num_sites=1)
@@ -330,30 +339,25 @@ def test_result_omits_search_only_state_from_json() -> None:
     assert loaded.explored_nodes is None
 
 
-def test_custom_action_uses_an_explicit_decoder() -> None:
-    """Round-trip downstream actions without changing global state."""
+def test_custom_action_uses_its_action_owned_decoder() -> None:
+    """Round-trip a custom action by supplying its class catalog."""
     result = CompilationResult(
         status=CompilationStatus.SUCCESS,
         path=[_Marker("calibration")],
         num_timesteps=0,
+        action_types=("_Marker",),
     )
-
-    def decode_marker(data: Mapping[str, object]) -> Action:
-        label = data.get("label")
-        if not isinstance(label, str):
-            msg = "label must be a string"
-            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Serialized input is malformed.
-        return _Marker(label)
 
     with pytest.raises(ValueError, match="unknown action type"):
         CompilationResult.from_json(result.to_json())
 
     loaded = CompilationResult.from_json(
         result.to_json(),
-        action_decoders={"_Marker": decode_marker},
+        action_types=(_Marker,),
     )
 
     assert loaded.path == result.path
+    assert loaded.action_types == ("_Marker",)
 
 
 @pytest.mark.parametrize(
@@ -365,6 +369,7 @@ def test_custom_action_uses_an_explicit_decoder() -> None:
         ({"num_timesteps": 1.5}, "num_timesteps must be an integer"),
         ({"wall_clock_s": "slow"}, "wall_clock_s must be numeric"),
         ({"score": 1.5}, "score must be an integer or null"),
+        ({"action_types": ["Rx", 1]}, "action_types must be a list of strings"),
         ({"actions": [None]}, "each action must be a JSON object"),
         ({"actions": [{}]}, "type must be a string"),
         ({"actions": [{"type": "Rx", "ion": False, "theta": 0.1}]}, "ion must be an integer"),

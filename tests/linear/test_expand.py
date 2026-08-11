@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from mqt.ionshuttler.linear.actions import (
+    DEFAULT_ACTION_TYPES,
     AdvanceTime,
     GateSpec,
     GlobalPulse,
@@ -82,6 +83,23 @@ def test_full_generation_includes_gates_and_configured_transports() -> None:
     assert gate in actions
     assert PhysicalSwap(ion_a=0, ion_b=1, pos_a=0, pos_b=1, duration=3) in actions
     assert Shuttle(ion=1, src=1, dst=2, duration=2) in actions
+
+
+@pytest.mark.parametrize("mode", [GenerationMode.FULL, GenerationMode.INFORMED])
+def test_generation_excludes_gate_types_missing_from_hardware_catalog(mode: GenerationMode) -> None:
+    """Do not propose circuit gates that the hardware does not expose."""
+    state = make_state(((0, 0),), pzs_busy=(("pz", 0),))
+    gate = Rx(ion=0, theta=1.0)
+
+    actions = generate_actions_by_mode(
+        state,
+        Architecture(num_sites=2, processing_zones={"pz": [0]}),
+        [0],
+        {0: gate},
+        options=ExpansionOptions(mode=mode, action_types=(Shuttle,)),
+    )
+
+    assert gate not in actions
 
 
 def test_generation_respects_dependencies_and_busy_resources() -> None:
@@ -252,7 +270,13 @@ def test_generation_accepts_an_additional_gate_action_type() -> None:
     state = make_state(((0, 0),))
     gate = GlobalPulse(gate=GateSpec("rx", 0.5), duration=2)
 
-    children = expand(state, architecture, [6], {6: gate})
+    children = expand(
+        state,
+        architecture,
+        [6],
+        {6: gate},
+        options=ExpansionOptions(action_types=(*DEFAULT_ACTION_TYPES, GlobalPulse)),
+    )
 
     assert children[0][0:2] == (gate, 6)
     assert children[0][2].in_progress_gates == ((6, 2),)

@@ -9,19 +9,93 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import pytest
 from qiskit import QuantumCircuit
 
 import mqt.ionshuttler.linear.compiler as compiler_module
 import mqt.ionshuttler.linear.search as search_module
-from mqt.ionshuttler.linear import Architecture, LinearCompiler
-from mqt.ionshuttler.linear.config import LinearCompilerConfig, SearchConfig
+from mqt.ionshuttler.linear import DEFAULT_ACTION_TYPES, Architecture, LinearCompiler
+from mqt.ionshuttler.linear.actions import (
+    Action,
+    PhysicalSwap,
+    Rx,
+    Rxx,
+    Ry,
+    Rz,
+    Rzz,
+    Shuttle,
+    TransportAction,
+    TwoQubitGate,
+)
+from mqt.ionshuttler.linear.config import LinearCompilerConfig, SearchConfig, TransportTiming
 from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from pathlib import Path
+
+    from mqt.ionshuttler.linear.state import State
+
+
+@dataclass(frozen=True)
+class _LongShuttle(TransportAction):
+    """Move one ion two sites in a single hardware operation."""
+
+    ion: int
+    src: int
+    dst: int
+    duration: int = 1
+
+    @classmethod
+    def available_actions(
+        cls,
+        state: State,
+        architecture: Architecture,
+        transport_timing: TransportTiming,
+    ) -> Iterable[Action]:
+        """Return forward two-site moves that remain on the device."""
+        del transport_timing
+        occupied = {position for _, position in state.positions}
+        return (
+            cls(ion=ion, src=source, dst=source + 2)
+            for ion, source in state.positions
+            if source + 2 < architecture.num_sites and source + 2 not in occupied
+        )
+
+    def is_valid(self, state: State, architecture: Architecture) -> bool:
+        """Return whether the ion can make the requested two-site move."""
+        positions = dict(state.positions)
+        return (
+            positions.get(self.ion) == self.src
+            and self.dst == self.src + 2
+            and self.dst < architecture.num_sites
+            and self.dst not in positions.values()
+            and dict(state.ions_busy_until).get(self.ion, state.time + 1) <= state.time
+        )
+
+    def apply(self, state: State, architecture: Architecture) -> State:
+        """Move the ion and reserve it for the configured duration."""
+        del architecture
+        positions = dict(state.positions)
+        busy_until = dict(state.ions_busy_until)
+        positions[self.ion] = self.dst
+        busy_until[self.ion] = state.time + self.duration
+        return replace(
+            state,
+            positions=tuple(sorted(positions.items())),
+            ions_busy_until=tuple(sorted(busy_until.items())),
+        )
+
+
+@dataclass(frozen=True)
+class _CX(TwoQubitGate):
+    """Controlled-X gate used to exercise catalog-driven circuit lowering."""
+
+    circuit_name: ClassVar[str] = "cx"
+    duration: int = 2
 
 
 def test_compiler_matches_the_compact_frozen_result(
@@ -36,11 +110,95 @@ def test_compiler_matches_the_compact_frozen_result(
 
     actual = result.to_dict()
     actual.pop("wall_clock_s")
+    actual_action_types = actual.pop("action_types")
     expected = cast("dict[str, object]", production_default_golden["expected_result"])
     assert actual == expected
+    assert actual_action_types == ["PhysicalSwap", "Shuttle", "Rx", "Ry", "Rz", "Rzz"]
     assert result.final_state is not None
     assert result.final_state.time == 5
     assert result.final_state.completed_gates == frozenset({0, 1, 2})
+
+
+def test_compiler_uses_the_hardware_action_catalog() -> None:
+    """Discover a custom action through its class-owned availability method."""
+    architecture = Architecture(num_sites=3, processing_zones={"pz": [2]})
+    qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.5) q[0];\n'
+
+    custom_result = LinearCompiler(
+        architecture,
+        action_types=(Rx, _LongShuttle),
+    ).compile(qasm, initial_positions=[0])
+    unavailable_result = LinearCompiler(
+        architecture,
+        action_types=(Rx,),
+    ).compile(qasm, initial_positions=[0])
+
+    assert custom_result.status is CompilationStatus.SUCCESS
+    assert any(isinstance(action, _LongShuttle) for action in custom_result.path)
+    assert unavailable_result.status is CompilationStatus.FAILED
+
+
+def test_compiler_defaults_to_all_built_in_hardware_actions() -> None:
+    """Expose every built-in hardware capability by default."""
+    compiler = LinearCompiler(Architecture(num_sites=2))
+
+    assert compiler.action_types == DEFAULT_ACTION_TYPES
+    assert compiler.action_types == (PhysicalSwap, Shuttle, Rx, Ry, Rz, Rzz)
+
+
+def test_compiler_requires_explicit_opt_in_for_non_default_gates() -> None:
+    """Keep additional supported gates outside the default hardware set."""
+    architecture = Architecture(num_sites=2, processing_zones={"pz": [0, 1]})
+    qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nrxx(0.5) q[0],q[1];\n'
+
+    with pytest.raises(ValueError, match="unavailable gate 'rxx'"):
+        LinearCompiler(architecture).compile(qasm)
+
+    result = LinearCompiler(architecture, action_types=(*DEFAULT_ACTION_TYPES, Rxx)).compile(qasm)
+    assert result.status is CompilationStatus.SUCCESS
+
+
+def test_compiler_rejects_circuit_gates_missing_from_hardware_catalog() -> None:
+    """Reject a circuit immediately when its gate is unavailable."""
+    architecture = Architecture(num_sites=2, processing_zones={"pz": [0, 1]})
+    qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nrzz(0.5) q[0],q[1];\n'
+
+    with pytest.raises(ValueError, match="unavailable gate 'rzz'"):
+        LinearCompiler(architecture, action_types=(PhysicalSwap, Shuttle)).compile(qasm)
+
+
+@pytest.mark.parametrize("circuit_kind", ["qasm", "qiskit"])
+def test_compiler_lowers_custom_gate_types_from_each_frontend(circuit_kind: str) -> None:
+    """Use one action-owned lowerer for QASM and Qiskit circuit inputs."""
+    architecture = Architecture(num_sites=2, processing_zones={"pz": [0, 1]})
+    if circuit_kind == "qasm":
+        circuit: str | QuantumCircuit = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\ncx q[0],q[1];\n'
+    else:
+        circuit = QuantumCircuit(2)
+        circuit.cx(0, 1)
+
+    result = LinearCompiler(
+        architecture,
+        action_types=(*DEFAULT_ACTION_TYPES, _CX),
+    ).compile(circuit)
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert any(isinstance(action, _CX) for action in result.path)
+    assert result.action_types[-1] == "_CX"
+    with pytest.raises(ValueError, match="unknown action type"):
+        CompilationResult.from_json(result.to_json())
+    restored = CompilationResult.from_json(result.to_json(), action_types=(_CX,))
+    assert restored.path == result.path
+    assert restored.action_types == result.action_types
+
+
+def test_compiler_rejects_non_action_types() -> None:
+    """Reject catalog entries that do not describe hardware actions."""
+    with pytest.raises(TypeError, match="Action subclasses"):
+        LinearCompiler(Architecture(num_sites=2), action_types=(cast("type[Action]", object),))
+
+    with pytest.raises(ValueError, match="unique class names"):
+        LinearCompiler(Architecture(num_sites=2), action_types=(Rx, Rx))
 
 
 def test_qasm_and_qiskit_inputs_compile_equivalently() -> None:
@@ -202,7 +360,7 @@ def test_invalid_input_fails_before_search(monkeypatch: pytest.MonkeyPatch) -> N
     circuit = QuantumCircuit(1)
     circuit.h(0)
 
-    with pytest.raises(ValueError, match="unsupported circuit operation"):
+    with pytest.raises(ValueError, match="unavailable gate 'h'"):
         compiler.compile(circuit)
 
 

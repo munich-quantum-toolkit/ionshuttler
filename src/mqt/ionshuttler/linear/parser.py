@@ -12,25 +12,30 @@ from __future__ import annotations
 import ast
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import SupportsFloat, SupportsIndex, cast
 
 from qiskit import QuantumCircuit
 
-from mqt.ionshuttler.linear.actions import GateAction, Rx, Rxx, Ry, Ryy, Rz, Rzz
+from mqt.ionshuttler.linear.actions import BUILTIN_ACTION_TYPES, GateAction
 from mqt.ionshuttler.linear.config import GATE_NAMES, GateTiming
 
 DependencyMap = dict[int, frozenset[int]]
 ParsedCircuit = tuple[int, list[GateAction], DependencyMap | None, DependencyMap | None]
 GateDurationMap = Mapping[str, int]
-GateRecord = tuple[str, float, tuple[int, ...]]
+GateRecord = tuple[type[GateAction], tuple[float, ...], tuple[int, ...]]
 DependencyBreaks = dict[int, frozenset[int]]
 CircuitInput = QuantumCircuit | str | Path
 
 _DEFAULT_GATE_TIMING = GateTiming()
-_SINGLE_GATE_PATTERN = re.compile(r"^(rx|ry|rz)\((.+)\)\s+q\[(\d+)\];$")
-_TWO_QUBIT_GATE_PATTERN = re.compile(r"^(rxx|ryy|rzz)\((.+)\)\s+q\[(\d+)\],\s*q\[(\d+)\];$")
+_BUILTIN_GATE_TYPES = tuple(
+    action_type
+    for action_type in BUILTIN_ACTION_TYPES
+    if issubclass(action_type, GateAction) and action_type.circuit_name is not None
+)
+_GATE_PATTERN = re.compile(r"^([A-Za-z_]\w*)(?:\((.*)\))?\s+(.+);$")
+_QUBIT_OPERAND_PATTERN = re.compile(r"^q\[(\d+)\]$")
 _QASM2_QREG_PATTERN = re.compile(r"^qreg\s+q\[(\d+)\];$")
 _QASM3_QREG_PATTERN = re.compile(r"^qubit\[(\d+)\]\s+q;$")
 _CLASSICAL_REGISTER_PATTERN = re.compile(r"^(?:creg\s+\w+\[\d+\]|bit\[\d+\]\s+\w+);$")
@@ -44,6 +49,7 @@ def parse_circuit(
     use_dependencies: bool = True,
     gate_timing: GateTiming | None = None,
     gate_durations: GateDurationMap | None = None,
+    gate_types: Sequence[type[GateAction]] | None = None,
 ) -> ParsedCircuit:
     """Prepare a Qiskit circuit or QASM circuit for scheduling.
 
@@ -57,6 +63,7 @@ def parse_circuit(
         gate_timing: Hardware durations and virtual gate implementations.
         gate_durations: Optional duration overrides. This compact form cannot be
             combined with ``gate_timing``.
+        gate_types: Gate classes understood by the circuit frontend.
 
     Returns:
         The qubit count, gates ready to schedule, and optional maps of which
@@ -66,12 +73,16 @@ def parse_circuit(
         TypeError: If ``circuit`` has an unsupported type.
     """
     timing = _resolve_gate_timing(gate_timing, gate_durations)
+    registry = _gate_type_registry(gate_types)
     if isinstance(circuit, QuantumCircuit):
-        num_qubits, records, dependency_breaks = _records_from_quantum_circuit(circuit)
+        num_qubits, records, dependency_breaks = _records_from_quantum_circuit(circuit, registry)
     elif isinstance(circuit, Path):
-        num_qubits, records, dependency_breaks = _records_from_qasm(circuit.read_text(encoding="utf-8"))
+        num_qubits, records, dependency_breaks = _records_from_qasm(
+            circuit.read_text(encoding="utf-8"),
+            registry,
+        )
     elif isinstance(circuit, str):
-        num_qubits, records, dependency_breaks = _records_from_qasm(circuit)
+        num_qubits, records, dependency_breaks = _records_from_qasm(circuit, registry)
     else:
         msg = "circuit must be a QuantumCircuit, QASM string, or pathlib.Path"
         raise TypeError(msg)
@@ -89,6 +100,7 @@ def parse_quantum_circuit(
     *,
     use_dependencies: bool = True,
     gate_timing: GateTiming | None = None,
+    gate_types: Sequence[type[GateAction]] | None = None,
 ) -> ParsedCircuit:
     """Prepare a Qiskit circuit for scheduling.
 
@@ -96,7 +108,12 @@ def parse_quantum_circuit(
         The qubit count, gates ready to schedule, and maps of which gates
         directly precede and follow one another.
     """
-    return parse_circuit(circuit, use_dependencies=use_dependencies, gate_timing=gate_timing)
+    return parse_circuit(
+        circuit,
+        use_dependencies=use_dependencies,
+        gate_timing=gate_timing,
+        gate_types=gate_types,
+    )
 
 
 def parse_qasm_to_gate_sequence(
@@ -104,20 +121,25 @@ def parse_qasm_to_gate_sequence(
     *,
     gate_timing: GateTiming | None = None,
     gate_durations: GateDurationMap | None = None,
+    gate_types: Sequence[type[GateAction]] | None = None,
 ) -> tuple[int, list[GateAction]]:
     """Read the supported gates from QASM text.
 
     Returns:
         The qubit count and ordered gate actions.
     """
-    num_qubits, records, _ = _records_from_qasm(qasm)
+    num_qubits, records, _ = _records_from_qasm(qasm, _gate_type_registry(gate_types))
     timing = _resolve_gate_timing(gate_timing, gate_durations)
     return num_qubits, [_lower_gate(record, timing) for record in records]
 
 
-def compute_gate_dependencies_from_qasm(qasm: str) -> tuple[DependencyMap, DependencyMap]:
+def compute_gate_dependencies_from_qasm(
+    qasm: str,
+    *,
+    gate_types: Sequence[type[GateAction]] | None = None,
+) -> tuple[DependencyMap, DependencyMap]:
     """Return the gates that directly precede and follow each QASM gate."""
-    _, records, dependency_breaks = _records_from_qasm(qasm)
+    _, records, dependency_breaks = _records_from_qasm(qasm, _gate_type_registry(gate_types))
     return _compute_dependencies(records, dependency_breaks)
 
 
@@ -126,6 +148,7 @@ def parse_qasm_to_gate_sequence_with_dependencies(
     *,
     gate_timing: GateTiming | None = None,
     gate_durations: GateDurationMap | None = None,
+    gate_types: Sequence[type[GateAction]] | None = None,
 ) -> tuple[int, list[GateAction], DependencyMap, DependencyMap]:
     """Read QASM gates together with their direct dependencies.
 
@@ -133,7 +156,7 @@ def parse_qasm_to_gate_sequence_with_dependencies(
         The qubit count, gates in circuit order, and maps of which gates
         directly precede and follow one another.
     """
-    num_qubits, records, dependency_breaks = _records_from_qasm(qasm)
+    num_qubits, records, dependency_breaks = _records_from_qasm(qasm, _gate_type_registry(gate_types))
     timing = _resolve_gate_timing(gate_timing, gate_durations)
     predecessors, successors = _compute_dependencies(records, dependency_breaks)
     return num_qubits, [_lower_gate(record, timing) for record in records], predecessors, successors
@@ -145,6 +168,7 @@ def parse_qasm(
     use_dependencies: bool = True,
     gate_timing: GateTiming | None = None,
     gate_durations: GateDurationMap | None = None,
+    gate_types: Sequence[type[GateAction]] | None = None,
 ) -> ParsedCircuit:
     """Prepare supported QASM text for scheduling.
 
@@ -157,6 +181,7 @@ def parse_qasm(
         use_dependencies=use_dependencies,
         gate_timing=gate_timing,
         gate_durations=gate_durations,
+        gate_types=gate_types,
     )
 
 
@@ -166,6 +191,7 @@ def parse_qasm_file(
     use_dependencies: bool = True,
     gate_timing: GateTiming | None = None,
     gate_durations: GateDurationMap | None = None,
+    gate_types: Sequence[type[GateAction]] | None = None,
 ) -> ParsedCircuit:
     """Prepare a UTF-8 QASM file for scheduling.
 
@@ -178,6 +204,7 @@ def parse_qasm_file(
         use_dependencies=use_dependencies,
         gate_timing=gate_timing,
         gate_durations=gate_durations,
+        gate_types=gate_types,
     )
 
 
@@ -186,6 +213,7 @@ def parse_qasm_file_with_dependencies(
     *,
     gate_timing: GateTiming | None = None,
     gate_durations: GateDurationMap | None = None,
+    gate_types: Sequence[type[GateAction]] | None = None,
 ) -> tuple[int, list[GateAction], DependencyMap, DependencyMap]:
     """Read a UTF-8 QASM file together with its direct dependencies.
 
@@ -198,6 +226,7 @@ def parse_qasm_file_with_dependencies(
         use_dependencies=True,
         gate_timing=gate_timing,
         gate_durations=gate_durations,
+        gate_types=gate_types,
     )
     num_qubits, gates, predecessors, successors = parsed
     return (
@@ -208,7 +237,55 @@ def parse_qasm_file_with_dependencies(
     )
 
 
-def _records_from_qasm(qasm: str) -> tuple[int, list[GateRecord], DependencyBreaks]:
+def _gate_type_registry(
+    gate_types: Sequence[type[GateAction]] | None,
+) -> dict[str, type[GateAction]]:
+    registry: dict[str, type[GateAction]] = {}
+    for gate_type in _BUILTIN_GATE_TYPES if gate_types is None else gate_types:
+        if not isinstance(gate_type, type) or not issubclass(gate_type, GateAction):
+            msg = "gate_types must contain GateAction subclasses"
+            raise TypeError(msg)
+        name = gate_type.circuit_name
+        if name is None:
+            continue
+        normalized_name = name.lower()
+        if normalized_name in registry:
+            msg = f"duplicate circuit gate name {normalized_name!r}"
+            raise ValueError(msg)
+        registry[normalized_name] = gate_type
+    return registry
+
+
+def _gate_record_from_qasm_line(
+    line: str,
+    gate_types: Mapping[str, type[GateAction]],
+) -> GateRecord | None:
+    match = _GATE_PATTERN.match(line)
+    if match is None:
+        return None
+    gate_name, parameter_text, operand_text = match.groups()
+    gate_type = gate_types.get(gate_name.lower())
+    if gate_type is None:
+        msg = f"circuit requires unavailable gate {gate_name!r}"
+        raise ValueError(msg)
+    parameters = (
+        ()
+        if parameter_text is None or not parameter_text.strip()
+        else tuple(_safe_eval(item.strip()) for item in parameter_text.split(","))
+    )
+    ions: list[int] = []
+    for operand in operand_text.split(","):
+        operand_match = _QUBIT_OPERAND_PATTERN.fullmatch(operand.strip())
+        if operand_match is None:
+            return None
+        ions.append(int(operand_match.group(1)))
+    return gate_type, parameters, tuple(ions)
+
+
+def _records_from_qasm(
+    qasm: str,
+    gate_types: Mapping[str, type[GateAction]],
+) -> tuple[int, list[GateRecord], DependencyBreaks]:
     num_qubits: int | None = None
     records: list[GateRecord] = []
     dependency_break_targets: dict[int, set[int] | None] = {}
@@ -242,13 +319,8 @@ def _records_from_qasm(qasm: str) -> tuple[int, list[GateRecord], DependencyBrea
         if match := _QASM3_QREG_PATTERN.match(line):
             num_qubits = int(match.group(1))
             continue
-        if match := _SINGLE_GATE_PATTERN.match(line):
-            gate_name, theta_text, ion_text = match.groups()
-            records.append((gate_name, _safe_eval(theta_text), (int(ion_text),)))
-            continue
-        if match := _TWO_QUBIT_GATE_PATTERN.match(line):
-            gate_name, theta_text, ion_a_text, ion_b_text = match.groups()
-            records.append((gate_name, _safe_eval(theta_text), (int(ion_a_text), int(ion_b_text))))
+        if record := _gate_record_from_qasm_line(line, gate_types):
+            records.append(record)
             continue
         msg = f"Unsupported QASM syntax: {line}"
         raise ValueError(msg)
@@ -269,6 +341,7 @@ def _records_from_qasm(qasm: str) -> tuple[int, list[GateRecord], DependencyBrea
 
 def _records_from_quantum_circuit(
     circuit: QuantumCircuit,
+    gate_types: Mapping[str, type[GateAction]],
 ) -> tuple[int, list[GateRecord], DependencyBreaks]:
     records: list[GateRecord] = []
     dependency_breaks: dict[int, set[int]] = {}
@@ -288,18 +361,16 @@ def _records_from_quantum_circuit(
         if measurement_seen:
             msg = "measurements must be trailing"
             raise ValueError(msg)
-        if gate_name not in GATE_NAMES:
-            msg = f"unsupported circuit operation {operation.name!r}"
+        gate_type = gate_types.get(gate_name)
+        if gate_type is None:
+            msg = f"circuit requires unavailable gate {operation.name!r}"
             raise ValueError(msg)
         if instruction.clbits:
             msg = f"classically controlled operation {operation.name!r} is unsupported"
             raise ValueError(msg)
-        expected_qubits = 1 if gate_name in {"rx", "ry", "rz"} else 2
-        if len(instruction.qubits) != expected_qubits or len(operation.params) != 1:
-            msg = f"operation {operation.name!r} has an unsupported shape"
-            raise ValueError(msg)
         ions = tuple(circuit.find_bit(qubit).index for qubit in instruction.qubits)
-        records.append((gate_name, _numeric_parameter(operation.params[0], operation.name), ions))
+        parameters = tuple(_numeric_parameter(parameter, operation.name) for parameter in operation.params)
+        records.append((gate_type, parameters, ions))
 
     _validate_gate_records(records, circuit.num_qubits)
     return (
@@ -325,37 +396,8 @@ def _build_parsed_circuit(
 
 
 def _lower_gate(record: GateRecord, timing: GateTiming) -> GateAction:
-    gate_name, theta, ions = record
-    duration = timing.duration_for(gate_name)
-    if gate_name == "rx":
-        return Rx(
-            ion=ions[0],
-            theta=theta,
-            duration=duration,
-            virtual=timing.is_virtual(gate_name),
-        )
-    if gate_name == "ry":
-        return Ry(
-            ion=ions[0],
-            theta=theta,
-            duration=duration,
-            virtual=timing.is_virtual(gate_name),
-        )
-    if gate_name == "rz":
-        return Rz(
-            ion=ions[0],
-            theta=theta,
-            duration=duration,
-            virtual=timing.is_virtual(gate_name),
-        )
-    if gate_name == "rxx":
-        return Rxx(ion_a=ions[0], ion_b=ions[1], theta=theta, duration=duration)
-    if gate_name == "ryy":
-        return Ryy(ion_a=ions[0], ion_b=ions[1], theta=theta, duration=duration)
-    if gate_name == "rzz":
-        return Rzz(ion_a=ions[0], ion_b=ions[1], theta=theta, duration=duration)
-    msg = f"unsupported gate name {gate_name!r}"
-    raise ValueError(msg)
+    gate_type, parameters, ions = record
+    return gate_type.from_instruction(ions, parameters, timing)
 
 
 def _compute_dependencies(
@@ -473,7 +515,8 @@ def _validate_gate_records(records: list[GateRecord], num_qubits: int) -> None:
     if num_qubits < 1:
         msg = "quantum register must contain at least one qubit"
         raise ValueError(msg)
-    for gate_name, _, ions in records:
+    for gate_type, _, ions in records:
+        gate_name = gate_type.circuit_name or gate_type.__name__
         if any(ion < 0 or ion >= num_qubits for ion in ions):
             msg = f"gate {gate_name!r} references a qubit outside the quantum register"
             raise ValueError(msg)

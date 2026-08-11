@@ -149,3 +149,5 @@ def test_architecture_and_field_profile_reject_invalid_shapes() -> None:
         Architecture.from_dict([])
     with pytest.raises(TypeError, match=r"architecture\.num_sites"):
         Architecture.from_dict({"num_sites": "4"})
+    with pytest.raises(TypeError, match=r"architecture\.num_sites"):
+        Architecture.from_dict({"num_sites": True})

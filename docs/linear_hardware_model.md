@@ -78,8 +78,12 @@ uncertainty in operation time.
 
 ## Physical and virtual rotations
 
-`rx` and `ry` rotations are physical by default: they occupy their ion and its
-processing zone for the configured gate duration. `rz` is virtual by default,
+The default hardware catalog provides `Rx`, `Ry`, `Rz`, and `Rzz`, a common
+trapped-ion gate set. ``Rxx` and `Ryy` gates are also implemented and can be
+enabled explicitly for different hardware models.
+
+`Rx` and `Ry` rotations are physical by default: they occupy their ion and its
+processing zone for the configured gate duration. `Rz` is virtual by default,
 reflecting the common control convention of implementing a z rotation as a
 change of phase reference rather than as an additional driven pulse.
 

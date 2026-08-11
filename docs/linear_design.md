@@ -143,46 +143,49 @@ mind. The following sections outline how to extend the abstraction.
 ### Define a custom action
 
 A hardware-specific control primitive can subclass `Action` or one of its
-physical-action bases. A minimal action defines its data, its local eligibility
-rule, and its state change:
+physical-action bases. For example, a hardware model could expose a controlled-X
+gate directly:
 
 ```python
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
-from mqt.ionshuttler.linear.actions import PhysicalAction
+from mqt.ionshuttler.linear import DEFAULT_ACTION_TYPES, LinearCompiler
+from mqt.ionshuttler.linear.actions import TwoQubitGate
 
 
 @dataclass(frozen=True)
-class CoolingPulse(PhysicalAction):
-    ion: int
+class CX(TwoQubitGate):
     duration: int = 2
-
-    def is_valid(self, state, architecture) -> bool:
-        del architecture
-        if self.ion not in dict(state.positions):
-            return False
-        busy_until = dict(state.ions_busy_until)
-        return busy_until.get(self.ion, state.time + 1) <= state.time
-
-    def apply(self, state, architecture):
-        del architecture
-        busy_until = dict(state.ions_busy_until)
-        busy_until[self.ion] = state.time + self.duration
-        return replace(
-            state,
-            ions_busy_until=tuple(sorted(busy_until.items())),
-        )
 ```
 
-The inherited `to_dict` method serializes dataclass fields, and the normal
-single-action validity interface can use the new class without adding another
-central dispatch branch.
+The inherited behavior requires both ions to be free and located in the same
+available processing zone. The inherited `to_dict` method also serializes the
+gate without another central dispatch branch.
 
-Defining an action does not automatically tell the compiler when it is useful.
-To make `LinearCompiler` select a new primitive, its candidate-generation policy
-must also propose that action. This is a compiler concern rather than an action
-concern: the action describes what the hardware can do, while generation
-describes how a particular compiler intends to use it.
+Pass the supported action types when constructing the compiler:
+
+```python
+compiler = LinearCompiler(
+    architecture,
+    action_types=(*DEFAULT_ACTION_TYPES, CX),
+)
+```
+
+This catalog describes the complete set of hardware operations. The compiler
+rejects a circuit immediately when it requires a gate type absent from the
+catalog. For operations such as shuttling that are proposed from the current
+hardware state, the action class additionally provides its available instances.
+`AdvanceTime` remains part of the scheduler and does not belong in the hardware
+catalog. The compiler recognizes the class's `circuit_name` in either QASM or
+Qiskit input. `TwoQubitGate` checks the two operands and constructs the custom
+gate; parameterized gate families can declare their parameter names or override
+`from_instruction` when they need different lowering behavior. native
+trapped-ion operations and are commonly decomposed into native single-qubit
+rotations and entangling gates.
+
+Note that CX is used here as a familiar example. Controlled-X gates are not
+typically native in real-world trapped ion hardware. The default catalog uses
+the common trapped-ion gate set composed of `Rx`, `Ry`, `Rz`, and `Rzz`.
 
 If saved results contain a custom action, provide its decoder explicitly when
 loading:
@@ -192,49 +195,16 @@ from mqt.ionshuttler.linear import CompilationResult
 
 result = CompilationResult.load(
     "schedule.json",
-    action_decoders={"CoolingPulse": decode_cooling_pulse},
+    action_types=(CX,),
 )
 ```
 
-Decoders are supplied per call rather than installed in global state. Separate
-applications can therefore use different action sets without changing one
-another's behavior at import time.
-
-### Add broader behavior
-
-Extensions usually belong to one of three places:
-
-- **New hardware capability:** define an action and, when necessary, extend the
-  architecture data it reads.
-- **New compilation strategy:** change or add candidate generation and search
-  policy while keeping action behavior local.
-- **New analysis or control pass:** consume a `CompilationResult` downstream and
-  return its own result or report without coupling the base compiler to the
-  method.
-
-Operations such as merge, split, partial global controls, or blocking global
-controls may have quite different local physics. The action boundary allows
-those rules to remain close to the operation, while shared scheduling concerns
-such as circuit order and conflicts across a whole timestep remain in the
-compiler.
-
-## Design principles
-
-The package follows a few recurring principles:
-
-- **Hardware capability and compiler preference are different concepts.**
-  Physical eligibility belongs to the model; pruning and prioritization belong
-  to the compiler.
-- **Timing is explicit.** Hardware durations are inputs to scheduling rather
-  than hidden assumptions in search code.
-- **State changes are local and immutable.** This makes actions easier to reason
-  about and states safe to compare during search.
-- **Extension points are explicit.** Custom behavior is passed into the place
-  that owns it instead of being installed through global registries.
-- **The public boundary is small.** Most users need an architecture, a typed
-  configuration, `LinearCompiler.compile`, and the returned result.
-- **Downstream methods depend on compilation, not the reverse.** The base
-  compiler remains useful without optional analysis or control layers.
+The result records the ordered hardware catalog used during compilation.
+Built-in actions decode automatically; supplying a custom class lets its
+inherited `from_dict` method restore ordinary dataclass fields. Actions with
+nested or specialized serialized values can override that method. Catalogs are
+supplied per call rather than installed in global state, so separate
+applications can use different action sets without affecting one another.
 
 ## See also
 

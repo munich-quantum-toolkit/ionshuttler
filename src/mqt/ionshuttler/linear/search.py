@@ -16,7 +16,7 @@ from itertools import count
 from time import perf_counter
 from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.linear.actions import Action, AdvanceTime, GateAction
+from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES, Action, AdvanceTime, GateAction
 from mqt.ionshuttler.linear.config import LinearCompilerConfig, TransportTiming
 from mqt.ionshuttler.linear.cost import cost, heuristic
 from mqt.ionshuttler.linear.expand import ExpansionOptions, GenerationMode, expand, replay_path
@@ -135,6 +135,7 @@ class _SearchContext:
     predecessors: Mapping[int, frozenset[int]] | None
     policy: _SearchPolicy
     transport_timing: TransportTiming
+    action_types: tuple[type[Action], ...]
 
 
 FrontierEntry = tuple[int, int, _SearchNode]
@@ -174,6 +175,8 @@ def search(
     architecture: Architecture,
     predecessors: Mapping[int, frozenset[int]] | None = None,
     config: LinearCompilerConfig | None = None,
+    *,
+    action_types: tuple[type[Action], ...] = DEFAULT_ACTION_TYPES,
 ) -> CompilationResult:
     """Compile a circuit using the configured global or rolling search.
 
@@ -190,6 +193,7 @@ def search(
             gates,
             predecessors=predecessors,
             config=compiler_config,
+            action_types=action_types,
         )
     return rolling_horizon_search(
         normalized_state,
@@ -198,6 +202,7 @@ def search(
         gates,
         predecessors=predecessors,
         config=compiler_config,
+        action_types=action_types,
     )
 
 
@@ -209,6 +214,7 @@ def exhaustive_search(
     *,
     predecessors: Mapping[int, frozenset[int]] | None = None,
     config: LinearCompilerConfig | None = None,
+    action_types: tuple[type[Action], ...] = DEFAULT_ACTION_TYPES,
 ) -> CompilationResult:
     """Search the complete circuit at once.
 
@@ -223,6 +229,7 @@ def exhaustive_search(
         gates,
         predecessors,
         compiler_config,
+        action_types,
     )
     result = _search_with_budget(initial_state, context, budget)
     return _with_public_metadata(
@@ -230,6 +237,7 @@ def exhaustive_search(
         budget=budget,
         architecture=architecture,
         initial_state=initial_state,
+        action_types=action_types,
     )
 
 
@@ -241,6 +249,7 @@ def rolling_horizon_search(
     *,
     predecessors: Mapping[int, frozenset[int]] | None,
     config: LinearCompilerConfig,
+    action_types: tuple[type[Action], ...] = DEFAULT_ACTION_TYPES,
 ) -> CompilationResult:
     """Plan a limited number of upcoming gates at a time.
 
@@ -256,7 +265,7 @@ def rolling_horizon_search(
         raise ValueError(msg)
 
     budget = _TimeBudget.start(config.search.max_compile_time)
-    context = _context(architecture, gate_order, gates, predecessors, config)
+    context = _context(architecture, gate_order, gates, predecessors, config, action_types)
     progress = _RollingProgress(state=initial_state, schedule=[])
 
     try:
@@ -278,6 +287,7 @@ def rolling_horizon_search(
         architecture,
         progress.explored_nodes,
         budget,
+        action_types,
     )
 
 
@@ -308,6 +318,7 @@ def _run_rolling_search(
             predecessors=local_predecessors,
             policy=context.policy,
             transport_timing=context.transport_timing,
+            action_types=context.action_types,
         )
         local_result = _search_with_budget(progress.state, local_context, budget)
         progress.explored_nodes += local_result.explored_nodes or 0
@@ -345,6 +356,7 @@ def _context(
     gates: Mapping[int, GateAction],
     predecessors: Mapping[int, frozenset[int]] | None,
     config: LinearCompilerConfig,
+    action_types: tuple[type[Action], ...],
 ) -> _SearchContext:
     return _SearchContext(
         architecture=architecture,
@@ -353,6 +365,7 @@ def _context(
         predecessors=predecessors,
         policy=_SearchPolicy.from_config(config.search),
         transport_timing=config.hardware_timing.transport,
+        action_types=action_types,
     )
 
 
@@ -535,6 +548,7 @@ def _children(
     options = ExpansionOptions(
         mode=node.generation_mode,
         transport_timing=context.transport_timing,
+        action_types=context.action_types,
     )
     for action, _, new_state in expand(
         node.state,
@@ -768,12 +782,14 @@ def _with_public_metadata(
     budget: _TimeBudget,
     architecture: Architecture,
     initial_state: State,
+    action_types: Sequence[type[Action]],
 ) -> CompilationResult:
     return replace(
         result,
         wall_clock_s=budget.elapsed(),
         architecture=architecture,
         initial_state=initial_state,
+        action_types=tuple(action_type.__name__ for action_type in action_types),
     )
 
 
@@ -785,6 +801,7 @@ def _rolling_result(
     architecture: Architecture,
     explored_nodes: int,
     budget: _TimeBudget,
+    action_types: Sequence[type[Action]],
 ) -> CompilationResult:
     result = _result(path, status, final_state, architecture, explored_nodes)
     return _with_public_metadata(
@@ -792,6 +809,7 @@ def _rolling_result(
         budget=budget,
         architecture=architecture,
         initial_state=initial_state,
+        action_types=action_types,
     )
 
 

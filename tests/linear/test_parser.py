@@ -309,7 +309,7 @@ def test_qiskit_ignores_barriers_and_trailing_measurements() -> None:
     [
         ('include "qelib1.inc";\nqreg q[1];', "Missing OPENQASM header"),
         ('OPENQASM 2.0;\ninclude "qelib1.inc";', "Missing quantum register"),
-        ("OPENQASM 2.0;\nqreg q[1];\nx q[0];", "Unsupported QASM syntax"),
+        ("OPENQASM 2.0;\nqreg q[1];\nx q[0];", "unavailable gate 'x'"),
         ("OPENQASM 2.0;\nqreg q[1];\nrx(foo) q[0];", "Unsupported parameter"),
         ("OPENQASM 2.0;\nqreg q[1];\nrx(pi) q[1];", "outside the quantum register"),
         ("OPENQASM 2.0;\nqreg q[1];\nrxx(pi) q[0], q[0];", "two distinct qubits"),
@@ -329,7 +329,7 @@ def test_qiskit_rejects_unsupported_unbound_and_nontrailing_operations() -> None
     """Fail before scheduling when a Qiskit circuit cannot be interpreted safely."""
     unsupported = QuantumCircuit(1)
     unsupported.x(0)
-    with pytest.raises(ValueError, match="unsupported circuit operation"):
+    with pytest.raises(ValueError, match="unavailable gate 'x'"):
         parse_quantum_circuit(unsupported)
 
     parameterized = QuantumCircuit(1)

@@ -10,25 +10,16 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import cast
 
 from mqt.ionshuttler.linear.actions import (
+    BUILTIN_ACTION_TYPES,
     Action,
     AdvanceTime,
-    GateSpec,
-    GlobalPulse,
-    PhysicalSwap,
-    Rx,
-    Rxx,
-    Ry,
-    Ryy,
-    Rz,
-    Rzz,
-    Shuttle,
 )
 from mqt.ionshuttler.linear.architecture import Architecture
 from mqt.ionshuttler.linear.state import State, to_metadata_dict
@@ -75,7 +66,11 @@ class GlobalDDRecord:
 
 @dataclass(frozen=True)
 class CompilationResult:
-    """Contain a schedule, its outcome, and optional supporting metadata."""
+    """Contain a schedule, its outcome, and supporting hardware information.
+
+    Compiled results retain the ordered action-type names exposed by the
+    hardware so saved schedules remain clear about available capabilities.
+    """
 
     status: CompilationStatus
     path: list[Action]
@@ -88,15 +83,23 @@ class CompilationResult:
     dd_insertions: tuple[DDInsertionRecord, ...] = ()
     global_dd_records: tuple[GlobalDDRecord, ...] = ()
     explored_nodes: int | None = None
+    action_types: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         """Ensure state metadata can be interpreted unambiguously.
 
         Raises:
+            TypeError: If an action type name is not a string.
             ValueError: If an initial state is provided without its architecture.
         """
         if self.initial_state is not None and self.architecture is None:
             msg = "architecture is required when initial_state is provided"
+            raise ValueError(msg)
+        if any(not isinstance(action_type, str) for action_type in self.action_types):
+            msg = "action_types must contain strings"
+            raise TypeError(msg)
+        if len(set(self.action_types)) != len(self.action_types):
+            msg = "action_types must not contain duplicates"
             raise ValueError(msg)
 
     @classmethod
@@ -104,12 +107,14 @@ class CompilationResult:
         cls,
         data: object,
         *,
+        action_types: Sequence[type[Action]] | None = None,
         action_decoders: ActionDecoders | None = None,
     ) -> CompilationResult:
         """Restore a result from a JSON-style mapping.
 
         Args:
             data: Serialized result mapping.
+            action_types: Custom action classes needed to restore the schedule.
             action_decoders: Optional decoders for downstream action types.
 
         Returns:
@@ -128,6 +133,8 @@ class CompilationResult:
         raw_actions = _require_list(mapping, "actions", default=[])
         raw_dd_insertions = _require_list(mapping, "dd_insertions", default=[])
         raw_global_records = _require_list(mapping, "global_dd_records", default=[])
+        serialized_action_types = tuple(_require_str_list(mapping, "action_types", default=[]))
+        action_type_registry = _action_type_registry(action_types)
 
         status_raw = mapping.get("status", CompilationStatus.FAILED.value)
         try:
@@ -145,7 +152,7 @@ class CompilationResult:
 
         return cls(
             status=status,
-            path=[_action_from_dict(action, action_decoders) for action in raw_actions],
+            path=[_action_from_dict(action, action_type_registry, action_decoders) for action in raw_actions],
             num_timesteps=num_timesteps,
             wall_clock_s=wall_clock_s,
             score=score,
@@ -153,6 +160,7 @@ class CompilationResult:
             initial_state=initial_state,
             dd_insertions=tuple(_dd_insertion_from_dict(record) for record in raw_dd_insertions),
             global_dd_records=tuple(_global_dd_record_from_dict(record) for record in raw_global_records),
+            action_types=serialized_action_types,
         )
 
     @classmethod
@@ -160,30 +168,38 @@ class CompilationResult:
         cls,
         raw: str,
         *,
+        action_types: Sequence[type[Action]] | None = None,
         action_decoders: ActionDecoders | None = None,
     ) -> CompilationResult:
         """Restore a result from JSON text.
 
         Args:
             raw: Serialized result text.
+            action_types: Custom action classes needed to restore the schedule.
             action_decoders: Optional decoders for downstream action types.
 
         Returns:
             The restored compilation result.
         """
-        return cls.from_dict(json.loads(raw), action_decoders=action_decoders)
+        return cls.from_dict(
+            json.loads(raw),
+            action_types=action_types,
+            action_decoders=action_decoders,
+        )
 
     @classmethod
     def load(
         cls,
         filename: str | Path,
         *,
+        action_types: Sequence[type[Action]] | None = None,
         action_decoders: ActionDecoders | None = None,
     ) -> CompilationResult:
         """Load a result from a UTF-8 JSON file.
 
         Args:
             filename: File to read.
+            action_types: Custom action classes needed to restore the schedule.
             action_decoders: Optional decoders for downstream action types.
 
         Returns:
@@ -191,6 +207,7 @@ class CompilationResult:
         """
         return cls.from_json(
             Path(filename).read_text(encoding="utf-8"),
+            action_types=action_types,
             action_decoders=action_decoders,
         )
 
@@ -218,6 +235,7 @@ class CompilationResult:
             "num_timesteps": self.num_timesteps,
             "wall_clock_s": self.wall_clock_s,
             "score": self.score,
+            "action_types": list(self.action_types),
             "actions": actions,
             "dd_insertions": [_dd_insertion_to_dict(record) for record in self.dd_insertions],
             "global_dd_records": [_global_dd_record_to_dict(record) for record in self.global_dd_records],
@@ -266,68 +284,36 @@ def _scheduled_action_to_dict(action: Action, start_time: int) -> dict[str, obje
     return data
 
 
-def _action_from_dict(data: object, action_decoders: ActionDecoders | None) -> Action:
+def _action_type_registry(
+    action_types: Sequence[type[Action]] | None,
+) -> dict[str, type[Action]]:
+    registry = {action_type.__name__: action_type for action_type in (*BUILTIN_ACTION_TYPES, AdvanceTime)}
+    for action_type in () if action_types is None else action_types:
+        if not isinstance(action_type, type) or not issubclass(action_type, Action):
+            msg = "action_types must contain Action subclasses"
+            raise TypeError(msg)
+        name = action_type.__name__
+        existing = registry.get(name)
+        if existing is not None and existing is not action_type:
+            msg = f"duplicate serialized action type {name!r}"
+            raise ValueError(msg)
+        registry[name] = action_type
+    return registry
+
+
+def _action_from_dict(
+    data: object,
+    action_types: Mapping[str, type[Action]],
+    action_decoders: ActionDecoders | None,
+) -> Action:
     mapping = _require_mapping(data, "each action")
     action_type = _require_str(mapping, "type")
-    if action_type == "AdvanceTime":
-        _require_positive_duration(mapping)
-        return AdvanceTime()
-    if action_type == "Shuttle":
-        return Shuttle(
-            ion=_require_int(mapping, "ion"),
-            src=_require_int(mapping, "src"),
-            dst=_require_int(mapping, "dst"),
-            duration=_require_positive_duration(mapping),
-        )
-    if action_type == "PhysicalSwap":
-        return PhysicalSwap(
-            ion_a=_require_int(mapping, "ion_a"),
-            ion_b=_require_int(mapping, "ion_b"),
-            pos_a=_require_int(mapping, "pos_a"),
-            pos_b=_require_int(mapping, "pos_b"),
-            duration=_require_positive_duration(mapping),
-        )
-    if action_type in {"Rx", "Ry", "Rz"}:
-        return _single_qubit_gate_from_dict(action_type, mapping)
-    if action_type in {"Rxx", "Ryy", "Rzz"}:
-        return _two_qubit_gate_from_dict(action_type, mapping)
-    if action_type == "GlobalPulse":
-        return GlobalPulse(
-            gate=GateSpec(
-                gate_name=_require_str(mapping, "gate_name"),
-                theta=_require_optional_number(mapping, "theta"),
-            ),
-            duration=_require_positive_duration(mapping),
-        )
+    if action_type in action_types:
+        return action_types[action_type].from_dict(mapping)
     if action_decoders is not None and action_type in action_decoders:
         return action_decoders[action_type](mapping)
     msg = f"unknown action type: {action_type}"
     raise ValueError(msg)
-
-
-def _single_qubit_gate_from_dict(action_type: str, data: dict[str, object]) -> Action:
-    gate_types = {"Rx": Rx, "Ry": Ry, "Rz": Rz}
-    gate_type = gate_types[action_type]
-    default_virtual = action_type == "Rz"
-    virtual = _require_bool_with_default(data, "virtual", default=default_virtual)
-    duration = _require_nonnegative_duration(data, default=0 if action_type == "Rz" else 1)
-    return gate_type(
-        ion=_require_int(data, "ion"),
-        theta=_require_number(data, "theta"),
-        duration=duration,
-        virtual=virtual,
-    )
-
-
-def _two_qubit_gate_from_dict(action_type: str, data: dict[str, object]) -> Action:
-    gate_types = {"Rxx": Rxx, "Ryy": Ryy, "Rzz": Rzz}
-    gate_type = gate_types[action_type]
-    return gate_type(
-        ion_a=_require_int(data, "ion_a"),
-        ion_b=_require_int(data, "ion_b"),
-        theta=_require_number(data, "theta"),
-        duration=_require_positive_duration(data, default=2),
-    )
 
 
 def _dd_insertion_to_dict(record: DDInsertionRecord) -> dict[str, object]:
@@ -471,14 +457,6 @@ def _require_int_with_default(data: Mapping[str, object], key: str, default: int
     return value
 
 
-def _require_number(data: Mapping[str, object], key: str) -> float:
-    value = data.get(key)
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        msg = f"{key} must be numeric"
-        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Malformed JSON uses ValueError.
-    return float(value)
-
-
 def _require_number_with_default(
     data: Mapping[str, object],
     key: str,
@@ -509,19 +487,6 @@ def _require_str(data: Mapping[str, object], key: str) -> str:
     return value
 
 
-def _require_bool_with_default(
-    data: Mapping[str, object],
-    key: str,
-    *,
-    default: bool,
-) -> bool:
-    value = data.get(key, default)
-    if not isinstance(value, bool):
-        msg = f"{key} must be a boolean"
-        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Malformed JSON uses ValueError.
-    return value
-
-
 def _require_int_list(
     data: Mapping[str, object],
     key: str,
@@ -539,20 +504,17 @@ def _require_int_list(
     return result
 
 
-def _require_nonnegative_duration(data: Mapping[str, object], *, default: int) -> int:
-    duration = _require_int_with_default(data, "duration", default)
-    if duration < 0:
-        msg = "action duration must be >= 0"
+def _require_str_list(
+    data: Mapping[str, object],
+    key: str,
+    *,
+    default: list[object],
+) -> list[str]:
+    value = data.get(key, default)
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        msg = f"{key} must be a list of strings"
         raise ValueError(msg)
-    return duration
-
-
-def _require_positive_duration(data: Mapping[str, object], *, default: int = 1) -> int:
-    duration = _require_int_with_default(data, "duration", default)
-    if duration < 1:
-        msg = "action duration must be >= 1"
-        raise ValueError(msg)
-    return duration
+    return cast("list[str]", value)
 
 
 __all__ = [

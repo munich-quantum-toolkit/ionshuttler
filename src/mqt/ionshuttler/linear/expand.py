@@ -15,6 +15,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from mqt.ionshuttler.linear.actions import (
+    DEFAULT_ACTION_TYPES,
     Action,
     AdvanceTime,
     GateAction,
@@ -57,6 +58,7 @@ class ExpansionOptions:
 
     mode: GenerationMode = GenerationMode.FULL
     transport_timing: TransportTiming = field(default_factory=TransportTiming)
+    action_types: tuple[type[Action], ...] = DEFAULT_ACTION_TYPES
 
 
 def ready_gate_ids(
@@ -84,9 +86,13 @@ def generate_actions(
     *,
     predecessors: PredecessorMap | None = None,
     transport_timing: TransportTiming | None = None,
+    action_types: Sequence[type[Action]] | None = None,
 ) -> list[Action]:
     """Return every action that can start in the current state."""
-    options = ExpansionOptions(transport_timing=transport_timing or TransportTiming())
+    options = ExpansionOptions(
+        transport_timing=transport_timing or TransportTiming(),
+        action_types=DEFAULT_ACTION_TYPES if action_types is None else tuple(action_types),
+    )
     return generate_actions_by_mode(
         state,
         architecture,
@@ -252,6 +258,7 @@ def _candidate_actions(
             gates,
             predecessors=predecessors,
             transport_timing=options.transport_timing,
+            action_types=options.action_types,
         )
     if options.mode is GenerationMode.INFORMED:
         return _informed_candidates(
@@ -261,6 +268,7 @@ def _candidate_actions(
             gates,
             predecessors=predecessors,
             transport_timing=options.transport_timing,
+            action_types=options.action_types,
         )
     if options.mode is GenerationMode.UNINFORMED:
         full = _valid_candidates(
@@ -272,6 +280,7 @@ def _candidate_actions(
             options=ExpansionOptions(
                 mode=GenerationMode.FULL,
                 transport_timing=options.transport_timing,
+                action_types=options.action_types,
             ),
         )
         informed = _valid_candidates(
@@ -283,6 +292,7 @@ def _candidate_actions(
             options=ExpansionOptions(
                 mode=GenerationMode.INFORMED,
                 transport_timing=options.transport_timing,
+                action_types=options.action_types,
             ),
         )
         return [candidate for candidate in full if candidate not in informed]
@@ -298,11 +308,10 @@ def _all_candidates(
     *,
     predecessors: PredecessorMap | None,
     transport_timing: TransportTiming,
+    action_types: tuple[type[Action], ...],
 ) -> list[ActionCandidate]:
     """Return all ready gates and locally available transport actions."""
     candidates: list[ActionCandidate] = []
-    positions = to_dict(state)
-    occupied = set(positions.values())
     busy_ions = {ion for ion, free_time in state.ions_busy_until if free_time > state.time}
     predecessor_map = _normalize_predecessors(gate_order, predecessors)
 
@@ -313,39 +322,18 @@ def _all_candidates(
         state.in_progress_gates,
     ):
         gate = gates[gate_id]
-        if _gate_ions_are_free(gate, busy_ions):
+        if type(gate) in action_types and _gate_ions_are_free(gate, busy_ions):
             candidates.append((gate, gate_id))
 
-    free_ions = [(ion, position) for ion, position in state.positions if ion not in busy_ions]
-    for index, (ion_a, pos_a) in enumerate(free_ions):
-        for ion_b, pos_b in free_ions[index + 1 :]:
-            if abs(pos_a - pos_b) == 1:
-                candidates.append((
-                    PhysicalSwap(
-                        ion_a=ion_a,
-                        ion_b=ion_b,
-                        pos_a=pos_a,
-                        pos_b=pos_b,
-                        duration=transport_timing.swap,
-                    ),
-                    None,
-                ))
-
-    for ion, position in state.positions:
-        if ion in busy_ions:
-            continue
-        for delta in (-1, 1):
-            destination = position + delta
-            if 0 <= destination < architecture.num_sites and destination not in occupied:
-                candidates.append((
-                    Shuttle(
-                        ion=ion,
-                        src=position,
-                        dst=destination,
-                        duration=transport_timing.shuttle,
-                    ),
-                    None,
-                ))
+    for action_type in action_types:
+        candidates.extend(
+            (action, None)
+            for action in action_type.available_actions(
+                state,
+                architecture,
+                transport_timing,
+            )
+        )
 
     if has_pending_timed_work(state):
         candidates.append((AdvanceTime(), None))
@@ -360,6 +348,7 @@ def _informed_candidates(
     *,
     predecessors: PredecessorMap | None,
     transport_timing: TransportTiming,
+    action_types: tuple[type[Action], ...],
 ) -> list[ActionCandidate]:
     """Return ready gates or transports that move relevant ions toward a zone."""
     predecessor_map = _normalize_predecessors(gate_order, predecessors)
@@ -371,18 +360,23 @@ def _informed_candidates(
             state.completed_gates,
             state.in_progress_gates,
         )
+        if type(gates[gate_id]) in action_types
     ]
     valid_ready = [candidate for candidate in ready if is_action_valid(state, candidate[0], architecture)]
     if valid_ready:
         return valid_ready
-    return _good_moves(
-        state,
-        architecture,
-        gate_order,
-        gates,
-        predecessors=predecessors,
-        transport_timing=transport_timing,
-    )
+    return [
+        candidate
+        for candidate in _good_moves(
+            state,
+            architecture,
+            gate_order,
+            gates,
+            predecessors=predecessors,
+            transport_timing=transport_timing,
+        )
+        if type(candidate[0]) in action_types
+    ]
 
 
 def _good_moves(

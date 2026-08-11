@@ -7,6 +7,7 @@
 
 """Compile circuits for a linear ion-shuttling architecture."""
 
+from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES
 from mqt.ionshuttler.linear.architecture import Architecture
 from mqt.ionshuttler.linear.compiler import LinearCompiler
 from mqt.ionshuttler.linear.config import (
@@ -24,6 +25,7 @@ from mqt.ionshuttler.linear.result import (
 )
 
 __all__ = [
+    "DEFAULT_ACTION_TYPES",
     "Architecture",
     "CompilationResult",
     "CompilationStatus",

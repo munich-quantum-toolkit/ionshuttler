@@ -27,6 +27,7 @@ def test_package_exports_only_the_supported_facade() -> None:
     package = importlib.import_module("mqt.ionshuttler.linear")
 
     assert package.__all__ == [
+        "DEFAULT_ACTION_TYPES",
         "Architecture",
         "CompilationResult",
         "CompilationStatus",
