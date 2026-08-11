@@ -218,6 +218,7 @@ def _valid_candidates(
     predecessors: PredecessorMap | None,
     options: ExpansionOptions,
 ) -> list[ActionCandidate]:
+    """Return candidate actions whose individual hardware requirements hold."""
     candidates = _candidate_actions(
         state,
         architecture,
@@ -238,6 +239,11 @@ def _candidate_actions(
     predecessors: PredecessorMap | None,
     options: ExpansionOptions,
 ) -> list[ActionCandidate]:
+    """Return the candidates selected by the configured generation mode.
+
+    Raises:
+        ValueError: If the generation mode is unsupported.
+    """
     if options.mode is GenerationMode.FULL:
         return _all_candidates(
             state,
@@ -293,6 +299,7 @@ def _all_candidates(
     predecessors: PredecessorMap | None,
     transport_timing: TransportTiming,
 ) -> list[ActionCandidate]:
+    """Return all ready gates and locally available transport actions."""
     candidates: list[ActionCandidate] = []
     positions = to_dict(state)
     occupied = set(positions.values())
@@ -354,6 +361,7 @@ def _informed_candidates(
     predecessors: PredecessorMap | None,
     transport_timing: TransportTiming,
 ) -> list[ActionCandidate]:
+    """Return ready gates or transports that move relevant ions toward a zone."""
     predecessor_map = _normalize_predecessors(gate_order, predecessors)
     ready: list[ActionCandidate] = [
         (gates[gate_id], gate_id)
@@ -386,6 +394,7 @@ def _good_moves(
     predecessors: PredecessorMap | None,
     transport_timing: TransportTiming,
 ) -> list[ActionCandidate]:
+    """Return transports that reduce processing-zone distance without regressions."""
     positions = to_dict(state)
     occupied = set(positions.values())
     busy_ions = {ion for ion, free_time in state.ions_busy_until if free_time > state.time}
@@ -456,6 +465,7 @@ def _considered_ions(
     *,
     predecessors: PredecessorMap | None,
 ) -> set[int]:
+    """Return ions needed within the processing-zone-count dependency horizon."""
     predecessor_map = _normalize_predecessors(gate_order, predecessors)
     running = {gate_id for gate_id, _ in state.in_progress_gates}
     gate_horizon = len(architecture.processing_zones or {})
@@ -475,6 +485,7 @@ def _considered_ions(
 
 
 def _distance_to_processing_zone(position: int, zone_sites: tuple[int, ...]) -> int | None:
+    """Return the nearest processing-zone distance, or ``None`` if no zone exists."""
     return min((abs(position - site) for site in zone_sites), default=None)
 
 
@@ -487,6 +498,7 @@ def _is_good_swap(
     architecture: Architecture,
     zone_sites: tuple[int, ...],
 ) -> bool:
+    """Return whether a swap helps a considered ion without moving one farther away."""
     improvements = 0
     for ion, current_position, next_position in (
         (ion_a, pos_a, pos_b),
@@ -508,6 +520,7 @@ def _is_good_swap(
 
 
 def _gate_ions_are_free(gate: GateAction, busy_ions: set[int]) -> bool:
+    """Return whether every physical participant of a gate is available."""
     if isinstance(gate, SingleQubitGate):
         return gate.virtual or gate.ion not in busy_ions
     if isinstance(gate, TwoQubitGate):
@@ -516,6 +529,11 @@ def _gate_ions_are_free(gate: GateAction, busy_ions: set[int]) -> bool:
 
 
 def _gate_duration(gate: GateAction) -> int:
+    """Return a gate's integer duration.
+
+    Raises:
+        TypeError: If the gate has no integer duration.
+    """
     duration = getattr(gate, "duration", None)
     if isinstance(duration, bool) or not isinstance(duration, int):
         msg = "gate action does not define an integer duration"
@@ -527,6 +545,7 @@ def _normalize_predecessors(
     gate_order: Sequence[int],
     predecessors: PredecessorMap | None,
 ) -> dict[int, frozenset[int]]:
+    """Return explicit dependencies, chaining adjacent gates when none are given."""
     if predecessors is not None:
         return {gate_id: predecessors.get(gate_id, frozenset()) for gate_id in gate_order}
     return {gate_id: frozenset(gate_order[index - 1 : index]) for index, gate_id in enumerate(gate_order)}
@@ -539,6 +558,11 @@ def _resolve_gate_id(
     gates: GateMap,
     predecessors: PredecessorMap,
 ) -> int:
+    """Return the unique ready circuit-gate ID represented by a replayed action.
+
+    Raises:
+        ValueError: If the action does not identify exactly one ready gate.
+    """
     ready = ready_gate_ids(
         gate_order,
         predecessors,

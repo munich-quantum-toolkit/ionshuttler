@@ -5,7 +5,7 @@ The Linear compiler models a one-dimensional quantum charge-coupled device
 brought into designated processing zones for quantum operations, also referred
 to as *laser interaction zones* (LIZ). This follows the central QCCD idea of
 separating storage from interaction regions and using controlled ion transport
-to assemble the qubits needed for each operation
+to assemble the qubits needed for each operation.
 {cite:p}`kielpinski2002architecture,schoenberger2024shuttling`.
 
 The model lives at the scheduling level (see also {doc}`linear_design`). It

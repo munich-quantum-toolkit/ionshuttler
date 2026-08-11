@@ -402,9 +402,15 @@ def _resolve_gate_timing(
         return gate_timing
     if gate_durations is None:
         return _DEFAULT_GATE_TIMING
-    normalized = {gate_name.lower(): duration for gate_name, duration in gate_durations.items()}
+    normalized: dict[str, int] = {}
+    for gate_name, duration in gate_durations.items():
+        normalized_name = gate_name.lower()
+        if normalized_name not in GATE_NAMES:
+            msg = f"unsupported gate name {gate_name!r}"
+            raise ValueError(msg)
+        normalized[normalized_name] = duration
     durations = _DEFAULT_GATE_TIMING.gate_durations
-    durations.update({gate_name: duration for gate_name, duration in normalized.items() if gate_name in GATE_NAMES})
+    durations.update(normalized)
     return GateTiming(
         rx=durations["rx"],
         ry=durations["ry"],

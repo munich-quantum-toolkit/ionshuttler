@@ -223,3 +223,28 @@ def test_transport_layer_uses_custom_action_validity_and_transition() -> None:
         (_ParkingTransfer(ion=0, destination=2),),
         architecture,
     )
+
+    mixed_state = _state(((0, 0), (1, 1), (2, 2)), pzs_busy_until=(("all_sites", 0),))
+    assert is_transport_layer_valid(
+        mixed_state,
+        (_ParkingTransfer(ion=0, destination=3), Shuttle(ion=1, src=1, dst=0)),
+        architecture,
+    )
+    assert is_transport_layer_valid(
+        mixed_state,
+        (
+            _ParkingTransfer(ion=0, destination=3),
+            PhysicalSwap(ion_a=1, ion_b=2, pos_a=1, pos_b=2),
+        ),
+        architecture,
+    )
+    assert not is_transport_layer_valid(
+        mixed_state,
+        (_ParkingTransfer(ion=0, destination=3), Shuttle(ion=0, src=0, dst=1)),
+        architecture,
+    )
+    assert not is_transport_layer_valid(
+        mixed_state,
+        (_ParkingTransfer(ion=0, destination=3), Shuttle(ion=2, src=2, dst=3)),
+        architecture,
+    )

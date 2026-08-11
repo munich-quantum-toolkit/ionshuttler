@@ -139,6 +139,13 @@ def test_duration_overrides_keep_unspecified_gate_defaults() -> None:
         parse_qasm_to_gate_sequence(QASM2_ALL_GATES, gate_durations={"rz": 1})
 
 
+@pytest.mark.parametrize("gate_name", ["rxxz", "x"])
+def test_duration_overrides_reject_unknown_gate_names(gate_name: str) -> None:
+    """Reject misspelled and unsupported duration-override keys."""
+    with pytest.raises(ValueError, match=rf"unsupported gate name '{gate_name}'"):
+        parse_qasm_to_gate_sequence(QASM2_ALL_GATES, gate_durations={gate_name: 2})
+
+
 def test_duration_overrides_allow_zero_duration_physical_gates() -> None:
     """Keep compact duration overrides consistent with the hardware timing model."""
     with pytest.warns(UserWarning, match="physical single-qubit gate"):

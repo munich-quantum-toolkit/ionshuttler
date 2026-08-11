@@ -118,17 +118,18 @@ class Architecture:
             A validated architecture.
 
         Raises:
+            TypeError: If the architecture or site count has the wrong type.
             ValueError: If the mapping has an invalid shape or values.
         """
         if not isinstance(data, dict):
             msg = "architecture must be a JSON object"
-            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Input validation uses ValueError.
+            raise TypeError(msg)
         mapping = cast("dict[str, object]", data)
 
         num_sites = mapping.get("num_sites")
-        if not isinstance(num_sites, int):
+        if isinstance(num_sites, bool) or not isinstance(num_sites, int):
             msg = "architecture.num_sites must be an integer"
-            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Input validation uses ValueError.
+            raise TypeError(msg)
 
         processing_zones_raw = mapping.get("processing_zones")
         processing_zones = None

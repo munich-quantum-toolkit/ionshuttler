@@ -293,6 +293,26 @@ def test_replay_matches_an_equivalent_reconstructed_gate() -> None:
     assert final.completed_gates == frozenset({4})
 
 
+def test_replay_rejects_an_action_matching_multiple_ready_gates() -> None:
+    """Reject equality matching when it cannot identify one circuit gate."""
+    architecture = Architecture(num_sites=1)
+    initial = make_state(((0, 0),))
+    gates = {
+        4: Rx(ion=0, theta=1.0),
+        5: Rx(ion=0, theta=1.0),
+    }
+
+    with pytest.raises(ValueError, match="does not identify exactly one ready gate"):
+        replay_path(
+            initial,
+            architecture,
+            [Rx(ion=0, theta=1.0)],
+            [4, 5],
+            gates,
+            predecessors={4: frozenset(), 5: frozenset()},
+        )
+
+
 def test_gate_action_requires_an_explicit_circuit_id() -> None:
     """Keep circuit progress separate from a gate's hardware transition."""
     with pytest.raises(ValueError, match="gate_id is required"):

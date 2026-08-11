@@ -68,6 +68,7 @@ class SchedulableAction(Action):
         """Validate an action's duration when it defines one.
 
         Raises:
+            TypeError: If the duration is not an integer.
             ValueError: If the duration is not a positive integer.
         """
         duration = getattr(self, "duration", None)
@@ -75,7 +76,7 @@ class SchedulableAction(Action):
             return
         if isinstance(duration, bool) or not isinstance(duration, int):
             msg = "action duration must be an integer"
-            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Model validation uses ValueError.
+            raise TypeError(msg)
         if duration < 1:
             msg = "action duration must be >= 1"
             raise ValueError(msg)
@@ -233,17 +234,10 @@ class SingleQubitGate(GateAction):
             raise TypeError(msg)
 
         duration = getattr(self, "duration", None)
-        if duration is None:
+        is_zero_duration = isinstance(duration, int) and not isinstance(duration, bool) and duration == 0
+        if is_zero_duration and self.virtual:
             return
-        if isinstance(duration, bool) or not isinstance(duration, int):
-            msg = "action duration must be an integer"
-            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Model validation uses ValueError.
-        if self.virtual:
-            if duration != 0:
-                msg = "virtual single-qubit gate duration must be 0"
-                raise ValueError(msg)
-            return
-        if duration == 0:
+        if is_zero_duration:
             warnings.warn(
                 "physical single-qubit gate has zero duration and may share a compiler timestep. "
                 "This is fine if the intended hardware abstraction is gate-duration << timestep.",
@@ -251,6 +245,9 @@ class SingleQubitGate(GateAction):
             )
             return
         super().__post_init__()
+        if self.virtual:
+            msg = "virtual single-qubit gate duration must be 0"
+            raise ValueError(msg)
 
     def is_valid(self, state: State, architecture: Architecture) -> bool:
         """Return whether the target ion and physical resources are eligible."""

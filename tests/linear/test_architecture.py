@@ -145,5 +145,7 @@ def test_architecture_and_field_profile_reject_invalid_shapes() -> None:
         FieldProfile(num_sites=4, site_field=((4, 1.0),))
     with pytest.raises(ValueError, match=r"field_profile\.num_sites"):
         Architecture(num_sites=5, field_profile=FieldProfile(num_sites=4, site_field=()))
-    with pytest.raises(ValueError, match="JSON object"):
+    with pytest.raises(TypeError, match="JSON object"):
         Architecture.from_dict([])
+    with pytest.raises(TypeError, match=r"architecture\.num_sites"):
+        Architecture.from_dict({"num_sites": "4"})

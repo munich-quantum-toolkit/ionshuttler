@@ -109,9 +109,14 @@ def test_custom_gate_duration_is_available_to_the_compiler() -> None:
 
 def test_scheduled_actions_reject_invalid_durations() -> None:
     """Reject noninteger and nonpositive scheduled durations."""
-    invalid_durations: tuple[object, ...] = (True, 0, -1, 1.5)
-    for duration in invalid_durations:
-        with pytest.raises(ValueError, match="action duration"):
+    invalid_durations: tuple[tuple[object, type[Exception]], ...] = (
+        (True, TypeError),
+        (0, ValueError),
+        (-1, ValueError),
+        (1.5, TypeError),
+    )
+    for duration, error_type in invalid_durations:
+        with pytest.raises(error_type, match="action duration"):
             Shuttle(ion=0, src=0, dst=1, duration=cast("int", duration))
 
 
@@ -150,6 +155,13 @@ def test_single_qubit_gate_requires_boolean_virtual_flag() -> None:
     """Reject ambiguous truthy values at the action boundary."""
     with pytest.raises(TypeError, match="virtual must be a boolean"):
         Rx(ion=0, theta=0.25, virtual=cast("bool", 1))
+
+
+@pytest.mark.parametrize("virtual", [False, True])
+def test_single_qubit_gate_uses_shared_duration_type_validation(virtual: object) -> None:
+    """Use the common scheduled-action check for malformed gate durations."""
+    with pytest.raises(TypeError, match="action duration must be an integer"):
+        Rx(ion=0, theta=0.25, duration=cast("int", 1.5), virtual=cast("bool", virtual))
 
 
 def test_action_hierarchy_distinguishes_physical_and_scheduler_transitions() -> None:
