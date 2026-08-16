@@ -16,7 +16,7 @@ Python, see the {doc}`Linear compiler guide <linear_compiler>`.
 We appreciate any feedback and contributions to the project. If you want to
 contribute, you can find more information in the
 {doc}`contribution guide <contributing>`. If you are having trouble with the
-installation or the usage of MQT QuSAT, please let us know on our
+installation or the usage of MQT IonShuttler, please let us know on our
 {doc}`support page <support>`.
 
 ## Overview
