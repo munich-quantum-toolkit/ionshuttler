@@ -16,8 +16,8 @@ def read_qasm_file(file_path: Path) -> QuantumCircuit:
     return RemoveFinalMeasurements()(circuit)
 
 
-def construct_interaction_graph(circuit: QuantumCircuit) -> nx.Graph[int]:
-    graph: nx.Graph[int] = nx.Graph()
+def construct_interaction_graph(circuit: QuantumCircuit) -> nx.Graph:
+    graph: nx.Graph = nx.Graph()
     qubits = circuit.qubits
     for qubit in qubits:
         graph.add_node(qubit._index)
@@ -121,9 +121,9 @@ def construct_interaction_graph(circuit: QuantumCircuit) -> nx.Graph[int]:
 #     return partition
 
 
-def partition_graph_balanced(graph: nx.Graph[int], n: int) -> list[nx.Graph[int]]:
+def partition_graph_balanced(graph: nx.Graph, n: int) -> list[nx.Graph]:
     """
-    Partitions 'graph' into n subgraphs, attempting to keep them balanced
+    Partitions ``graph`` into ``n`` subgraphs, attempting to keep them balanced
     in size, while using Kernighan-Lin bisection at every step.
     """
     if n == 1:
