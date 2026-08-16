@@ -148,15 +148,16 @@ docstring-code-format = true
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
-  "C90",
-  "COM812",
-  "PLR09",
-  "PLR1702",
-  "PLR2004",
-  "RUF201",
-  "S101",
-  "S404",
-  "TID252",
+  "C90",     # <...> too complex
+  "COM812",  # Conflicts with formatter
+  "CPY001",  # Missing copyright notice
+  "PLR09",   # Too many <...>
+  "PLR1702", # Too many nested blocks
+  "PLR2004", # Magic value used in comparison
+  "RUF201",  # Allow rule codes as selectors in this configuration
+  "S101",    # Use of assert detected
+  "S404",    # `subprocess` module is possibly insecure
+  "TID252",  # Prefer absolute imports over relative imports from parent modules
 ]
 future-annotations = true
 
@@ -168,7 +169,6 @@ known-first-party = ["mqt.ionshuttler"]
   "ANN",
   "ARG001",
   "BLE001",
-  "CPY001",
   "D",
   "DOC",
   "DTZ005",
@@ -193,7 +193,6 @@ known-first-party = ["mqt.ionshuttler"]
   "ANN",
   "ARG001",
   "BLE001",
-  "CPY001",
   "D",
   "DOC",
   "DTZ005",
@@ -217,7 +216,6 @@ known-first-party = ["mqt.ionshuttler"]
 "tests/*.py" = [
   "ANN",
   "BLE001",
-  "CPY001",
   "D",
   "DOC",
   "ERA001",
@@ -226,10 +224,8 @@ known-first-party = ["mqt.ionshuttler"]
   "PLR6301",
   "SLF001",
 ]
-"docs/**" = ["ANN", "CPY001", "D", "INP001", "PLR6301", "T20"]
-"noxfile.py" = ["ANN", "CPY001", "D", "DOC", "PLC0415"]
-"sitecustomize.py" = ["CPY001", "D"]
-"src/mqt/ionshuttler/__init__.py" = ["CPY001", "D"]
+"docs/**" = ["INP001", "PLR6301"]
+"src/mqt/ionshuttler/__init__.py" = ["D"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

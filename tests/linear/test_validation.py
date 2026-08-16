@@ -10,8 +10,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from math import pi
 
+import numpy as np
 import pytest
 
 from mqt.ionshuttler.linear.actions import (
@@ -59,7 +59,7 @@ def _state(
     in_progress_gates: tuple[tuple[int, int], ...] = (),
     time: int = 0,
 ) -> State:
-    """Build a state with free ions and a free processing zones by default."""
+    """Build a state with free ions and a free processing zone by default."""
     return State(
         positions=positions,
         completed_gates=frozenset(),
@@ -165,7 +165,7 @@ def test_advance_time_validity_is_independent_of_generation_policy() -> None:
     assert is_action_valid(waiting_state, AdvanceTime(), architecture)
     assert not has_pending_timed_work(idle_state)
     assert has_pending_timed_work(waiting_state)
-    assert is_action_valid(idle_state, GlobalPulse(gate=GateSpec("Rx", theta=pi)), architecture)
+    assert is_action_valid(idle_state, GlobalPulse(gate=GateSpec("Rx", theta=np.pi)), architecture)
 
 
 def test_transport_layer_allows_simultaneous_conveyor_shift() -> None:

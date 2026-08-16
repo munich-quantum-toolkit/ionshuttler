@@ -1,3 +1,11 @@
+---
+file_format: mystnb
+kernelspec:
+  name: python3
+mystnb:
+  number_source_lines: true
+---
+
 # Linear Compiler Architecture
 
 This page gives a high-level view of the Linear compiler package: how its main
@@ -146,7 +154,7 @@ A hardware-specific control primitive can subclass `Action` or one of its
 physical-action bases. For example, a hardware model could expose a controlled-X
 gate directly:
 
-```python
+```{code-cell} ipython3
 from dataclasses import dataclass
 
 from mqt.ionshuttler.linear import DEFAULT_ACTION_TYPES, LinearCompiler
@@ -165,7 +173,13 @@ gate without another central dispatch branch.
 
 Pass the supported action types when constructing the compiler:
 
-```python
+```{code-cell} ipython3
+from mqt.ionshuttler.linear import Architecture
+
+architecture = Architecture(
+    num_sites=5,
+    processing_zones={"gate_zone": [2, 3]},
+)
 compiler = LinearCompiler(
     architecture,
     action_types=(*DEFAULT_ACTION_TYPES, CX),
@@ -186,16 +200,21 @@ Note that CX is used here as a familiar example. Controlled-X gates are not
 typically native in real-world trapped ion hardware. The default catalog uses
 the common trapped-ion gate set composed of `Rx`, `Ry`, `Rz`, and `Rzz`.
 
-If saved results contain a custom action, provide its decoder explicitly when
-loading:
+If serialized results contain a custom action, provide its decoder explicitly
+when restoring them:
 
-```python
+```{code-cell} ipython3
+from qiskit import QuantumCircuit
+
 from mqt.ionshuttler.linear import CompilationResult
 
-result = CompilationResult.load(
-    "schedule.json",
-    action_types=(CX,),
-)
+custom_circuit = QuantumCircuit(2)
+custom_circuit.cx(0, 1)
+
+serialized_result = compiler.compile(custom_circuit).to_json()
+result = CompilationResult.from_json(serialized_result, action_types=(CX,))
+
+next(action for action in result.path if isinstance(action, CX))
 ```
 
 The result records the ordered hardware catalog used during compilation.

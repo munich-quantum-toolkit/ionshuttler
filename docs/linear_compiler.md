@@ -1,3 +1,11 @@
+---
+file_format: mystnb
+kernelspec:
+  name: python3
+mystnb:
+  number_source_lines: true
+---
+
 # Linear Compiler
 
 The Linear compiler turns a quantum circuit into a timed sequence of gates and
@@ -14,9 +22,7 @@ Qiskit circuit, QASM text, or a QASM file, then inspect the returned
 The following example uses five sites and one two-site processing zone. The
 compiler chooses the necessary shuttles, swaps, and gate start times.
 
-```python
-from pathlib import Path
-
+```{code-cell} ipython3
 from qiskit import QuantumCircuit
 
 from mqt.ionshuttler.linear import Architecture, CompilationStatus, LinearCompiler
@@ -39,15 +45,12 @@ if result.status is CompilationStatus.SUCCESS:
         print(action)
 else:
     print(f"Compilation stopped with {result.status.value}")
-
-# Saving is explicit; compile() itself does not create files.
-result.save("schedule", directory=Path("results"))
 ```
 
 By default, ions are distributed across the available sites. Pass one starting
 site per circuit qubit when a particular loading is required:
 
-```python
+```{code-cell} ipython3
 result = LinearCompiler(architecture).compile(
     circuit,
     initial_positions=[0, 4],
@@ -79,21 +82,22 @@ schedule search starts.
 
 Architectures can be created in Python, as above, or loaded from JSON:
 
-```json
-{
-  "num_sites": 7,
-  "processing_zones": {
-    "left_zone": [1, 2],
-    "right_zone": [5, 6]
-  }
-}
-```
-
-```python
+```{code-cell} ipython3
 from mqt.ionshuttler.linear import Architecture
 
-architecture = Architecture.load("architecture.json")
+architecture = Architecture.from_json(
+    """{
+      "num_sites": 7,
+      "processing_zones": {
+        "left_zone": [1, 2],
+        "right_zone": [5, 6]
+      }
+    }"""
+)
 ```
+
+Use `Architecture.load("architecture.json")` to read the same JSON
+representation from a file.
 
 Site numbers start at zero. Each processing zone must contain one or more
 contiguous sites, and processing zones may not overlap. A one-qubit gate needs
@@ -121,7 +125,7 @@ take. Defaults are measured in compiler timesteps:
 
 For example:
 
-```python
+```{code-cell} ipython3
 from mqt.ionshuttler.linear import (
     GateTiming,
     HardwareTiming,
@@ -161,7 +165,7 @@ valid complete schedule, but it is not a proof that no shorter schedule exists.
 
 The defaults favor practical compilation time:
 
-```python
+```{code-cell} ipython3
 from mqt.ionshuttler.linear import LinearCompilerConfig, SearchConfig
 
 config = LinearCompilerConfig(
@@ -193,7 +197,7 @@ config = LinearCompilerConfig(
 
 A useful, more thorough profile for small circuits is:
 
-```python
+```{code-cell} ipython3
 search = SearchConfig(
     horizon=None,
     committed_gates=1,
@@ -214,7 +218,7 @@ optimality mode.
 For small instances where a minimum-makespan result matters more than search
 speed, all quality-oriented shortcuts can be disabled:
 
-```python
+```{code-cell} ipython3
 exact_search = SearchConfig(
     horizon=None,
     committed_gates=1,
