@@ -247,6 +247,7 @@ git-only = [
     "docs/*",
     "tests/*",
     ".gitignore",
+    ".license-tools-config.json",
     ".readthedocs.yaml",
     ".rumdl.toml",
     "AGENTS.md",
