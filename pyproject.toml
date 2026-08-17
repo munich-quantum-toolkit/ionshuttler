@@ -1,3 +1,10 @@
+# Copyright (c) 2023 - 2026 Chair for Design Automation, TUM
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
+
 [build-system]
 requires = ["uv_build>=0.12.0,<0.13.0"]
 build-backend = "uv_build"
@@ -6,7 +13,8 @@ build-backend = "uv_build"
 name = "mqt-ionshuttler"
 version = "0.2.4"
 authors = [
-    { name = "Daniel Schoenberger", email = "daniel.schoenberger@tum.de"}
+    { name = "Daniel Schoenberger", email = "daniel.schoenberger@tum.de"},
+    { name = "Linus Schulte", email = "l.schule@tum.de"},
 ]
 description = "A solver for the shuttling problem in QCCD quantum computers"
 keywords = ["MQT", "quantum computing", "compilation", "shuttling", "design automation", "SAT solver"]
@@ -150,7 +158,6 @@ select = ["ALL"]
 ignore = [
   "C90",     # <...> too complex
   "COM812",  # Conflicts with formatter
-  "CPY001",  # Missing copyright notice
   "PLR09",   # Too many <...>
   "PLR1702", # Too many nested blocks
   "PLR2004", # Magic value used in comparison
