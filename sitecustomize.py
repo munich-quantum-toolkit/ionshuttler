@@ -1,3 +1,10 @@
+# Copyright (c) 2023 - 2026 Chair for Design Automation, TUM
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
+
 """Site customization shim to enable multiprocess coverage collection in tests.
 
 See: https://coverage.readthedocs.io/en/latest/subprocess.html.

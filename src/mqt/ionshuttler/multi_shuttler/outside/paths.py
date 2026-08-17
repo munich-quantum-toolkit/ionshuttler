@@ -1,3 +1,10 @@
+# Copyright (c) 2023 - 2026 Chair for Design Automation, TUM
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
+
 # from compilation import is_qasm_file, manual_copy_dag, parse_qasm, remove_node, update_sequence
 from __future__ import annotations
 

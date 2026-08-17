@@ -1,4 +1,10 @@
 #!/usr/bin/env -S uv run --script --quiet
+# Copyright (c) 2023 - 2026 Chair for Design Automation, TUM
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
 
 # /// script
 # dependencies = ["nox"]

@@ -1,3 +1,10 @@
+# Copyright (c) 2023 - 2026 Chair for Design Automation, TUM
+# All rights reserved.
+#
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License
+
 """Tests for the CLI entry points (console_scripts).
 
 Subprocess tests are used for --help / missing-arg smoke tests.
