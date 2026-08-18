@@ -19,6 +19,10 @@ import pytest
 from mqt.ionshuttler.linear import dd
 from mqt.ionshuttler.linear.dd import (
     DDPassResult,
+    GlobalDDConfig,
+    GlobalDDReport,
+    IdealizedHahnConfig,
+    IdealizedHahnReport,
     OperationDurations,
     SADDConfig,
     SADDMethod,
@@ -60,11 +64,17 @@ def test_dd_package_exports_only_the_supported_public_surface() -> None:
         "CriticalSegment",
         "CriticalSegmentResult",
         "DDPassResult",
+        "GlobalDDConfig",
+        "GlobalDDReport",
+        "IdealizedHahnConfig",
+        "IdealizedHahnReport",
         "OperationDurations",
         "SADDConfig",
         "SADDMethod",
         "SADDOpportunityRecord",
         "SADDReport",
+        "apply_idealized_hahn",
+        "apply_periodic_global_dd",
         "compute_critical_segments",
         "decoupling_ratio",
         "gate_z_effect",
@@ -76,6 +86,24 @@ def test_dd_package_exports_only_the_supported_public_surface() -> None:
         "sum_absolute_residual_phases_at_gates",
         "sum_squared_residual_phase",
     ]
+
+
+def test_comparator_report_types_are_available_without_optional_dependencies() -> None:
+    """Expose solver-free immutable result types for both comparator methods."""
+    idealized = IdealizedHahnReport()
+    global_report = GlobalDDReport(
+        scheme_name="periodic_x",
+        pulse_timesteps=(1, 3),
+        spacing=2,
+        sum_absolute_residual_phase=0.0,
+        sum_squared_residual_phase=0.0,
+        max_absolute_residual_phase=0.0,
+    )
+
+    assert IdealizedHahnConfig().label == "IdealizedHahn"
+    assert GlobalDDConfig(spacing=5).half_first_window
+    assert idealized.insertions == ()
+    assert global_report.pulse_timesteps == (1, 3)
 
 
 def test_sadd_defaults_freeze_the_paper_configuration() -> None:

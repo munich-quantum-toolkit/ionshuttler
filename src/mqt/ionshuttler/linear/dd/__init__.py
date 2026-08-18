@@ -14,6 +14,16 @@ from mqt.ionshuttler.linear.dd.critical_segments import (
     gate_z_effect,
     normalized_sensitivity_values,
 )
+from mqt.ionshuttler.linear.dd.global_dd import (
+    GlobalDDConfig,
+    GlobalDDReport,
+    apply_periodic_global_dd,
+)
+from mqt.ionshuttler.linear.dd.idealized_hahn import (
+    IdealizedHahnConfig,
+    IdealizedHahnReport,
+    apply_idealized_hahn,
+)
 from mqt.ionshuttler.linear.dd.metrics import (
     decoupling_ratio,
     max_absolute_residual_phase,
@@ -36,11 +46,17 @@ __all__ = [
     "CriticalSegment",
     "CriticalSegmentResult",
     "DDPassResult",
+    "GlobalDDConfig",
+    "GlobalDDReport",
+    "IdealizedHahnConfig",
+    "IdealizedHahnReport",
     "OperationDurations",
     "SADDConfig",
     "SADDMethod",
     "SADDOpportunityRecord",
     "SADDReport",
+    "apply_idealized_hahn",
+    "apply_periodic_global_dd",
     "compute_critical_segments",
     "decoupling_ratio",
     "gate_z_effect",
