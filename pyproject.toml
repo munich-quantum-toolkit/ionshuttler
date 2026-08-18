@@ -54,6 +54,11 @@ dependencies = [
 ]
 requires-python = ">=3.10"
 
+[project.optional-dependencies]
+dd = [
+    "ortools>=9.15.6755",
+]
+
 [project.scripts]
 mqt-ionshuttler-exact = "mqt.ionshuttler.single_shuttler.__main__:main"
 mqt-ionshuttler-heuristic = "mqt.ionshuttler.multi_shuttler.__main__:main"

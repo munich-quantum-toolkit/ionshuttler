@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "case": "local_pulse",
+  "config": {
+    "min_window_length": 2,
+    "max_window_length": 16,
+    "max_participating_ions": 5,
+    "timeout_s": 10.0,
+    "ion_preselection": "phase",
+    "opportunity_order": "chronological",
+    "max_accepted_windows": null,
+    "improvement_tolerance": 1e-12,
+    "allow_pulses": true,
+    "scale": 1000,
+    "operation_durations": {
+      "shuttle": 1,
+      "swap": 3,
+      "one_qubit_gate": 1
+    }
+  },
+  "base_result": {
+    "metadata": {
+      "architecture": {
+        "num_sites": 3,
+        "processing_zones": {
+          "pz": [1]
+        },
+        "field_profile": {
+          "default_field": 0.0,
+          "site_field": {
+            "0": 3.0,
+            "1": 1.0,
+            "2": 0.5
+          }
+        }
+      },
+      "initial_state": {
+        "site_occupancy": [null, 0, null]
+      }
+    },
+    "status": "SUCCESS",
+    "num_timesteps": 3,
+    "score": null,
+    "actions": [
+      { "type": "AdvanceTime", "start_time": 0, "duration": 1 },
+      { "type": "AdvanceTime", "start_time": 1, "duration": 1 },
+      { "type": "AdvanceTime", "start_time": 2, "duration": 1 }
+    ],
+    "dd_insertions": [],
+    "global_dd_records": []
+  },
+  "expected": {
+    "pulse_only_sadd": {
+      "allow_transport": false,
+      "unavailable_reason": null,
+      "final_state": {
+        "positions": [[0, 1]],
+        "completed_gates": [],
+        "in_progress_gates": [],
+        "ions_busy_until": [[0, 3]],
+        "pzs_busy_until": [["pz", 3]],
+        "time": 3
+      },
+      "result": {
+        "metadata": {
+          "architecture": {
+            "num_sites": 3,
+            "processing_zones": {
+              "pz": [1]
+            },
+            "field_profile": {
+              "default_field": 0.0,
+              "site_field": {
+                "0": 3.0,
+                "1": 1.0,
+                "2": 0.5
+              }
+            }
+          },
+          "initial_state": {
+            "site_occupancy": [null, 0, null]
+          }
+        },
+        "status": "SUCCESS",
+        "num_timesteps": 3,
+        "score": 3,
+        "actions": [
+          { "type": "AdvanceTime", "start_time": 0, "duration": 1 },
+          { "type": "AdvanceTime", "start_time": 1, "duration": 1 },
+          {
+            "type": "Rx",
+            "ion": 0,
+            "theta": 3.141592653589793,
+            "start_time": 2,
+            "duration": 1
+          },
+          { "type": "AdvanceTime", "start_time": 2, "duration": 1 }
+        ],
+        "dd_insertions": [
+          {
+            "ion": 0,
+            "window": [0, 3],
+            "scheme_name": "cp_sat_control_centric",
+            "gate_timesteps": [2],
+            "remaining_phase": 0.0,
+            "phase_reduction": 0.0
+          }
+        ],
+        "global_dd_records": []
+      },
+      "records": [
+        {
+          "target_pz": "pz",
+          "window": [0, 3],
+          "participating_ions": [0],
+          "status": "OPTIMAL",
+          "validation_status": "valid",
+          "objective_before": 2.6341463414634156,
+          "objective_after": 0.2926829268292684,
+          "accepted": true,
+          "pulse_count": 1,
+          "transport_action_count": 0,
+          "message": null,
+          "eligible_ions": [0],
+          "rejected_busy_ions": [],
+          "rejected_no_active_segment_ions": [],
+          "rejected_unreachable_ions": [],
+          "selection_scores": [[0, 2.6341463414634156, 0]],
+          "phase_before_by_ion": { "0": 2.6341463414634156 },
+          "phase_after_by_ion": { "0": 0.2926829268292684 },
+          "pulse_timesteps": { "0": [2] },
+          "transport_actions": [],
+          "trajectories": { "0": [1, 1, 1] },
+          "model_num_variables": 38,
+          "model_num_constraints": 94
+        }
+      ]
+    }
+  }
+}

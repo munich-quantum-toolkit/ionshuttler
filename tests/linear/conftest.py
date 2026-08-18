@@ -16,6 +16,7 @@ from typing import cast
 import pytest
 
 _GOLDEN_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "production_default_golden.json"
+_SADD_FIXTURE_DIRECTORY = Path(__file__).parent / "fixtures" / "dd"
 
 
 @pytest.fixture
@@ -26,5 +27,18 @@ def production_default_golden() -> dict[str, object]:
         The source input, compiler configuration, and normalized expected result.
     """
     data = json.loads(_GOLDEN_FIXTURE_PATH.read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+    return cast("dict[str, object]", data)
+
+
+@pytest.fixture(params=sorted(_SADD_FIXTURE_DIRECTORY.glob("sadd_*.json")), ids=lambda path: path.stem)
+def sadd_golden(request: pytest.FixtureRequest) -> dict[str, object]:
+    """Load one deterministic source-derived SADD fixture.
+
+    Returns:
+        A base schedule, SADD configuration, and normalized expected observations.
+    """
+    path = cast("Path", request.param)
+    data = json.loads(path.read_text(encoding="utf-8"))
     assert isinstance(data, dict)
     return cast("dict[str, object]", data)
