@@ -82,6 +82,7 @@ self
 
 installation
 linear_compiler
+linear_dd
 linear_hardware_model
 references
 ```

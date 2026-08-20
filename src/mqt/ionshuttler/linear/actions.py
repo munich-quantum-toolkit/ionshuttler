@@ -18,6 +18,8 @@ from abc import ABC, abstractmethod
 from dataclasses import MISSING, dataclass, field, fields, replace
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
+from .._json_utils import require_bool, require_int, require_number, require_optional_number, require_str
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
@@ -167,9 +169,9 @@ class Shuttle(TransportAction):
             The restored shuttle.
         """
         return cls(
-            ion=_require_int(data, "ion"),
-            src=_require_int(data, "src"),
-            dst=_require_int(data, "dst"),
+            ion=require_int(data, "ion"),
+            src=require_int(data, "src"),
+            dst=require_int(data, "dst"),
             duration=_require_duration(data, default=1),
         )
 
@@ -243,10 +245,10 @@ class PhysicalSwap(TransportAction):
             The restored swap.
         """
         return cls(
-            ion_a=_require_int(data, "ion_a"),
-            ion_b=_require_int(data, "ion_b"),
-            pos_a=_require_int(data, "pos_a"),
-            pos_b=_require_int(data, "pos_b"),
+            ion_a=require_int(data, "ion_a"),
+            ion_b=require_int(data, "ion_b"),
+            pos_a=require_int(data, "pos_a"),
+            pos_b=require_int(data, "pos_b"),
             duration=_require_duration(data, default=1),
         )
 
@@ -390,11 +392,11 @@ class SingleQubitGate(GateAction):
         default_duration = cast("int", _field_default(cls, "duration"))
         default_virtual = cast("bool", _field_default(cls, "virtual"))
         values: dict[str, object] = {
-            "ion": _require_int(data, "ion"),
+            "ion": require_int(data, "ion"),
             "duration": _require_duration(data, default=default_duration, allow_zero=True),
-            "virtual": _require_bool(data, "virtual", default=default_virtual),
+            "virtual": require_bool(data, "virtual", default=default_virtual),
         }
-        values.update({name: _require_number(data, name) for name in cls.parameter_names})
+        values.update({name: require_number(data, name) for name in cls.parameter_names})
         return _construct_action(cls, values)
 
     def __post_init__(self) -> None:
@@ -499,14 +501,14 @@ class TwoQubitGate(GateAction):
             The restored gate.
         """
         values: dict[str, object] = {
-            "ion_a": _require_int(data, "ion_a"),
-            "ion_b": _require_int(data, "ion_b"),
+            "ion_a": require_int(data, "ion_a"),
+            "ion_b": require_int(data, "ion_b"),
             "duration": _require_duration(
                 data,
                 default=cast("int", _field_default(cls, "duration")),
             ),
         }
-        values.update({name: _require_number(data, name) for name in cls.parameter_names})
+        values.update({name: require_number(data, name) for name in cls.parameter_names})
         return _construct_action(cls, values)
 
     def is_valid(self, state: State, architecture: Architecture) -> bool:
@@ -637,8 +639,8 @@ class GlobalPulse(GateAction):
         """
         return cls(
             gate=GateSpec(
-                gate_name=_require_str(data, "gate_name"),
-                theta=_require_optional_number(data, "theta"),
+                gate_name=require_str(data, "gate_name"),
+                theta=require_optional_number(data, "theta"),
             ),
             duration=_require_duration(data, default=1),
         )
@@ -822,109 +824,6 @@ def _field_default(action_type: type[Action], name: str) -> object:
         msg = f"{action_type.__name__} must define a default {name}"
         raise ValueError(msg)
     return model_field.default
-
-
-def _require_int(data: Mapping[str, object], key: str) -> int:
-    """Read an integer from serialized action data.
-
-    Args:
-        data: Serialized action fields.
-        key: Field to read.
-
-    Returns:
-        The integer value.
-
-    Raises:
-        ValueError: If the field is absent or is not an integer.
-    """
-    value = data.get(key)
-    if isinstance(value, bool) or not isinstance(value, int):
-        msg = f"{key} must be an integer"
-        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error]
-    return value
-
-
-def _require_number(data: Mapping[str, object], key: str) -> float:
-    """Read a numeric value from serialized action data.
-
-    Args:
-        data: Serialized action fields.
-        key: Field to read.
-
-    Returns:
-        The value converted to a float.
-
-    Raises:
-        ValueError: If the field is absent or is not numeric.
-    """
-    value = data.get(key)
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        msg = f"{key} must be numeric"
-        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error]
-    return float(value)
-
-
-def _require_optional_number(data: Mapping[str, object], key: str) -> float | None:
-    """Read an optional numeric value from serialized action data.
-
-    Args:
-        data: Serialized action fields.
-        key: Field to read.
-
-    Returns:
-        The value converted to a float, or ``None``.
-
-    Raises:
-        ValueError: If a non-null value is not numeric.
-    """
-    value = data.get(key)
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        msg = f"{key} must be numeric or null"
-        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error]
-    return float(value)
-
-
-def _require_str(data: Mapping[str, object], key: str) -> str:
-    """Read a string from serialized action data.
-
-    Args:
-        data: Serialized action fields.
-        key: Field to read.
-
-    Returns:
-        The string value.
-
-    Raises:
-        ValueError: If the field is absent or is not a string.
-    """
-    value = data.get(key)
-    if not isinstance(value, str):
-        msg = f"{key} must be a string"
-        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error]
-    return value
-
-
-def _require_bool(data: Mapping[str, object], key: str, *, default: bool) -> bool:
-    """Read a Boolean from serialized action data.
-
-    Args:
-        data: Serialized action fields.
-        key: Field to read.
-        default: Value used when the field is absent.
-
-    Returns:
-        The Boolean value.
-
-    Raises:
-        ValueError: If the value is not Boolean.
-    """
-    value = data.get(key, default)
-    if not isinstance(value, bool):
-        msg = f"{key} must be a boolean"
-        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error]
-    return value
 
 
 def _require_duration(

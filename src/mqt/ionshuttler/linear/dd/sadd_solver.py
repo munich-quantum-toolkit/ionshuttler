@@ -12,6 +12,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from importlib import import_module
+from itertools import count
 from math import pi
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 
@@ -26,9 +27,9 @@ from mqt.ionshuttler.linear.actions import (
     TwoQubitGate,
 )
 from mqt.ionshuttler.linear.dd.critical_segments import CriticalSegment, compute_critical_segments
-from mqt.ionshuttler.linear.dd.schedule_transform import rebuild_result, validate_rebuilt_schedule
+from mqt.ionshuttler.linear.dd.schedule_transform import rebuild_schedule, validate_rebuilt_schedule
 from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
-from mqt.ionshuttler.linear.result import CompilationResult, DDInsertionRecord
+from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -66,8 +67,7 @@ class _InferredDurations:
 class SADDProblem:
     """Contain one bounded control-window CP-SAT problem."""
 
-    result: CompilationResult
-    architecture: Architecture
+    schedule: ActionSchedule
     target_pz: str
     t_start: int
     t_end: int
@@ -83,11 +83,17 @@ class SADDProblem:
     swap_duration: int = 1
     pulse_duration: int = 1
     num_search_workers: int = 8
+    local_pulse_action_ids: frozenset[int] = frozenset()
 
     @property
     def duration(self) -> int:
         """Number of discrete intervals in the opportunity."""
         return self.t_end - self.t_start
+
+    @property
+    def architecture(self) -> Architecture:
+        """Hardware model owned by the input schedule."""
+        return self.schedule.architecture
 
 
 @dataclass(frozen=True)
@@ -99,8 +105,9 @@ class SADDSolution:
     objective_after: float | None
     trajectories: dict[int, tuple[int, ...]]
     pulse_timesteps: dict[int, tuple[int, ...]]
+    pulse_action_ids: dict[int, tuple[int, ...]]
     transport_actions: tuple[tuple[int, Action], ...]
-    result: CompilationResult | None
+    schedule: ActionSchedule | None
     validation_status: str
     validation_error: str | None
     runtime_s: float
@@ -111,12 +118,11 @@ class SADDSolution:
     @property
     def materialized(self) -> bool:
         """Whether the solution produced a replay-valid schedule."""
-        return self.result is not None and self.validation_status == "valid"
+        return self.schedule is not None and self.validation_status == "valid"
 
 
 def build_sadd_problem(
-    result: CompilationResult,
-    architecture: Architecture,
+    schedule: ActionSchedule,
     *,
     target_pz: str,
     t_start: int,
@@ -125,6 +131,7 @@ def build_sadd_problem(
     scale: int = 1000,
     operation_durations: _OperationDurations | None = None,
     num_search_workers: int = 8,
+    local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> SADDProblem:
     """Build one shuttling-aware dynamical decoupling optimization problem.
 
@@ -134,14 +141,12 @@ def build_sadd_problem(
     Raises:
         ValueError: If schedule metadata or problem bounds are invalid.
     """
-    if result.initial_state is None:
-        msg = "result.initial_state is required for SADD solving"
-        raise ValueError(msg)
+    architecture = schedule.architecture
     if target_pz not in (architecture.processing_zones or {}):
         msg = f"unknown processing zone: {target_pz!r}"
         raise ValueError(msg)
-    if not 0 <= t_start < t_end <= result.num_timesteps:
-        msg = f"expected 0 <= t_start < t_end <= {result.num_timesteps}"
+    if not 0 <= t_start < t_end <= schedule.num_timesteps:
+        msg = f"expected 0 <= t_start < t_end <= {schedule.num_timesteps}"
         raise ValueError(msg)
     if not participating_ions:
         msg = "participating_ions must not be empty"
@@ -153,9 +158,9 @@ def build_sadd_problem(
         msg = "num_search_workers must be >= 1"
         raise ValueError(msg)
 
-    durations = operation_durations or _infer_operation_durations(result)
-    timeline = build_timeline(result, architecture)
-    positions_before = _positions_before_timesteps(result)
+    durations = operation_durations or _infer_operation_durations(schedule)
+    timeline = build_timeline(schedule)
+    positions_before = _positions_before_timesteps(schedule)
     fixed_positions, fixed_transport_timesteps = _fixed_positions_for_interval(
         timeline,
         positions_before,
@@ -163,15 +168,14 @@ def build_sadd_problem(
         t_start,
         t_end,
     )
-    trace = compute_critical_segments(result, architecture)
+    trace = compute_critical_segments(schedule, local_pulse_action_ids=local_pulse_action_ids)
     phase_segments = tuple(
         segment
         for segment in trace.segments
         if segment.ion in participating_ions and segment.start < t_end and t_start < segment.end
     )
     return SADDProblem(
-        result=result,
-        architecture=architecture,
+        schedule=schedule,
         target_pz=target_pz,
         t_start=t_start,
         t_end=t_end,
@@ -187,6 +191,7 @@ def build_sadd_problem(
         swap_duration=durations.swap,
         pulse_duration=durations.one_qubit_gate,
         num_search_workers=num_search_workers,
+        local_pulse_action_ids=local_pulse_action_ids,
     )
 
 
@@ -204,7 +209,7 @@ def solve_sadd_problem(
     """
     cp_model = _load_cp_model()
     started = time.perf_counter()
-    timeline = build_timeline(problem.result, problem.architecture)
+    timeline = build_timeline(problem.schedule)
     model = cp_model.CpModel()
     rel_times = range(problem.duration)
 
@@ -242,8 +247,9 @@ def solve_sadd_problem(
             objective_after=None,
             trajectories={},
             pulse_timesteps={},
+            pulse_action_ids={},
             transport_actions=(),
-            result=None,
+            schedule=None,
             validation_status="not_solved",
             validation_error=None,
             runtime_s=time.perf_counter() - started,
@@ -251,7 +257,7 @@ def solve_sadd_problem(
             model_num_constraints=model_num_constraints,
         )
 
-    primary_objective_value = _canonicalize_solution(model, solver, objective, control, problem)
+    primary_objective_value = round(solver.ObjectiveValue())
     runtime_s = time.perf_counter() - started
 
     trajectories = {
@@ -263,7 +269,7 @@ def solve_sadd_problem(
         for ion in problem.participating_ions
     }
     transport_actions = _decode_transport_actions(problem, trajectories)
-    materialized, validation_status, validation_error = _materialize_solution(
+    materialized, pulse_action_ids, validation_status, validation_error = _materialize_solution(
         problem,
         transport_actions,
         pulse_timesteps,
@@ -274,8 +280,9 @@ def solve_sadd_problem(
         objective_after=_objective_for_result(materialized, problem) if materialized is not None else None,
         trajectories=trajectories,
         pulse_timesteps=pulse_timesteps,
+        pulse_action_ids=pulse_action_ids,
         transport_actions=transport_actions,
-        result=materialized,
+        schedule=materialized,
         validation_status=validation_status,
         validation_error=validation_error,
         runtime_s=runtime_s,
@@ -283,32 +290,6 @@ def solve_sadd_problem(
         model_num_variables=model_num_variables,
         model_num_constraints=model_num_constraints,
     )
-
-
-def _canonicalize_solution(
-    model: SolverObject,
-    solver: SolverObject,
-    primary_objective: SolverObject,
-    control: dict[tuple[int, int], SolverObject],
-    problem: SADDProblem,
-) -> int:
-    """Select a deterministic representative without changing the primary optimum.
-
-    Returns:
-        The fixed primary-objective value.
-
-    Raises:
-        RuntimeError: If the constrained model can no longer be solved.
-    """
-    primary_value = round(solver.ObjectiveValue())
-    model.Add(primary_objective == primary_value)
-    model.Minimize(sum((problem.duration - rel_t) * variable for (_ion, rel_t), variable in control.items()))
-    solver.parameters.num_search_workers = 1
-    canonical_status = solver.Solve(model)
-    if solver.StatusName(canonical_status) not in {"OPTIMAL", "FEASIBLE"}:
-        msg = "failed to canonicalize an already feasible SADD optimum"
-        raise RuntimeError(msg)
-    return primary_value
 
 
 def _load_cp_model() -> ModuleType:
@@ -329,9 +310,9 @@ def _load_cp_model() -> ModuleType:
         raise
 
 
-def _infer_operation_durations(result: CompilationResult) -> _InferredDurations:
-    shuttle_durations = {action.duration for action in result.path if isinstance(action, Shuttle)}
-    swap_durations = {action.duration for action in result.path if isinstance(action, PhysicalSwap)}
+def _infer_operation_durations(program: ActionSchedule) -> _InferredDurations:
+    shuttle_durations = {action.duration for action in program.path if isinstance(action, Shuttle)}
+    swap_durations = {action.duration for action in program.path if isinstance(action, PhysicalSwap)}
     return _InferredDurations(
         shuttle=_single_duration_or_default(shuttle_durations),
         swap=_single_duration_or_default(swap_durations),
@@ -377,14 +358,11 @@ def _fixed_positions_for_interval(
     return fixed, frozenset(fixed_transport)
 
 
-def _positions_before_timesteps(result: CompilationResult) -> dict[int, dict[int, int]]:
-    if result.initial_state is None:
-        msg = "result.initial_state is required to infer timestep boundary positions"
-        raise ValueError(msg)
-    positions = dict(result.initial_state.positions)
+def _positions_before_timesteps(program: ActionSchedule) -> dict[int, dict[int, int]]:
+    positions = dict(program.initial_state.positions)
     positions_before = {0: dict(positions)}
     current_time = 0
-    for action in result.path:
+    for action in program.path:
         if isinstance(action, AdvanceTime):
             current_time += action.timestep_increment
             positions_before.setdefault(current_time, dict(positions))
@@ -808,56 +786,66 @@ def _materialize_solution(
     problem: SADDProblem,
     transport_actions: tuple[tuple[int, Action], ...],
     pulse_timesteps: dict[int, tuple[int, ...]],
-) -> tuple[CompilationResult | None, str, str | None]:
+) -> tuple[ActionSchedule | None, dict[int, tuple[int, ...]], str, str | None]:
     try:
-        updated = _materialize_and_validate(problem, transport_actions, pulse_timesteps)
+        updated, pulse_action_ids = _materialize_and_validate(problem, transport_actions, pulse_timesteps)
     except Exception as error:  # ruff: ignore[blind-except] - Validation details are part of the solver result.
-        return None, "invalid", str(error)
-    return updated, "valid", None
+        return None, {}, "invalid", str(error)
+    return updated, pulse_action_ids, "valid", None
 
 
 def _materialize_and_validate(
     problem: SADDProblem,
     transport_actions: tuple[tuple[int, Action], ...],
     pulse_timesteps: dict[int, tuple[int, ...]],
-) -> CompilationResult:
-    updated = _rewrite_control_window(problem, transport_actions, pulse_timesteps)
-    updated = _append_dd_records(updated, problem, pulse_timesteps)
-    if not validate_rebuilt_schedule(updated, problem.architecture):
+) -> tuple[ActionSchedule, dict[int, tuple[int, ...]]]:
+    updated, pulse_action_ids = _rewrite_control_window(problem, transport_actions, pulse_timesteps)
+    if not validate_rebuilt_schedule(updated):
         msg = "decoded solution fails full schedule replay validation"
         raise ValueError(msg)
-    updated_timeline = build_timeline(updated, problem.architecture)
-    original_timeline = build_timeline(problem.result, problem.architecture)
+    updated_timeline = build_timeline(updated)
+    original_timeline = build_timeline(problem.schedule)
     if (
-        updated_timeline.state_at(problem.result.num_timesteps).positions
-        != original_timeline.state_at(problem.result.num_timesteps).positions
+        updated_timeline.state_at(problem.schedule.num_timesteps).positions
+        != original_timeline.state_at(problem.schedule.num_timesteps).positions
     ):
         msg = "decoded solution changes final ion positions"
         raise ValueError(msg)
-    return updated
+    return updated, pulse_action_ids
 
 
 def _rewrite_control_window(
     problem: SADDProblem,
     transport_actions: tuple[tuple[int, Action], ...],
     pulse_timesteps: dict[int, tuple[int, ...]],
-) -> CompilationResult:
-    actions_by_time = _non_advance_actions_by_time(problem.result)
+) -> tuple[ActionSchedule, dict[int, tuple[int, ...]]]:
+    timeline = build_timeline(problem.schedule)
     participant_set = set(problem.participating_ions)
     decoded_transport_by_time: dict[int, list[Action]] = {}
     for timestep, action in transport_actions:
         decoded_transport_by_time.setdefault(timestep, []).append(action)
-    pulses_by_time: dict[int, list[Action]] = {}
+    pulses_by_time: dict[int, list[Rx]] = {}
     for ion, timesteps in pulse_timesteps.items():
         for timestep in timesteps:
             pulses_by_time.setdefault(timestep, []).append(Rx(ion=ion, theta=pi, duration=problem.pulse_duration))
 
-    new_path: list[Action] = []
-    for timestep in range(problem.result.num_timesteps + 1):
+    action_ids = count(problem.schedule.next_action_id)
+    pulse_action_ids: dict[int, list[int]] = {}
+    new_actions: list[ScheduledAction] = []
+    for timestep in range(problem.schedule.num_timesteps + 1):
         if problem.t_start <= timestep < problem.t_end:
-            new_path.extend(decoded_transport_by_time.get(timestep, ()))
-            new_path.extend(pulses_by_time.get(timestep, ()))
-        for action in actions_by_time.get(timestep, ()):
+            new_actions.extend(
+                ScheduledAction(next(action_ids), action) for action in decoded_transport_by_time.get(timestep, ())
+            )
+            for action in pulses_by_time.get(timestep, ()):
+                action_id = next(action_ids)
+                new_actions.append(ScheduledAction(action_id, action))
+                pulse_action_ids.setdefault(action.ion, []).append(action_id)
+        original_at_time = timeline.scheduled_action_at(timestep) or ()
+        for item in original_at_time:
+            action = item.action
+            if isinstance(action, AdvanceTime):
+                continue
             if (
                 problem.t_start <= timestep < problem.t_end
                 and isinstance(action, TransportAction)
@@ -866,58 +854,21 @@ def _rewrite_control_window(
                 duration = cast("_HasDuration", action).duration
                 if _action_ions(action).issubset(participant_set) and timestep + duration <= problem.t_end:
                     continue
-            new_path.append(action)
-        if timestep < problem.result.num_timesteps:
-            new_path.append(AdvanceTime())
-    return rebuild_result(problem.result, new_path, problem.architecture)
+            new_actions.append(item)
+        new_actions.extend(item for item in original_at_time if isinstance(item.action, AdvanceTime))
+    return rebuild_schedule(problem.schedule, new_actions), {
+        ion: tuple(pulse_action_ids.get(ion, ())) for ion in pulse_timesteps
+    }
 
 
-def _non_advance_actions_by_time(result: CompilationResult) -> dict[int, tuple[Action, ...]]:
-    current_time = 0
-    actions_by_time: dict[int, list[Action]] = {}
-    for action in result.path:
-        if isinstance(action, AdvanceTime):
-            current_time += action.timestep_increment
-        else:
-            actions_by_time.setdefault(current_time, []).append(action)
-    return {timestep: tuple(actions) for timestep, actions in actions_by_time.items()}
-
-
-def _append_dd_records(
-    result: CompilationResult,
-    problem: SADDProblem,
-    pulse_timesteps: dict[int, tuple[int, ...]],
-) -> CompilationResult:
-    records = tuple(
-        DDInsertionRecord(
-            ion=ion,
-            window=(problem.t_start, problem.t_end),
-            scheme_name="cp_sat_control_centric",
-            gate_timesteps=timesteps,
-        )
-        for ion, timesteps in sorted(pulse_timesteps.items())
-        if timesteps
+def _objective_for_result(program: ActionSchedule, problem: SADDProblem) -> float:
+    inserted_action_ids = frozenset(item.action_id for item in program.scheduled_actions).difference(
+        item.action_id for item in problem.schedule.scheduled_actions
     )
-    if not records:
-        return result
-    return CompilationResult(
-        status=result.status,
-        path=result.path,
-        num_timesteps=result.num_timesteps,
-        wall_clock_s=result.wall_clock_s,
-        score=result.score,
-        final_state=result.final_state,
-        architecture=result.architecture,
-        initial_state=result.initial_state,
-        dd_insertions=(*result.dd_insertions, *records),
-        global_dd_records=result.global_dd_records,
-        explored_nodes=result.explored_nodes,
-        action_types=result.action_types,
+    trace = compute_critical_segments(
+        program,
+        local_pulse_action_ids=problem.local_pulse_action_ids.union(inserted_action_ids),
     )
-
-
-def _objective_for_result(result: CompilationResult, problem: SADDProblem) -> float:
-    trace = compute_critical_segments(result, problem.architecture)
     segment_keys = {(segment.ion, segment.index, segment.start, segment.end) for segment in problem.phase_segments}
     return sum(
         segment.squared_phase

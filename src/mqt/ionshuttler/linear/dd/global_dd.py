@@ -10,21 +10,20 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
+from itertools import count
 from math import isfinite, pi
-from typing import TYPE_CHECKING, Literal
+from typing import ClassVar, Literal, cast
 
-from mqt.ionshuttler.linear.actions import Action, AdvanceTime, GateSpec, GlobalPulse
+from mqt.ionshuttler.linear.actions import AdvanceTime, GateSpec, GlobalPulse
 from mqt.ionshuttler.linear.dd.frame_replay import frame_operation_for_gate_spec, global_pulse_timesteps
 from mqt.ionshuttler.linear.dd.metrics import ResidualPhaseSummary, summarize_residual_phases
 from mqt.ionshuttler.linear.dd.result import DDPassResult
-from mqt.ionshuttler.linear.dd.schedule_transform import rebuild_result
+from mqt.ionshuttler.linear.dd.schedule_transform import rebuild_schedule
 from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
-from mqt.ionshuttler.linear.result import GlobalDDRecord
+from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
 
-if TYPE_CHECKING:
-    from mqt.ionshuttler.linear.architecture import Architecture
-    from mqt.ionshuttler.linear.result import CompilationResult
+from ..._json_utils import require_int, require_int_list, require_number, require_str
 
 ShiftObjective = Literal["sum_abs", "sum_squared"]
 _SHIFT_OBJECTIVES = frozenset({"sum_abs", "sum_squared"})
@@ -80,6 +79,8 @@ class GlobalDDConfig:
 class GlobalDDReport:
     """Summarize the selected global pulse sequence and residual phases."""
 
+    report_type: ClassVar[str] = "periodic_global_dd"
+
     scheme_name: str
     pulse_timesteps: tuple[int, ...]
     spacing: int
@@ -121,12 +122,45 @@ class GlobalDDReport:
                 raise ValueError(msg)
         object.__setattr__(self, "pulse_timesteps", pulse_timesteps)
 
+    def to_dict(self) -> dict[str, object]:
+        """Return this report using JSON-compatible values."""
+        return {
+            "scheme_name": self.scheme_name,
+            "pulse_timesteps": list(self.pulse_timesteps),
+            "spacing": self.spacing,
+            "sum_absolute_residual_phase": self.sum_absolute_residual_phase,
+            "sum_squared_residual_phase": self.sum_squared_residual_phase,
+            "max_absolute_residual_phase": self.max_absolute_residual_phase,
+        }
+
+    @classmethod
+    def from_dict(cls, data: object) -> GlobalDDReport:
+        """Restore a global-DD report from JSON-compatible values.
+
+        Returns:
+            The restored global-DD report.
+
+        Raises:
+            ValueError: If the serialized report is malformed.
+        """
+        if not isinstance(data, dict):
+            msg = "global DD report must be a JSON object"
+            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Malformed JSON uses ValueError.
+        mapping = cast("dict[str, object]", data)
+        return cls(
+            scheme_name=require_str(mapping, "scheme_name"),
+            pulse_timesteps=tuple(require_int_list(mapping, "pulse_timesteps")),
+            spacing=require_int(mapping, "spacing"),
+            sum_absolute_residual_phase=require_number(mapping, "sum_absolute_residual_phase"),
+            sum_squared_residual_phase=require_number(mapping, "sum_squared_residual_phase"),
+            max_absolute_residual_phase=require_number(mapping, "max_absolute_residual_phase"),
+        )
+
 
 def apply_periodic_global_dd(
-    result: CompilationResult,
+    schedule: ActionSchedule,
     config: GlobalDDConfig,
-    architecture: Architecture | None = None,
-) -> DDPassResult[CompilationResult, GlobalDDReport]:
+) -> DDPassResult[GlobalDDReport]:
     """Insert periodic global X pulses, optionally shifting them by phase cost.
 
     Global pulses are placed before all existing actions at the same schedule
@@ -139,15 +173,7 @@ def apply_periodic_global_dd(
     Raises:
         ValueError: If replay metadata is absent or global pulses already exist.
     """
-    resolved_architecture = architecture or result.architecture
-    if resolved_architecture is None:
-        msg = "architecture is required for global DD"
-        raise ValueError(msg)
-    if result.initial_state is None:
-        msg = "result.initial_state is required for global DD"
-        raise ValueError(msg)
-
-    timeline = build_timeline(result, resolved_architecture)
+    timeline = build_timeline(schedule)
     existing_pulse_times = global_pulse_timesteps(timeline)
     if existing_pulse_times:
         msg = (
@@ -157,29 +183,20 @@ def apply_periodic_global_dd(
         raise ValueError(msg)
 
     candidate_times = _periodic_pulse_timesteps(
-        result.num_timesteps,
+        schedule.num_timesteps,
         config.spacing,
         half_first_window=config.half_first_window,
     )
     if not candidate_times:
-        report = _global_dd_report(config, (), summarize_residual_phases(result, timeline=timeline))
-        return DDPassResult(program=result, report=report)
+        report = _global_dd_report(config, (), summarize_residual_phases(schedule, timeline=timeline))
+        return DDPassResult(schedule=schedule, report=report)
 
     pulse_timesteps, updated, summary = _optimize_global_pulse_timesteps(
-        result,
-        resolved_architecture,
+        schedule,
         config,
         candidate_times,
     )
     report = _global_dd_report(config, pulse_timesteps, summary)
-    record = GlobalDDRecord(
-        scheme_name=config.scheme_name,
-        pulse_timesteps=pulse_timesteps,
-        spacing=config.spacing,
-        sum_abs_residual_phase=summary.sum_absolute_residual_phase,
-        sum_squared_residual_phase=summary.sum_squared_residual_phase,
-        max_abs_residual_phase=summary.max_absolute_residual_phase,
-    )
     logger.info(
         "inserted periodic global DD: scheme=%s spacing=%s shift_range=%s shift_objective=%s pulse_timesteps=%s",
         config.scheme_name,
@@ -188,22 +205,17 @@ def apply_periodic_global_dd(
         config.shift_objective,
         pulse_timesteps,
     )
-    return DDPassResult(
-        program=replace(updated, global_dd_records=(*result.global_dd_records, record)),
-        report=report,
-    )
+    return DDPassResult(schedule=updated, report=report)
 
 
 def _optimize_global_pulse_timesteps(
-    result: CompilationResult,
-    architecture: Architecture,
+    program: ActionSchedule,
     config: GlobalDDConfig,
     base_pulse_timesteps: tuple[int, ...],
-) -> tuple[tuple[int, ...], CompilationResult, ResidualPhaseSummary]:
+) -> tuple[tuple[int, ...], ActionSchedule, ResidualPhaseSummary]:
     best_timesteps = base_pulse_timesteps
     best_result, _timeline, best_summary = _materialize_candidate(
-        result,
-        architecture,
+        program,
         base_pulse_timesteps,
         config.pulse,
     )
@@ -219,12 +231,11 @@ def _optimize_global_pulse_timesteps(
         for candidate_timesteps in _shifted_pulse_timestep_candidates(
             best_timesteps,
             pulse_index,
-            result.num_timesteps,
+            program.num_timesteps,
             config.shift_range,
         ):
             candidate_result, _timeline, candidate_summary = _materialize_candidate(
-                result,
-                architecture,
+                program,
                 candidate_timesteps,
                 config.pulse,
             )
@@ -242,14 +253,13 @@ def _optimize_global_pulse_timesteps(
 
 
 def _materialize_candidate(
-    result: CompilationResult,
-    architecture: Architecture,
+    program: ActionSchedule,
     pulse_timesteps: tuple[int, ...],
     pulse_spec: GateSpec,
-) -> tuple[CompilationResult, CompiledTimeline, ResidualPhaseSummary]:
-    path = _path_with_inserted_global_pulses(result.path, pulse_timesteps, pulse_spec)
-    updated = rebuild_result(result, path, architecture)
-    timeline = build_timeline(updated, architecture)
+) -> tuple[ActionSchedule, CompiledTimeline, ResidualPhaseSummary]:
+    scheduled_actions = _path_with_inserted_global_pulses(program, pulse_timesteps, pulse_spec)
+    updated = rebuild_schedule(program, scheduled_actions)
+    timeline = build_timeline(updated)
     return updated, timeline, summarize_residual_phases(updated, timeline=timeline)
 
 
@@ -280,25 +290,26 @@ def _shifted_pulse_timestep_candidates(
 
 
 def _path_with_inserted_global_pulses(
-    path: list[Action],
+    program: ActionSchedule,
     pulse_timesteps: tuple[int, ...],
     pulse_spec: GateSpec,
-) -> list[Action]:
+) -> tuple[ScheduledAction, ...]:
     pulses_by_time = {timestep: [GlobalPulse(gate=pulse_spec)] for timestep in pulse_timesteps}
-    updated: list[Action] = []
+    updated: list[ScheduledAction] = []
+    action_ids = count(program.next_action_id)
     current_time = 0
     inserted_at_current_time = False
-    for action in path:
+    for item in program.scheduled_actions:
         if not inserted_at_current_time and current_time in pulses_by_time:
-            updated.extend(pulses_by_time[current_time])
+            updated.extend(ScheduledAction(next(action_ids), action) for action in pulses_by_time[current_time])
             inserted_at_current_time = True
-        updated.append(action)
-        if isinstance(action, AdvanceTime):
-            current_time += action.timestep_increment
+        updated.append(item)
+        if isinstance(item.action, AdvanceTime):
+            current_time += item.action.timestep_increment
             inserted_at_current_time = False
     if not inserted_at_current_time and current_time in pulses_by_time:
-        updated.extend(pulses_by_time[current_time])
-    return updated
+        updated.extend(ScheduledAction(next(action_ids), action) for action in pulses_by_time[current_time])
+    return tuple(updated)
 
 
 def _periodic_pulse_timesteps(

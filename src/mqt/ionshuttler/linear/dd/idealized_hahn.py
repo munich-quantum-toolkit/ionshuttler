@@ -9,20 +9,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from itertools import count
+from typing import ClassVar
 
 from mqt.ionshuttler.linear.actions import Action, AdvanceTime, GateSpec, Rx, Ry, Rz
-from mqt.ionshuttler.linear.dd.result import DDPassResult
-from mqt.ionshuttler.linear.dd.schedule_transform import rebuild_result
+from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
+from mqt.ionshuttler.linear.dd.schedule_transform import rebuild_schedule
 from mqt.ionshuttler.linear.dd.schemes import DDScheme, get_dd_scheme
 from mqt.ionshuttler.linear.dd.timeline import build_timeline
 from mqt.ionshuttler.linear.dd.windows import find_idle_windows
-from mqt.ionshuttler.linear.result import DDInsertionRecord
-
-if TYPE_CHECKING:
-    from mqt.ionshuttler.linear.architecture import Architecture
-    from mqt.ionshuttler.linear.result import CompilationResult
+from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
 
 
 @dataclass(frozen=True)
@@ -67,7 +64,9 @@ class IdealizedHahnConfig:
 class IdealizedHahnReport:
     """Summarize local pulse sequences inserted by the idealized reference."""
 
-    insertions: tuple[DDInsertionRecord, ...] = ()
+    report_type: ClassVar[str] = "idealized_hahn"
+
+    sequences: tuple[LocalDDSequence, ...] = ()
 
     def __post_init__(self) -> None:
         """Freeze and validate insertion records.
@@ -75,18 +74,36 @@ class IdealizedHahnReport:
         Raises:
             TypeError: If an item is not a local DD insertion record.
         """
-        insertions = tuple(self.insertions)
-        if any(not isinstance(record, DDInsertionRecord) for record in insertions):
-            msg = "insertions must contain DDInsertionRecord values"
+        sequences = tuple(self.sequences)
+        if any(not isinstance(sequence, LocalDDSequence) for sequence in sequences):
+            msg = "sequences must contain LocalDDSequence values"
             raise TypeError(msg)
-        object.__setattr__(self, "insertions", insertions)
+        object.__setattr__(self, "sequences", sequences)
+
+    def to_dict(self) -> dict[str, object]:
+        """Return this report using JSON-compatible values."""
+        return {"sequences": [sequence.to_dict() for sequence in self.sequences]}
+
+    @classmethod
+    def from_dict(cls, data: object) -> IdealizedHahnReport:
+        """Restore an idealized-Hahn report from JSON-compatible values.
+
+        Returns:
+            The restored report.
+
+        Raises:
+            ValueError: If the serialized report is malformed.
+        """
+        if not isinstance(data, dict) or not isinstance(data.get("sequences"), list):
+            msg = "idealized Hahn report must contain a sequence list"
+            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Malformed JSON uses ValueError.
+        return cls(tuple(LocalDDSequence.from_dict(value) for value in data["sequences"]))
 
 
 def apply_idealized_hahn(
-    result: CompilationResult,
-    architecture: Architecture | None = None,
+    schedule: ActionSchedule,
     config: IdealizedHahnConfig | None = None,
-) -> DDPassResult[CompilationResult, IdealizedHahnReport]:
+) -> DDPassResult[IdealizedHahnReport]:
     """Insert constraint-relaxed Hahn pulses into every eligible idle window.
 
     Pulse positions are rounded to schedule boundaries, clamped to their idle
@@ -95,51 +112,43 @@ def apply_idealized_hahn(
     Returns:
         The idealized schedule and its inserted local-pulse records.
 
-    Raises:
-        ValueError: If replay metadata is absent or the named scheme is unknown.
     """
-    resolved_architecture = architecture or result.architecture
-    if resolved_architecture is None:
-        msg = "architecture is required for idealized Hahn"
-        raise ValueError(msg)
-    if result.initial_state is None:
-        msg = "result.initial_state is required for idealized Hahn"
-        raise ValueError(msg)
-
     resolved_config = config or IdealizedHahnConfig()
     scheme = _resolve_scheme(resolved_config.scheme)
     min_idle_timesteps = resolved_config.min_idle_timesteps or scheme.num_pulses
-    timeline = build_timeline(result, resolved_architecture)
-    pulses_by_time: dict[int, list[Action]] = {}
-    records: list[DDInsertionRecord] = []
+    timeline = build_timeline(schedule)
+    pulses_by_time: dict[int, list[tuple[int, Action]]] = {}
+    pending_sequences: list[tuple[int, tuple[int, int], tuple[int, ...]]] = []
 
-    for ion, _site in result.initial_state.positions:
+    for ion, _site in schedule.initial_state.positions:
         for window in find_idle_windows(timeline, ion):
             if window[1] - window[0] < min_idle_timesteps:
                 continue
             pulses = _rounded_scheme_pulses(window, scheme)
             if not pulses:
                 continue
+            sequence_index = len(pending_sequences)
             gate_timesteps = tuple(timestep for timestep, _spec in pulses)
             for timestep, spec in pulses:
-                pulses_by_time.setdefault(timestep, []).append(_make_local_gate(spec, ion))
-            records.append(
-                DDInsertionRecord(
-                    ion=ion,
-                    window=window,
-                    scheme_name=resolved_config.label,
-                    gate_timesteps=gate_timesteps,
-                )
-            )
+                pulses_by_time.setdefault(timestep, []).append((sequence_index, _make_local_gate(spec, ion)))
+            pending_sequences.append((ion, window, gate_timesteps))
 
-    report = IdealizedHahnReport(tuple(records))
-    if not records:
-        return DDPassResult(program=result, report=report)
+    if not pending_sequences:
+        return DDPassResult(schedule=schedule, report=IdealizedHahnReport())
 
-    path = _path_with_inserted_pulses(result.path, pulses_by_time)
-    rebuilt = rebuild_result(result, path, resolved_architecture)
-    updated = replace(rebuilt, dd_insertions=(*result.dd_insertions, *records))
-    return DDPassResult(program=updated, report=report)
+    scheduled_actions, action_ids_by_sequence = _path_with_inserted_pulses(schedule, pulses_by_time)
+    sequences = tuple(
+        LocalDDSequence(
+            ion=ion,
+            window=window,
+            scheme_name=resolved_config.label,
+            pulse_timesteps=gate_timesteps,
+            action_ids=tuple(action_ids_by_sequence[sequence_index]),
+        )
+        for sequence_index, (ion, window, gate_timesteps) in enumerate(pending_sequences)
+    )
+    report = IdealizedHahnReport(sequences)
+    return DDPassResult(schedule=rebuild_schedule(schedule, scheduled_actions), report=report)
 
 
 def _resolve_scheme(scheme: str | DDScheme) -> DDScheme:
@@ -177,26 +186,34 @@ def _make_local_gate(spec: GateSpec, ion: int) -> Action:
 
 
 def _path_with_inserted_pulses(
-    path: list[Action],
-    pulses_by_time: dict[int, list[Action]],
-) -> list[Action]:
+    program: ActionSchedule,
+    pulses_by_time: dict[int, list[tuple[int, Action]]],
+) -> tuple[tuple[ScheduledAction, ...], dict[int, list[int]]]:
     if not pulses_by_time:
-        return list(path)
+        return program.scheduled_actions, {}
 
-    updated: list[Action] = []
+    updated: list[ScheduledAction] = []
+    action_ids_by_sequence: dict[int, list[int]] = {}
+    action_ids = count(program.next_action_id)
     current_time = 0
     inserted_at_current_time = False
-    for action in path:
+    for item in program.scheduled_actions:
         if not inserted_at_current_time and current_time in pulses_by_time:
-            updated.extend(pulses_by_time[current_time])
+            for sequence_index, action in pulses_by_time[current_time]:
+                action_id = next(action_ids)
+                updated.append(ScheduledAction(action_id, action))
+                action_ids_by_sequence.setdefault(sequence_index, []).append(action_id)
             inserted_at_current_time = True
-        updated.append(action)
-        if isinstance(action, AdvanceTime):
-            current_time += action.timestep_increment
+        updated.append(item)
+        if isinstance(item.action, AdvanceTime):
+            current_time += item.action.timestep_increment
             inserted_at_current_time = False
     if not inserted_at_current_time and current_time in pulses_by_time:
-        updated.extend(pulses_by_time[current_time])
-    return updated
+        for sequence_index, action in pulses_by_time[current_time]:
+            action_id = next(action_ids)
+            updated.append(ScheduledAction(action_id, action))
+            action_ids_by_sequence.setdefault(sequence_index, []).append(action_id)
+    return tuple(updated), action_ids_by_sequence
 
 
 __all__ = ["IdealizedHahnConfig", "IdealizedHahnReport", "apply_idealized_hahn"]

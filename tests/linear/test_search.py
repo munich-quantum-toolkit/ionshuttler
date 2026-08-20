@@ -13,7 +13,7 @@ import hashlib
 import json
 from collections import Counter
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -23,12 +23,8 @@ from mqt.ionshuttler.linear.architecture import Architecture
 from mqt.ionshuttler.linear.config import GateTiming, HeuristicMode, LinearCompilerConfig, SearchConfig
 from mqt.ionshuttler.linear.expand import replay_path
 from mqt.ionshuttler.linear.parser import parse_qasm_file
-from mqt.ionshuttler.linear.result import (
-    CompilationResult,
-    CompilationStatus,
-    DDInsertionRecord,
-    GlobalDDRecord,
-)
+from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
+from mqt.ionshuttler.linear.schedule import ActionSchedule
 from mqt.ionshuttler.linear.state import State, create_initial_state, has_pending_timed_work
 
 if TYPE_CHECKING:
@@ -126,27 +122,13 @@ def test_exhaustive_search_schedules_and_completes_a_gate() -> None:
     assert initial_state.completed_gates == frozenset()
 
 
-def test_exhaustive_search_preserves_additional_result_records(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep result extensions when public search metadata is attached."""
+def test_exhaustive_search_attaches_the_public_scheduled_program(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Attach initial hardware metadata at the public search boundary."""
     architecture = Architecture(num_sites=1)
     initial_state = create_initial_state(1, architecture)
-    dd_record = DDInsertionRecord(
-        ion=0,
-        window=(0, 1),
-        scheme_name="echo",
-        gate_timesteps=(0,),
-    )
-    global_record = GlobalDDRecord(
-        scheme_name="periodic",
-        pulse_timesteps=(0,),
-        spacing=1,
-    )
     internal_result = CompilationResult(
         status=CompilationStatus.SUCCESS,
-        path=[],
-        num_timesteps=0,
-        dd_insertions=(dd_record,),
-        global_dd_records=(global_record,),
+        schedule=ActionSchedule.from_actions([], architecture, initial_state),
     )
     monkeypatch.setattr(search_module, "_search_with_budget", lambda *_args: internal_result)
 
@@ -158,10 +140,8 @@ def test_exhaustive_search_preserves_additional_result_records(monkeypatch: pyte
         config=exhaustive_config(),
     )
 
-    assert result.dd_insertions == (dd_record,)
-    assert result.global_dd_records == (global_record,)
     assert result.architecture is architecture
-    assert result.initial_state is initial_state
+    assert result.initial_state.positions == initial_state.positions
 
 
 def test_two_qubit_gate_routes_ions_into_one_processing_zone() -> None:
@@ -634,9 +614,7 @@ def test_rolling_window_accepts_a_completed_global_predecessor() -> None:
     assert_replays(result, initial_state, architecture, [0, 1], gates, predecessors)
 
 
-def test_production_defaults_match_the_frozen_schedule(
-    production_default_golden: dict[str, object],
-) -> None:
+def test_production_defaults_build_the_expected_compact_schedule() -> None:
     """Keep the compact production schedule deterministic."""
     architecture = Architecture(
         num_sites=9,
@@ -658,19 +636,21 @@ def test_production_defaults_match_the_frozen_schedule(
         predecessors,
     )
 
-    expected_result = cast("dict[str, object]", production_default_golden["expected_result"])
-    expected_actions = cast("list[dict[str, object]]", expected_result["actions"])
-    normalized_actions = []
-    for action in expected_actions:
-        normalized = {key: value for key, value in action.items() if key != "start_time"}
-        if normalized["type"] == "AdvanceTime":
-            normalized.pop("duration")
-        normalized_actions.append(normalized)
-
     assert result.status is CompilationStatus.SUCCESS
-    assert result.num_timesteps == expected_result["num_timesteps"]
-    assert result.score == expected_result["score"]
-    assert [action.to_dict() for action in result.path] == normalized_actions
+    assert result.num_timesteps == 5
+    assert result.score == 5
+    assert result.path == [
+        Shuttle(ion=0, src=3, dst=2),
+        Shuttle(ion=1, src=4, dst=3),
+        AdvanceTime(),
+        gates[0],
+        AdvanceTime(),
+        gates[1],
+        AdvanceTime(),
+        gates[2],
+        AdvanceTime(),
+        AdvanceTime(),
+    ]
     assert_replays(result, initial_state, architecture, [0, 1, 2], gates, predecessors)
 
 

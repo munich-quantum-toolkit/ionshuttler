@@ -23,7 +23,7 @@ from mqt.ionshuttler.linear.dd.critical_segments import (
     normalized_sensitivity_values,
 )
 from mqt.ionshuttler.linear.field_profile import FieldProfile
-from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus, DDInsertionRecord
+from mqt.ionshuttler.linear.schedule import ActionSchedule
 from mqt.ionshuttler.linear.state import create_initial_state
 
 if TYPE_CHECKING:
@@ -34,17 +34,15 @@ def _result(
     path: Sequence[Action],
     *,
     timesteps: int = 3,
-    dd_insertions: tuple[DDInsertionRecord, ...] = (),
-) -> CompilationResult:
+) -> ActionSchedule:
     architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
-    return CompilationResult(
-        status=CompilationStatus.SUCCESS,
-        path=list(path),
-        num_timesteps=timesteps,
-        architecture=architecture,
-        initial_state=create_initial_state(1, architecture),
-        dd_insertions=dd_insertions,
+    program = ActionSchedule.from_actions(
+        path,
+        architecture,
+        create_initial_state(1, architecture),
     )
+    assert program.num_timesteps == timesteps
+    return program
 
 
 def test_gate_z_effect_classifies_preserving_flipping_and_mixing_gates() -> None:
@@ -73,13 +71,18 @@ def test_mixing_gate_closes_segment_and_pi_gate_only_flips_sign() -> None:
 
 def test_recorded_dd_frame_persists_across_critical_boundary() -> None:
     """Keep the DD frame separate from algorithmic segment-local signs."""
-    record = DDInsertionRecord(0, (0, 2), "arbitrary_x_1", (0,))
-    result = _result(
+    program = _result(
         [Rx(ion=0, theta=pi), AdvanceTime(), Ry(ion=0, theta=pi / 2), AdvanceTime()],
         timesteps=2,
-        dd_insertions=(record,),
     )
-    assert [segment.toggling_signs for segment in compute_critical_segments(result).segments] == [(-1,), (-1,)]
+    local_pulse_action_ids = frozenset({program.scheduled_actions[0].action_id})
+    assert [
+        segment.toggling_signs
+        for segment in compute_critical_segments(
+            program,
+            local_pulse_action_ids=local_pulse_action_ids,
+        ).segments
+    ] == [(-1,), (-1,)]
 
 
 def test_whole_schedule_mode_and_j_phi_semantics() -> None:

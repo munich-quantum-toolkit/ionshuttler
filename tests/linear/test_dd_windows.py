@@ -15,24 +15,16 @@ from mqt.ionshuttler.linear.actions import Action, AdvanceTime, Rx, Shuttle
 from mqt.ionshuttler.linear.architecture import Architecture
 from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
 from mqt.ionshuttler.linear.dd.windows import find_idle_windows
-from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
+from mqt.ionshuttler.linear.schedule import ActionSchedule
 from mqt.ionshuttler.linear.state import create_initial_state
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
-def _timeline(path: Sequence[Action], timesteps: int) -> CompiledTimeline:
+def _timeline(path: Sequence[Action], _timesteps: int) -> CompiledTimeline:
     architecture = Architecture(num_sites=3, processing_zones={"pz": [0, 1, 2]})
-    return build_timeline(
-        CompilationResult(
-            status=CompilationStatus.SUCCESS,
-            path=list(path),
-            num_timesteps=timesteps,
-            architecture=architecture,
-            initial_state=create_initial_state(1, architecture),
-        )
-    )
+    return build_timeline(ActionSchedule.from_actions(path, architecture, create_initial_state(1, architecture)))
 
 
 def test_idle_windows_split_around_full_gate_duration() -> None:

@@ -18,22 +18,20 @@ from mqt.ionshuttler.linear.architecture import Architecture
 from mqt.ionshuttler.linear.dd.phase import accumulated_phase
 from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
 from mqt.ionshuttler.linear.field_profile import FieldProfile
-from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
+from mqt.ionshuttler.linear.schedule import ActionSchedule
 from mqt.ionshuttler.linear.state import create_initial_state
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
-def _timeline(path: Sequence[Action], num_timesteps: int) -> CompiledTimeline:
+def _timeline(path: Sequence[Action], _num_timesteps: int) -> CompiledTimeline:
     architecture = Architecture(num_sites=3)
     return build_timeline(
-        CompilationResult(
-            status=CompilationStatus.SUCCESS,
-            path=list(path),
-            num_timesteps=num_timesteps,
-            architecture=architecture,
-            initial_state=create_initial_state(1, architecture, initial_positions=[0]),
+        ActionSchedule.from_actions(
+            path,
+            architecture,
+            create_initial_state(1, architecture, initial_positions=[0]),
         )
     )
 

@@ -40,8 +40,8 @@ circuit.rzz(0.75, 0, 1)
 result = LinearCompiler(architecture).compile(circuit)
 
 if result.status is CompilationStatus.SUCCESS:
-    print(f"Compiled in {result.num_timesteps} timesteps")
-    for action in result.path:
+    print(f"Compiled in {result.schedule.num_timesteps} timesteps")
+    for action in result.schedule.path:
         print(action)
 else:
     print(f"Compilation stopped with {result.status.value}")
@@ -64,7 +64,7 @@ the hardware abstraction.
 
 ### Circuit inputs
 
-{py:meth}`~mqt.ionshuttler.linear.LinearCompiler.compile` accepts:
+{py:meth}`~mqt.ionshuttler.linear.compiler.LinearCompiler.compile` accepts:
 
 - a Qiskit {py:class}`qiskit.circuit.QuantumCircuit`;
 - a string containing OpenQASM 2 or the supported subset of OpenQASM 3; or
@@ -251,17 +251,21 @@ The result status describes why compilation stopped:
 | `INTERRUPTED` | Compilation was interrupted; the best available partial schedule is returned. |
 | `FAILED`      | The search ran out of candidates before completing the circuit.               |
 
-`result.path` contains the ordered gate, movement, and time-advance actions.
-`result.num_timesteps` is the schedule makespan in compiler timesteps, while
-`result.wall_clock_s` is the time spent compiling. `result.score` is the final
-schedule time when one is available. The in-memory `final_state` can be used to
-inspect the reached placement and completed gates. `result.action_types` records
-the ordered hardware capability catalog used for the compilation.
+`result.schedule` is the immutable
+{py:class}`~mqt.ionshuttler.linear.ActionSchedule` that downstream DD and
+simulation stages consume. Its `path` contains the ordered gate, movement, and
+time-advance actions, and its `num_timesteps` is the makespan. It also owns the
+architecture, machine-only initial state, hardware capability names, and a
+stable identifier for every action. Compiler search progress and control-pass
+provenance are deliberately absent from this execution boundary.
 
-Always check `status` before treating a result as a complete schedule. Invalid
-input and configuration errors raise exceptions instead of returning `FAILED`.
-Use `result.save(...)` to write beneath `outputs/results/json` in the current
-working directory by default, or pass `directory` explicitly. Use
+The containing result owns compiler-only diagnostics: `result.wall_clock_s`,
+`result.score`, `result.final_state`, and `result.explored_nodes`. Always check
+`status` before treating its schedule as a complete circuit schedule.
+
+Invalid input and configuration errors raise exceptions instead of returning
+`FAILED`. Use `result.save(...)` to write beneath `outputs/results/json` in the
+current working directory by default, or pass `directory` explicitly. Use
 {py:meth}`~mqt.ionshuttler.linear.CompilationResult.load` for explicit JSON
 output; compilation does not create caches or result files on its own.
 
@@ -269,5 +273,6 @@ output; compilation does not create caches or result files on its own.
 
 - {doc}`linear_hardware_model` — sites, processing zones, timing, and physical
   assumptions
+- {doc}`linear_dd` — dynamical-decoupling methods and comparison metrics
 - {doc}`linear_design` — package architecture and custom extension points
 - {doc}`api/mqt/ionshuttler/linear/index` — complete Linear Python API reference

@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from mqt.ionshuttler.linear.actions import (
     Action,
+    AdvanceTime,
+    GateAction,
     GateSpec,
     GlobalPulse,
     PhysicalSwap,
@@ -26,6 +28,7 @@ from mqt.ionshuttler.linear.actions import (
     Rz,
     Rzz,
     Shuttle,
+    TransportAction,
 )
 from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
 
@@ -33,7 +36,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from mqt.ionshuttler.linear.field_profile import FieldProfile
-    from mqt.ionshuttler.linear.result import CompilationResult
+    from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
 
 FrameActionKind = Literal[
     "global_dd_pulse",
@@ -41,6 +44,7 @@ FrameActionKind = Literal[
     "transport",
     "algorithmic_gate",
     "advance_time",
+    "other",
 ]
 
 _PAULI_LABELS = frozenset({"I", "X", "Y", "Z"})
@@ -146,7 +150,7 @@ class FramedActionEvent:
 
 def build_frame_history(
     timeline: CompiledTimeline,
-    result: CompilationResult | None = None,
+    local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> FrameHistory:
     """Replay Pauli frames through every schedule boundary.
 
@@ -167,26 +171,27 @@ def build_frame_history(
         frames_by_time.append(current_frame)
     return FrameHistory(
         global_frames_by_time=tuple(frames_by_time),
-        local_frame_overrides=_build_local_frame_overrides(timeline, result),
+        local_frame_overrides=_build_local_frame_overrides(timeline, local_pulse_action_ids),
     )
 
 
 def framed_action_events(
-    result: CompilationResult,
+    schedule: ActionSchedule,
     timeline: CompiledTimeline | None = None,
+    local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> tuple[FramedActionEvent, ...]:
     """Return ordered schedule actions annotated with their effective frames."""
-    resolved_timeline = build_timeline(result) if timeline is None else timeline
-    frame_history = build_frame_history(resolved_timeline, result=result)
-    local_dd_slots = local_dd_action_slots(resolved_timeline, result)
+    resolved_timeline = build_timeline(schedule) if timeline is None else timeline
+    frame_history = build_frame_history(resolved_timeline, local_pulse_action_ids)
     events: list[FramedActionEvent] = []
     for timestep in range(resolved_timeline.makespan + 1):
-        for action_index, action in enumerate(resolved_timeline.action_at(timestep) or ()):
+        for scheduled_action in resolved_timeline.scheduled_action_at(timestep) or ():
+            action = scheduled_action.action
             events.append(
                 FramedActionEvent(
                     timestep=timestep,
                     action=action,
-                    kind=_framed_action_kind(action, timestep, action_index, local_dd_slots),
+                    kind=_framed_action_kind(scheduled_action, local_pulse_action_ids),
                     ion_frames=_event_ion_frames(action, timestep, resolved_timeline, frame_history),
                 )
             )
@@ -258,6 +263,7 @@ def accumulated_frame_phase(
     t_end: int,
     field_profile: FieldProfile | None,
     frame_history: FrameHistory | None = None,
+    local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> float:
     """Return signed field exposure after applying tracked Pauli frames.
 
@@ -269,7 +275,7 @@ def accumulated_frame_phase(
     if not 0 <= t_start <= t_end <= timeline.makespan:
         msg = f"expected 0 <= t_start <= t_end <= {timeline.makespan}"
         raise ValueError(msg)
-    history = build_frame_history(timeline) if frame_history is None else frame_history
+    history = build_frame_history(timeline, local_pulse_action_ids) if frame_history is None else frame_history
     return sum(
         history.phase_sign_for_ion(ion, timestep, axis="Z")
         * field_profile.field_at(timeline.ion_position(ion, timestep))
@@ -285,59 +291,22 @@ def _require_pauli_label(label: str) -> str:
     return label
 
 
-def local_dd_action_slots(
-    timeline: CompiledTimeline,
-    result: CompilationResult,
-) -> frozenset[tuple[int, int]]:
-    """Return ordered action slots identified by legacy local-DD records.
-
-    Raises:
-        ValueError: If a record cannot be matched to an in-range local pulse.
-    """
-    desired_counts: dict[tuple[int, int], int] = {}
-    for record in result.dd_insertions:
-        for timestep in record.gate_timesteps:
-            key = (record.ion, timestep)
-            desired_counts[key] = desired_counts.get(key, 0) + 1
-
-    slots: set[tuple[int, int]] = set()
-    for timestep in range(timeline.makespan + 1):
-        remaining = {
-            ion: count
-            for (ion, recorded_time), count in desired_counts.items()
-            if recorded_time == timestep and count > 0
-        }
-        for action_index, action in enumerate(timeline.action_at(timestep) or ()):
-            if not isinstance(action, (Rx, Ry, Rz)):
-                continue
-            count = remaining.get(action.ion, 0)
-            if count > 0:
-                slots.add((timestep, action_index))
-                remaining[action.ion] = count - 1
-        if any(count > 0 for count in remaining.values()):
-            msg = "expected at least one local DD gate action for each recorded ion and timestep"
-            raise ValueError(msg)
-    if any(not 0 <= timestep <= timeline.makespan for _ion, timestep in desired_counts):
-        msg = "recorded local DD gate timestep lies outside the schedule"
-        raise ValueError(msg)
-    return frozenset(slots)
-
-
 def _framed_action_kind(
-    action: Action,
-    timestep: int,
-    action_index: int,
-    local_dd_slots: frozenset[tuple[int, int]],
+    scheduled_action: ScheduledAction,
+    local_pulse_action_ids: frozenset[int],
 ) -> FrameActionKind:
+    action = scheduled_action.action
     if isinstance(action, GlobalPulse):
         return "global_dd_pulse"
-    if isinstance(action, (Shuttle, PhysicalSwap)):
+    if isinstance(action, TransportAction):
         return "transport"
-    if isinstance(action, (Rx, Ry, Rz)) and (timestep, action_index) in local_dd_slots:
+    if scheduled_action.action_id in local_pulse_action_ids:
         return "local_dd_pulse"
-    if isinstance(action, (Rx, Ry, Rz, Rxx, Ryy, Rzz)):
+    if isinstance(action, GateAction):
         return "algorithmic_gate"
-    return "advance_time"
+    if isinstance(action, AdvanceTime):
+        return "advance_time"
+    return "other"
 
 
 def _event_ion_frames(
@@ -381,15 +350,13 @@ def _is_odd_pi_rotation(theta: float | None) -> bool:
 
 def _build_local_frame_overrides(
     timeline: CompiledTimeline,
-    result: CompilationResult | None,
+    local_pulse_action_ids: frozenset[int],
 ) -> dict[int, tuple[PauliFrame, ...]]:
-    if result is None or not result.dd_insertions:
-        return {}
     operations_by_ion: dict[int, dict[int, list[PauliFrameOperation]]] = {}
-    slots = local_dd_action_slots(timeline, result)
     for timestep in range(timeline.makespan + 1):
-        for action_index, action in enumerate(timeline.action_at(timestep) or ()):
-            if (timestep, action_index) not in slots or not isinstance(action, (Rx, Ry, Rz)):
+        for item in timeline.scheduled_action_at(timestep) or ():
+            action = item.action
+            if item.action_id not in local_pulse_action_ids or not isinstance(action, (Rx, Ry, Rz)):
                 continue
             operations_by_ion.setdefault(action.ion, {}).setdefault(timestep, []).append(
                 _frame_operation_for_local_action(action)
@@ -427,5 +394,4 @@ __all__ = [
     "frame_operation_for_gate_spec",
     "framed_action_events",
     "global_pulse_timesteps",
-    "local_dd_action_slots",
 ]

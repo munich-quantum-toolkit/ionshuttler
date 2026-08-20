@@ -5,7 +5,7 @@
 #
 # Licensed under the MIT License
 
-"""Dynamical-decoupling methods for scheduled Linear programs."""
+"""Dynamical-decoupling methods for Linear action schedules."""
 
 from mqt.ionshuttler.linear.dd.critical_segments import (
     CriticalSegment,
@@ -32,7 +32,7 @@ from mqt.ionshuttler.linear.dd.metrics import (
     sum_absolute_residual_phases_at_gates,
     sum_squared_residual_phase,
 )
-from mqt.ionshuttler.linear.dd.result import DDPassResult
+from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
 from mqt.ionshuttler.linear.dd.sadd import (
     OperationDurations,
     SADDConfig,
@@ -50,6 +50,7 @@ __all__ = [
     "GlobalDDReport",
     "IdealizedHahnConfig",
     "IdealizedHahnReport",
+    "LocalDDSequence",
     "OperationDurations",
     "SADDConfig",
     "SADDMethod",

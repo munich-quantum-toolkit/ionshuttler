@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from mqt.ionshuttler.linear.architecture import Architecture
-    from mqt.ionshuttler.linear.result import CompilationResult
+    from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
 
 
 class _TimedGate(Protocol):
@@ -46,6 +46,7 @@ class CompiledTimeline:
     _ion_gate_busy_by_time: Mapping[int, frozenset[int]]
     _pz_busy_by_time: Mapping[str, frozenset[int]]
     _actions_by_time: Mapping[int, tuple[Action, ...]]
+    _scheduled_actions_by_time: Mapping[int, tuple[ScheduledAction, ...]]
 
     def ion_position(self, ion_id: int, timestep: int) -> int:
         """Return an ion's site at one schedule boundary."""
@@ -74,6 +75,10 @@ class CompiledTimeline:
     def action_at(self, timestep: int) -> tuple[Action, ...] | None:
         """Return the ordered actions at a schedule boundary, if any."""
         return self._actions_by_time.get(_validate_time(timestep, self.makespan))
+
+    def scheduled_action_at(self, timestep: int) -> tuple[ScheduledAction, ...] | None:
+        """Return actions with stable identity at one boundary."""
+        return self._scheduled_actions_by_time.get(_validate_time(timestep, self.makespan))
 
     def state_at(self, timestep: int) -> State:
         """Reconstruct the hardware portion of state at a schedule boundary.
@@ -112,14 +117,12 @@ class CompiledTimeline:
 
 
 def build_timeline(
-    result: CompilationResult,
-    architecture: Architecture | None = None,
+    schedule: ActionSchedule,
 ) -> CompiledTimeline:
     """Reconstruct a timeline solely from executable schedule information.
 
     Args:
-        result: Compilation result containing the ordered schedule and initial state.
-        architecture: Hardware model, defaulting to the one stored in ``result``.
+        schedule: Executable schedule to reconstruct.
 
     Returns:
         The reconstructed immutable timeline.
@@ -128,19 +131,9 @@ def build_timeline(
         ValueError: If required metadata is absent or the makespan disagrees with
             the schedule's time-advance actions.
     """
-    resolved_architecture = architecture or result.architecture
-    if resolved_architecture is None:
-        msg = "architecture must be provided directly or via result.architecture"
-        raise ValueError(msg)
-    if result.initial_state is None:
-        msg = "result.initial_state is required to reconstruct a timeline"
-        raise ValueError(msg)
-    if result.num_timesteps < 0:
-        msg = "result.num_timesteps must be non-negative"
-        raise ValueError(msg)
-
-    initial_positions = to_dict(result.initial_state)
-    makespan = result.num_timesteps
+    resolved_architecture = schedule.architecture
+    initial_positions = to_dict(schedule.initial_state.to_replay_state())
+    makespan = schedule.num_timesteps
     positions_by_time: list[dict[int, int]] = [dict(initial_positions) for _ in range(makespan + 1)]
     ion_busy_by_time: dict[int, set[int]] = {ion_id: set() for ion_id in initial_positions}
     ion_gate_busy_by_time: dict[int, set[int]] = {ion_id: set() for ion_id in initial_positions}
@@ -148,14 +141,17 @@ def build_timeline(
         zone_name: set() for zone_name in (resolved_architecture.processing_zones or {})
     }
     actions_by_time: dict[int, list[Action]] = {}
+    scheduled_actions_by_time: dict[int, list[ScheduledAction]] = {}
     current_positions = dict(initial_positions)
     current_time = 0
 
-    for action in result.path:
+    for scheduled_action in schedule.scheduled_actions:
+        action = scheduled_action.action
         if current_time > makespan:
-            msg = "result path advances beyond result.num_timesteps"
+            msg = "schedule actions advance beyond schedule.num_timesteps"
             raise ValueError(msg)
         actions_by_time.setdefault(current_time, []).append(action)
+        scheduled_actions_by_time.setdefault(current_time, []).append(scheduled_action)
 
         if isinstance(action, Shuttle):
             current_positions[action.ion] = action.dst
@@ -193,7 +189,7 @@ def build_timeline(
             current_time += action.timestep_increment
 
     if current_time != makespan:
-        msg = "result.num_timesteps does not match the number of AdvanceTime actions"
+        msg = "schedule.num_timesteps does not match the time-advance actions"
         raise ValueError(msg)
 
     return CompiledTimeline(
@@ -205,6 +201,9 @@ def build_timeline(
         }),
         _pz_busy_by_time=MappingProxyType({zone: frozenset(times) for zone, times in pz_busy_by_time.items()}),
         _actions_by_time=MappingProxyType({timestep: tuple(actions) for timestep, actions in actions_by_time.items()}),
+        _scheduled_actions_by_time=MappingProxyType({
+            timestep: tuple(actions) for timestep, actions in scheduled_actions_by_time.items()
+        }),
     )
 
 

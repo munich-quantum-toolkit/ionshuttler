@@ -19,9 +19,10 @@ from mqt.ionshuttler.linear.architecture import Architecture
 from mqt.ionshuttler.linear.dd import GlobalDDConfig, GlobalDDReport, apply_periodic_global_dd
 from mqt.ionshuttler.linear.dd.frame_replay import PauliFrame, build_frame_history
 from mqt.ionshuttler.linear.dd.metrics import residual_phase_by_ion, sum_absolute_residual_phase
+from mqt.ionshuttler.linear.dd.result import DDPassResult
 from mqt.ionshuttler.linear.dd.timeline import build_timeline
 from mqt.ionshuttler.linear.field_profile import FieldProfile
-from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus, GlobalDDRecord
+from mqt.ionshuttler.linear.schedule import ActionSchedule
 from mqt.ionshuttler.linear.state import create_initial_state
 
 if TYPE_CHECKING:
@@ -34,15 +35,15 @@ def _result(
     *,
     num_timesteps: int,
     positions: list[int] | None = None,
-) -> CompilationResult:
+) -> ActionSchedule:
     initial_positions = positions or [0]
-    return CompilationResult(
-        status=CompilationStatus.SUCCESS,
-        path=path,
-        num_timesteps=num_timesteps,
-        architecture=architecture,
-        initial_state=create_initial_state(len(initial_positions), architecture, initial_positions=initial_positions),
+    program = ActionSchedule.from_actions(
+        path,
+        architecture,
+        create_initial_state(len(initial_positions), architecture, initial_positions=initial_positions),
     )
+    assert program.num_timesteps == num_timesteps
+    return program
 
 
 def test_periodic_global_dd_overlaps_existing_actions_and_records_summary() -> None:
@@ -64,16 +65,8 @@ def test_periodic_global_dd_overlaps_existing_actions_and_records_summary() -> N
     )
 
     output = apply_periodic_global_dd(original, GlobalDDConfig(spacing=1))
-    timeline = build_timeline(output.program)
-    restored = CompilationResult.from_json(output.program.to_json())
-    expected_record = GlobalDDRecord(
-        scheme_name="periodic_x",
-        pulse_timesteps=(0, 1),
-        spacing=1,
-        sum_abs_residual_phase=0.0,
-        sum_squared_residual_phase=0.0,
-        max_abs_residual_phase=0.0,
-    )
+    timeline = build_timeline(output.schedule)
+    restored = DDPassResult.from_json(output.to_json(), GlobalDDReport)
 
     assert timeline.action_at(0) == (
         GlobalPulse(GateSpec("Rx", pi)),
@@ -85,27 +78,9 @@ def test_periodic_global_dd_overlaps_existing_actions_and_records_summary() -> N
         Rx(ion=0, theta=0.5),
         AdvanceTime(),
     )
-    assert output.program.global_dd_records == (expected_record,)
     assert output.report.pulse_timesteps == (0, 1)
-    assert restored.to_dict() == output.program.to_dict()
-    assert restored.to_dict()["actions"] == [
-        {"type": "GlobalPulse", "gate_name": "Rx", "theta": pi, "start_time": 0, "duration": 1},
-        {"type": "Shuttle", "ion": 0, "src": 0, "dst": 1, "start_time": 0, "duration": 1},
-        {"type": "AdvanceTime", "start_time": 0, "duration": 1},
-        {"type": "GlobalPulse", "gate_name": "Rx", "theta": pi, "start_time": 1, "duration": 1},
-        {"type": "Rx", "ion": 0, "theta": 0.5, "start_time": 1, "duration": 1},
-        {"type": "AdvanceTime", "start_time": 1, "duration": 1},
-    ]
-    assert restored.to_dict()["global_dd_records"] == [
-        {
-            "scheme_name": "periodic_x",
-            "pulse_timesteps": [0, 1],
-            "spacing": 1,
-            "sum_abs_residual_phase": 0.0,
-            "sum_squared_residual_phase": 0.0,
-            "max_abs_residual_phase": 0.0,
-        }
-    ]
+    assert restored == output
+    assert sum(isinstance(item.action, GlobalPulse) for item in output.schedule.scheduled_actions) == 2
 
 
 def test_periodic_global_dd_centers_the_first_odd_spacing_window() -> None:
@@ -122,18 +97,10 @@ def test_periodic_global_dd_centers_the_first_odd_spacing_window() -> None:
     )
 
     output = apply_periodic_global_dd(original, GlobalDDConfig(spacing=5))
-    history = build_frame_history(build_timeline(output.program), result=output.program)
+    history = build_frame_history(build_timeline(output.schedule))
 
-    assert output.program.global_dd_records == (
-        GlobalDDRecord(
-            scheme_name="periodic_x",
-            pulse_timesteps=(2,),
-            spacing=5,
-            sum_abs_residual_phase=1.0,
-            sum_squared_residual_phase=1.0,
-            max_abs_residual_phase=1.0,
-        ),
-    )
+    assert output.report.pulse_timesteps == (2,)
+    assert output.report.sum_absolute_residual_phase == pytest.approx(1.0)
     assert output.report.max_absolute_residual_phase == pytest.approx(1.0)
     assert history.frame_for_ion(0, 1) == PauliFrame("I")
     assert history.frame_for_ion(0, 2) == PauliFrame("X")
@@ -153,11 +120,11 @@ def test_periodic_global_dd_shifts_pulses_to_reduce_cross_ion_residuals(objectiv
         num_timesteps=5,
         positions=[0, 1],
     )
-    periodic = apply_periodic_global_dd(
+    periodic_result = apply_periodic_global_dd(
         original,
         GlobalDDConfig(spacing=5, half_first_window=False),
-    ).program
-    shifted = apply_periodic_global_dd(
+    )
+    shifted_result = apply_periodic_global_dd(
         original,
         GlobalDDConfig(
             spacing=5,
@@ -165,14 +132,16 @@ def test_periodic_global_dd_shifts_pulses_to_reduce_cross_ion_residuals(objectiv
             shift_objective=cast("ShiftObjective", objective),
             half_first_window=False,
         ),
-    ).program
+    )
+    periodic = periodic_result.schedule
+    shifted = shifted_result.schedule
 
-    assert periodic.global_dd_records[0].pulse_timesteps == (4,)
-    assert periodic.global_dd_records[0].sum_abs_residual_phase == pytest.approx(6.0)
-    assert periodic.global_dd_records[0].sum_squared_residual_phase == pytest.approx(18.0)
-    assert shifted.global_dd_records[0].pulse_timesteps == (2,)
-    assert shifted.global_dd_records[0].sum_abs_residual_phase == pytest.approx(2.0)
-    assert shifted.global_dd_records[0].sum_squared_residual_phase == pytest.approx(2.0)
+    assert periodic_result.report.pulse_timesteps == (4,)
+    assert periodic_result.report.sum_absolute_residual_phase == pytest.approx(6.0)
+    assert periodic_result.report.sum_squared_residual_phase == pytest.approx(18.0)
+    assert shifted_result.report.pulse_timesteps == (2,)
+    assert shifted_result.report.sum_absolute_residual_phase == pytest.approx(2.0)
+    assert shifted_result.report.sum_squared_residual_phase == pytest.approx(2.0)
     assert sum(residual_phase_by_ion(periodic).values()) == pytest.approx(0.0)
     assert sum(residual_phase_by_ion(shifted).values()) == pytest.approx(0.0)
     assert sum_absolute_residual_phase(shifted) < sum_absolute_residual_phase(periodic)
@@ -191,10 +160,9 @@ def test_periodic_global_dd_keeps_unimproved_times_and_returns_short_noop() -> N
     short = _result(architecture, [AdvanceTime()], num_timesteps=1)
     unchanged = apply_periodic_global_dd(short, GlobalDDConfig(spacing=5))
 
-    assert shifted.program.global_dd_records == periodic.program.global_dd_records
-    assert unchanged.program is short
+    assert shifted.report == periodic.report
+    assert unchanged.schedule is short
     assert unchanged.report.pulse_timesteps == ()
-    assert unchanged.program.global_dd_records == ()
 
 
 def test_periodic_global_dd_rejects_existing_global_pulses() -> None:

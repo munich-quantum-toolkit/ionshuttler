@@ -15,11 +15,12 @@ import pytest
 
 from mqt.ionshuttler.linear.actions import Action, AdvanceTime, GateSpec, Rx, Ry, Shuttle
 from mqt.ionshuttler.linear.architecture import Architecture
-from mqt.ionshuttler.linear.dd import IdealizedHahnConfig, apply_idealized_hahn
+from mqt.ionshuttler.linear.dd import IdealizedHahnConfig, IdealizedHahnReport, apply_idealized_hahn
 from mqt.ionshuttler.linear.dd.frame_replay import PauliFrame, build_frame_history, framed_action_events
+from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
 from mqt.ionshuttler.linear.dd.schemes import DDScheme
 from mqt.ionshuttler.linear.dd.timeline import build_timeline
-from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus, DDInsertionRecord
+from mqt.ionshuttler.linear.schedule import ActionSchedule
 from mqt.ionshuttler.linear.state import create_initial_state
 
 
@@ -29,14 +30,14 @@ def _result(
     *,
     num_timesteps: int,
     positions: list[int],
-) -> CompilationResult:
-    return CompilationResult(
-        status=CompilationStatus.SUCCESS,
-        path=path,
-        num_timesteps=num_timesteps,
-        architecture=architecture,
-        initial_state=create_initial_state(len(positions), architecture, initial_positions=positions),
+) -> ActionSchedule:
+    program = ActionSchedule.from_actions(
+        path,
+        architecture,
+        create_initial_state(len(positions), architecture, initial_positions=positions),
     )
+    assert program.num_timesteps == num_timesteps
+    return program
 
 
 def test_idealized_hahn_inserts_before_transport_and_at_terminal_boundary() -> None:
@@ -50,20 +51,23 @@ def test_idealized_hahn_inserts_before_transport_and_at_terminal_boundary() -> N
     )
 
     output = apply_idealized_hahn(original)
-    timeline = build_timeline(output.program)
-    expected_record = DDInsertionRecord(
+    timeline = build_timeline(output.schedule)
+    expected_record = LocalDDSequence(
         ion=0,
         window=(0, 2),
         scheme_name="IdealizedHahn",
-        gate_timesteps=(1, 2),
+        pulse_timesteps=(1, 2),
+        action_ids=(3, 4),
     )
 
-    assert output.report.insertions == (expected_record,)
-    assert output.program.dd_insertions == (expected_record,)
+    assert output.report.sequences == (expected_record,)
+    assert output.report.sequences[0].action_ids == tuple(
+        item.action_id for item in output.schedule.scheduled_actions if isinstance(item.action, Rx)
+    )
     assert timeline.action_at(0) == (Shuttle(ion=0, src=0, dst=1), AdvanceTime())
     assert timeline.action_at(1) == (Rx(ion=0, theta=pi), AdvanceTime())
     assert timeline.action_at(2) == (Rx(ion=0, theta=pi),)
-    assert original.dd_insertions == ()
+    assert set(output.report.sequences[0].action_ids).isdisjoint(item.action_id for item in original.scheduled_actions)
 
 
 def test_idealized_hahn_orders_terminal_pulses_before_logical_gates() -> None:
@@ -77,8 +81,11 @@ def test_idealized_hahn_orders_terminal_pulses_before_logical_gates() -> None:
     )
 
     output = apply_idealized_hahn(original)
-    timeline = build_timeline(output.program)
-    events = framed_action_events(output.program, timeline)
+    timeline = build_timeline(output.schedule)
+    local_pulse_action_ids = frozenset(
+        action_id for sequence in output.report.sequences for action_id in sequence.action_ids
+    )
+    events = framed_action_events(output.schedule, timeline, local_pulse_action_ids)
 
     assert timeline.action_at(2) == (
         Rx(ion=0, theta=pi),
@@ -112,9 +119,9 @@ def test_idealized_hahn_rounds_clamps_and_deduplicates_in_sequence_order() -> No
         config=IdealizedHahnConfig(scheme=scheme, label="RoundingProbe"),
     )
 
-    assert output.report.insertions[0].gate_timesteps == (0, 1, 4)
-    assert [type(action) for action in output.program.path[:2]] == [Rx, AdvanceTime]
-    assert build_timeline(output.program).action_at(4) == (Rx(ion=0, theta=pi),)
+    assert output.report.sequences[0].pulse_timesteps == (0, 1, 4)
+    assert [type(action) for action in output.schedule.path[:2]] == [Rx, AdvanceTime]
+    assert build_timeline(output.schedule).action_at(4) == (Rx(ion=0, theta=pi),)
 
 
 def test_idealized_hahn_replays_frames_and_round_trips_result_json() -> None:
@@ -128,30 +135,15 @@ def test_idealized_hahn_replays_frames_and_round_trips_result_json() -> None:
     )
 
     output = apply_idealized_hahn(original)
-    restored = CompilationResult.from_json(output.program.to_json())
-    history = build_frame_history(build_timeline(output.program), result=output.program)
+    restored = DDPassResult.from_json(output.to_json(), IdealizedHahnReport)
+    local_pulse_action_ids = frozenset(output.report.sequences[0].action_ids)
+    history = build_frame_history(build_timeline(output.schedule), local_pulse_action_ids)
 
-    assert output.report.insertions[0].gate_timesteps == (2, 4)
+    assert output.report.sequences[0].pulse_timesteps == (2, 4)
     assert history.frame_for_ion(0, 4) == PauliFrame("I")
-    assert restored.to_dict() == output.program.to_dict()
-    assert restored.to_dict()["actions"] == [
-        {"type": "AdvanceTime", "start_time": 0, "duration": 1},
-        {"type": "AdvanceTime", "start_time": 1, "duration": 1},
-        {"type": "Rx", "ion": 0, "theta": pi, "start_time": 2, "duration": 1},
-        {"type": "AdvanceTime", "start_time": 2, "duration": 1},
-        {"type": "AdvanceTime", "start_time": 3, "duration": 1},
-        {"type": "Rx", "ion": 0, "theta": pi, "start_time": 4, "duration": 1},
-    ]
-    assert restored.to_dict()["dd_insertions"] == [
-        {
-            "ion": 0,
-            "window": [0, 4],
-            "scheme_name": "IdealizedHahn",
-            "gate_timesteps": [2, 4],
-            "remaining_phase": 0.0,
-            "phase_reduction": 0.0,
-        }
-    ]
+    assert restored == output
+    assert restored.report.sequences[0].action_ids == output.report.sequences[0].action_ids
+    assert restored.report.sequences[0].to_dict()["pulse_timesteps"] == [2, 4]
 
 
 def test_idealized_hahn_returns_unchanged_program_without_eligible_windows() -> None:
@@ -161,8 +153,8 @@ def test_idealized_hahn_returns_unchanged_program_without_eligible_windows() -> 
 
     output = apply_idealized_hahn(original)
 
-    assert output.program is original
-    assert output.report.insertions == ()
+    assert output.schedule is original
+    assert output.report.sequences == ()
 
 
 def test_idealized_hahn_rejects_unknown_schemes() -> None:

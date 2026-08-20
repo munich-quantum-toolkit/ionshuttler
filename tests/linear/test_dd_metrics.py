@@ -31,8 +31,9 @@ from mqt.ionshuttler.linear.dd.metrics import (
     summarize_residual_phases,
     window_residual_phase,
 )
+from mqt.ionshuttler.linear.dd.result import LocalDDSequence
 from mqt.ionshuttler.linear.field_profile import FieldProfile
-from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus, DDInsertionRecord
+from mqt.ionshuttler.linear.schedule import ActionSchedule
 from mqt.ionshuttler.linear.state import create_initial_state
 
 if TYPE_CHECKING:
@@ -45,35 +46,33 @@ def _result(
     *,
     num_ions: int = 1,
     fields: tuple[float, ...] | None = None,
-    records: tuple[DDInsertionRecord, ...] = (),
-) -> CompilationResult:
+) -> ActionSchedule:
     field_values = fields or tuple(1.0 for _ in range(num_ions))
     architecture = Architecture(
         num_sites=num_ions,
         processing_zones={"pz": list(range(num_ions))},
         field_profile=FieldProfile(num_ions, tuple(enumerate(field_values))),
     )
-    return CompilationResult(
-        status=CompilationStatus.SUCCESS,
-        path=list(path),
-        num_timesteps=timesteps,
-        architecture=architecture,
-        initial_state=create_initial_state(num_ions, architecture),
-        dd_insertions=records,
+    program = ActionSchedule.from_actions(
+        path,
+        architecture,
+        create_initial_state(num_ions, architecture),
     )
+    assert program.num_timesteps == timesteps
+    return program
 
 
 def test_decoupling_ratio_merges_overlapping_windows_and_counts_ion_time() -> None:
     """Avoid double-counting overlapping recorded windows for one ion."""
     records = (
-        DDInsertionRecord(0, (0, 6), "hahn", (3, 6)),
-        DDInsertionRecord(0, (4, 10), "hahn", (7, 10)),
-        DDInsertionRecord(1, (2, 6), "hahn", (4, 6)),
+        LocalDDSequence(0, (0, 6), "hahn", (3, 6), (10, 11)),
+        LocalDDSequence(0, (4, 10), "hahn", (7, 10), (12, 13)),
+        LocalDDSequence(1, (2, 6), "hahn", (4, 6), (14, 15)),
     )
-    result = _result([AdvanceTime() for _ in range(10)], 10, num_ions=2, records=records)
+    result = _result([AdvanceTime() for _ in range(10)], 10, num_ions=2)
 
-    assert decoupling_ratio(result) == pytest.approx(0.7)
-    assert phase_reduction_per_gate(result) == pytest.approx(0.0)
+    assert decoupling_ratio(result, records) == pytest.approx(0.7)
+    assert phase_reduction_per_gate(result, records) == pytest.approx(0.0)
 
 
 def test_global_pulses_refocus_schedule_end_metrics() -> None:
@@ -100,7 +99,6 @@ def test_global_pulses_refocus_schedule_end_metrics() -> None:
 
 def test_gate_events_ignore_local_dd_and_preserve_order_and_duration() -> None:
     """Observe algorithmic gates without counting recorded DD pulses."""
-    record = DDInsertionRecord(0, (0, 3), "single_x", (0,))
     result = _result(
         [
             Rx(ion=0, theta=pi),
@@ -111,9 +109,11 @@ def test_gate_events_ignore_local_dd_and_preserve_order_and_duration() -> None:
             AdvanceTime(),
         ],
         3,
-        records=(record,),
     )
-    events = gate_residual_events_by_ion(result)[0]
+    events = gate_residual_events_by_ion(
+        result,
+        local_pulse_action_ids=frozenset({result.scheduled_actions[0].action_id}),
+    )[0]
 
     assert [(event.timestep, event.duration, event.gate_name) for event in events] == [
         (0, 2, "Ry"),

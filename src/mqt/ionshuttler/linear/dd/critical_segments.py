@@ -27,7 +27,7 @@ from mqt.ionshuttler.linear.actions import (
     SingleQubitGate,
     TwoQubitGate,
 )
-from mqt.ionshuttler.linear.dd.frame_replay import build_frame_history, local_dd_action_slots
+from mqt.ionshuttler.linear.dd.frame_replay import build_frame_history
 from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
 
 if TYPE_CHECKING:
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
     from mqt.ionshuttler.linear.architecture import Architecture
     from mqt.ionshuttler.linear.field_profile import FieldProfile
-    from mqt.ionshuttler.linear.result import CompilationResult
+    from mqt.ionshuttler.linear.schedule import ActionSchedule
 
 SegmentationMode = Literal["critical", "whole_schedule"]
 
@@ -137,12 +137,12 @@ def gate_z_effect(action: Action, ion: int) -> int | None:
 
 
 def compute_critical_segments(
-    result: CompilationResult,
-    architecture: Architecture | None = None,
+    schedule: ActionSchedule,
     *,
     sensitivity_profile: FieldProfile | None = None,
     dt: float = 1.0,
     segmentation: SegmentationMode = "critical",
+    local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> CriticalSegmentResult:
     """Replay ion-local segments and their normalized squared-phase proxy.
 
@@ -155,19 +155,15 @@ def compute_critical_segments(
     if dt <= 0.0:
         msg = "dt must be positive"
         raise ValueError(msg)
-    resolved_architecture = architecture or result.architecture
-    if resolved_architecture is None:
-        msg = "architecture is required for critical-segment analysis"
-        raise ValueError(msg)
+    resolved_architecture = schedule.architecture
     if segmentation not in {"critical", "whole_schedule"}:
         msg = "segmentation must be 'critical' or 'whole_schedule'"
         raise ValueError(msg)
 
-    timeline = build_timeline(result, resolved_architecture)
-    frame_history = build_frame_history(timeline, result=result)
+    timeline = build_timeline(schedule)
+    frame_history = build_frame_history(timeline, local_pulse_action_ids)
     sensitivities = normalized_sensitivity_values(resolved_architecture, sensitivity_profile)
-    local_dd_slots = local_dd_action_slots(timeline, result)
-    ion_ids = _ion_ids(result)
+    ion_ids = _ion_ids(schedule)
     segments: list[CriticalSegment] = []
     for ion in ion_ids:
         segment_start = 0
@@ -178,7 +174,7 @@ def compute_critical_segments(
         segment_index = 0
         for timestep in range(timeline.makespan):
             algorithmic_gates = (
-                _algorithmic_gates_for_ion(timeline, ion, timestep, local_dd_slots)
+                _algorithmic_gates_for_ion(timeline, ion, timestep, local_pulse_action_ids)
                 if segmentation == "critical"
                 else ()
             )
@@ -264,14 +260,15 @@ def _algorithmic_gates_for_ion(
     timeline: CompiledTimeline,
     ion: int,
     timestep: int,
-    local_dd_slots: frozenset[tuple[int, int]],
+    local_pulse_action_ids: frozenset[int],
 ) -> tuple[SingleQubitGate | TwoQubitGate, ...]:
     gates: list[SingleQubitGate | TwoQubitGate] = []
-    for action_index, action in enumerate(timeline.action_at(timestep) or ()):
+    for item in timeline.scheduled_action_at(timestep) or ():
+        action = item.action
         if isinstance(action, GlobalPulse):
             continue
         if isinstance(action, SingleQubitGate):
-            if action.ion != ion or (timestep, action_index) in local_dd_slots:
+            if action.ion != ion or item.action_id in local_pulse_action_ids:
                 continue
             gates.append(action)
         elif isinstance(action, TwoQubitGate) and ion in {action.ion_a, action.ion_b}:
@@ -287,11 +284,8 @@ def _integer_pi_sign(theta: float) -> int | None:
     return -1 if nearest % 2 else 1
 
 
-def _ion_ids(result: CompilationResult) -> tuple[int, ...]:
-    if result.initial_state is None:
-        msg = "result.initial_state is required to infer ion ids"
-        raise ValueError(msg)
-    return tuple(sorted(ion for ion, _site in result.initial_state.positions))
+def _ion_ids(program: ActionSchedule) -> tuple[int, ...]:
+    return tuple(sorted(ion for ion, _site in program.initial_state.positions))
 
 
 __all__ = [

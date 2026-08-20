@@ -15,16 +15,16 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
 from mqt.ionshuttler.linear.dd.critical_segments import CriticalSegment, compute_critical_segments
-from mqt.ionshuttler.linear.dd.result import DDPassResult
+from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
 from mqt.ionshuttler.linear.dd.sadd_solver import build_sadd_problem, solve_sadd_problem
 from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
 
 if TYPE_CHECKING:
     from mqt.ionshuttler.linear.architecture import Architecture
-    from mqt.ionshuttler.linear.result import CompilationResult
+    from mqt.ionshuttler.linear.schedule import ActionSchedule
 
 IonFloatMapping = Mapping[int, float]
 IonTimestepsMapping = Mapping[int, tuple[int, ...]]
@@ -144,6 +144,7 @@ class SADDOpportunityRecord:
     phase_before_by_ion: IonFloatMapping | None = None
     phase_after_by_ion: IonFloatMapping | None = None
     pulse_timesteps: IonTimestepsMapping | None = None
+    pulse_action_ids: IonTimestepsMapping | None = None
     transport_actions: tuple[str, ...] = ()
     trajectories: IonTimestepsMapping | None = None
     model_num_variables: int = 0
@@ -202,6 +203,11 @@ class SADDOpportunityRecord:
             "pulse_timesteps",
             _freeze_timesteps_mapping(self.pulse_timesteps, "pulse_timesteps"),
         )
+        object.__setattr__(
+            self,
+            "pulse_action_ids",
+            _freeze_timesteps_mapping(self.pulse_action_ids, "pulse_action_ids"),
+        )
         object.__setattr__(self, "transport_actions", tuple(self.transport_actions))
         object.__setattr__(
             self,
@@ -213,6 +219,15 @@ class SADDOpportunityRecord:
         if self.pulse_timesteps is not None and self.pulse_count != sum(map(len, self.pulse_timesteps.values())):
             msg = "pulse_count must match pulse_timesteps"
             raise ValueError(msg)
+        if self.pulse_action_ids is not None:
+            if self.pulse_timesteps is None or self.pulse_action_ids.keys() != self.pulse_timesteps.keys():
+                msg = "pulse_action_ids must contain the same ions as pulse_timesteps"
+                raise ValueError(msg)
+            if any(
+                len(self.pulse_action_ids[ion]) != len(timesteps) for ion, timesteps in self.pulse_timesteps.items()
+            ):
+                msg = "pulse_action_ids must contain one identifier for every pulse timestep"
+                raise ValueError(msg)
         if self.transport_action_count != len(self.transport_actions):
             msg = "transport_action_count must match transport_actions"
             raise ValueError(msg)
@@ -221,6 +236,8 @@ class SADDOpportunityRecord:
 @dataclass(frozen=True)
 class SADDReport:
     """Collect ordered opportunity records produced by one SADD pass."""
+
+    report_type: ClassVar[str] = "sadd"
 
     method: SADDMethod
     opportunities: tuple[SADDOpportunityRecord, ...] = ()
@@ -240,6 +257,58 @@ class SADDReport:
             raise TypeError(msg)
         object.__setattr__(self, "opportunities", opportunities)
 
+    @property
+    def sequences(self) -> tuple[LocalDDSequence, ...]:
+        """Accepted ion-local pulse sequences in opportunity order."""
+        return tuple(
+            LocalDDSequence(
+                ion=ion,
+                window=opportunity.window,
+                scheme_name="cp_sat_control_centric",
+                pulse_timesteps=timesteps,
+                action_ids=opportunity.pulse_action_ids[ion],
+            )
+            for opportunity in self.opportunities
+            if (
+                opportunity.accepted
+                and opportunity.pulse_timesteps is not None
+                and opportunity.pulse_action_ids is not None
+            )
+            for ion, timesteps in opportunity.pulse_timesteps.items()
+            if timesteps
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        """Return this report using JSON-compatible values."""
+        return {
+            "method": self.method.value,
+            "opportunities": [_opportunity_to_dict(opportunity) for opportunity in self.opportunities],
+        }
+
+    @classmethod
+    def from_dict(cls, data: object) -> SADDReport:
+        """Restore a SADD report from JSON-compatible values.
+
+        Returns:
+            The restored SADD report.
+
+        Raises:
+            ValueError: If the serialized report is malformed.
+        """
+        if not isinstance(data, dict):
+            msg = "SADD report must be a JSON object"
+            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Malformed JSON uses ValueError.
+        raw_opportunities = data.get("opportunities")
+        if not isinstance(raw_opportunities, list):
+            msg = "SADD report opportunities must be a list"
+            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Malformed JSON uses ValueError.
+        try:
+            method = SADDMethod(data.get("method"))
+        except ValueError as error:
+            msg = f"unknown SADD method: {data.get('method')!r}"
+            raise ValueError(msg) from error
+        return cls(method, tuple(_opportunity_from_dict(value) for value in raw_opportunities))
+
 
 @dataclass(frozen=True)
 class _ParticipantSelection:
@@ -252,11 +321,10 @@ class _ParticipantSelection:
 
 
 def run_sadd(
-    result: CompilationResult,
+    schedule: ActionSchedule,
     method: SADDMethod,
-    architecture: Architecture | None = None,
     config: SADDConfig | None = None,
-) -> DDPassResult[CompilationResult, SADDReport]:
+) -> DDPassResult[SADDReport]:
     """Apply shuttling-aware dynamical decoupling to a compiled schedule.
 
     Pulse-only and transport-enabled SADD use the same optimization backend;
@@ -267,22 +335,15 @@ def run_sadd(
 
     Raises:
         TypeError: If ``method`` is not a :class:`SADDMethod`.
-        ValueError: If required schedule metadata is absent.
     """
     if not isinstance(method, SADDMethod):
         msg = "method must be a SADDMethod"
         raise TypeError(msg)
     resolved_config = config or SADDConfig()
-    resolved_architecture = architecture or result.architecture
-    if resolved_architecture is None:
-        msg = "architecture is required for SADD"
-        raise ValueError(msg)
-    if result.initial_state is None:
-        msg = "result.initial_state is required for SADD"
-        raise ValueError(msg)
-
-    updated = result
+    resolved_architecture = schedule.architecture
+    updated = schedule
     records: list[SADDOpportunityRecord] = []
+    local_pulse_action_ids: set[int] = set()
     accepted_count = 0
     for target_pz, window in _iter_control_windows(updated, resolved_architecture, resolved_config):
         if resolved_config.max_accepted_windows is not None and accepted_count >= resolved_config.max_accepted_windows:
@@ -293,13 +354,13 @@ def run_sadd(
             target_pz,
             window,
             resolved_config,
+            frozenset(local_pulse_action_ids),
         )
         if not selection.selected_ions:
             continue
         try:
             problem = build_sadd_problem(
                 updated,
-                resolved_architecture,
                 target_pz=target_pz,
                 t_start=window[0],
                 t_end=window[1],
@@ -307,6 +368,7 @@ def run_sadd(
                 scale=resolved_config.scale,
                 operation_durations=resolved_config.operation_durations,
                 num_search_workers=resolved_config.num_search_workers,
+                local_pulse_action_ids=frozenset(local_pulse_action_ids),
             )
             solution = solve_sadd_problem(
                 problem,
@@ -316,18 +378,22 @@ def run_sadd(
             )
         except ImportError as error:
             return DDPassResult(
-                program=updated,
+                schedule=updated,
                 report=SADDReport(method=method, opportunities=tuple(records)),
                 unavailable_reason=str(error),
             )
         accepted = (
-            solution.result is not None
+            solution.schedule is not None
             and solution.objective_after is not None
             and solution.validation_status == "valid"
             and solution.objective_after < problem.objective_before - resolved_config.improvement_tolerance
         )
-        if accepted and solution.result is not None:
-            updated = solution.result
+        solution_local_pulse_action_ids = frozenset(local_pulse_action_ids).union(
+            action_id for action_ids in solution.pulse_action_ids.values() for action_id in action_ids
+        )
+        if accepted and solution.schedule is not None:
+            updated = solution.schedule
+            local_pulse_action_ids.update(solution_local_pulse_action_ids)
             accepted_count += 1
         records.append(
             SADDOpportunityRecord(
@@ -350,26 +416,31 @@ def run_sadd(
                 selection_scores=selection.selection_scores,
                 phase_before_by_ion=_phase_by_ion(problem.phase_segments),
                 phase_after_by_ion=(
-                    _phase_by_ion_for_result(solution.result, problem.phase_segments)
-                    if solution.result is not None
+                    _phase_by_ion_for_program(
+                        solution.schedule,
+                        problem.phase_segments,
+                        solution_local_pulse_action_ids,
+                    )
+                    if solution.schedule is not None
                     else None
                 ),
                 pulse_timesteps=solution.pulse_timesteps,
+                pulse_action_ids=solution.pulse_action_ids,
                 transport_actions=tuple(f"t={timestep}: {action!r}" for timestep, action in solution.transport_actions),
                 trajectories=solution.trajectories,
                 model_num_variables=solution.model_num_variables,
                 model_num_constraints=solution.model_num_constraints,
             )
         )
-    return DDPassResult(program=updated, report=SADDReport(method=method, opportunities=tuple(records)))
+    return DDPassResult(schedule=updated, report=SADDReport(method=method, opportunities=tuple(records)))
 
 
 def _iter_control_windows(
-    result: CompilationResult,
+    program: ActionSchedule,
     architecture: Architecture,
     config: SADDConfig,
 ) -> tuple[tuple[str, tuple[int, int]], ...]:
-    timeline = build_timeline(result, architecture)
+    timeline = build_timeline(program)
     windows: list[tuple[str, tuple[int, int]]] = []
     for pz_name in sorted(architecture.processing_zones or {}):
         start: int | None = None
@@ -406,14 +477,15 @@ def _split_window(
 
 
 def _select_participating_ions(
-    result: CompilationResult,
+    program: ActionSchedule,
     architecture: Architecture,
     target_pz: str,
     window: tuple[int, int],
     config: SADDConfig,
+    local_pulse_action_ids: frozenset[int],
 ) -> _ParticipantSelection:
-    timeline = build_timeline(result, architecture)
-    trace = compute_critical_segments(result, architecture)
+    timeline = build_timeline(program)
+    trace = compute_critical_segments(program, local_pulse_action_ids=local_pulse_action_ids)
     processing_zones = architecture.processing_zones or {}
     zone_sites = processing_zones[target_pz]
     ion_scores: list[tuple[float, int, int]] = []
@@ -501,13 +573,12 @@ def _phase_by_ion(segments: tuple[CriticalSegment, ...]) -> dict[int, float]:
     return phase_by_ion
 
 
-def _phase_by_ion_for_result(
-    result: CompilationResult,
+def _phase_by_ion_for_program(
+    program: ActionSchedule,
     source_segments: tuple[CriticalSegment, ...],
+    local_pulse_action_ids: frozenset[int],
 ) -> dict[int, float]:
-    if result.architecture is None:
-        return {}
-    trace = compute_critical_segments(result, result.architecture)
+    trace = compute_critical_segments(program, local_pulse_action_ids=local_pulse_action_ids)
     segment_keys = {(segment.ion, segment.index, segment.start, segment.end) for segment in source_segments}
     return _phase_by_ion(
         tuple(
@@ -516,6 +587,213 @@ def _phase_by_ion_for_result(
             if (segment.ion, segment.index, segment.start, segment.end) in segment_keys
         )
     )
+
+
+def _opportunity_to_dict(opportunity: SADDOpportunityRecord) -> dict[str, object]:
+    return {
+        "target_pz": opportunity.target_pz,
+        "window": list(opportunity.window),
+        "participating_ions": list(opportunity.participating_ions),
+        "status": opportunity.status,
+        "validation_status": opportunity.validation_status,
+        "objective_before": opportunity.objective_before,
+        "objective_after": opportunity.objective_after,
+        "accepted": opportunity.accepted,
+        "pulse_count": opportunity.pulse_count,
+        "transport_action_count": opportunity.transport_action_count,
+        "runtime_s": opportunity.runtime_s,
+        "message": opportunity.message,
+        "eligible_ions": list(opportunity.eligible_ions),
+        "rejected_busy_ions": list(opportunity.rejected_busy_ions),
+        "rejected_no_active_segment_ions": list(opportunity.rejected_no_active_segment_ions),
+        "rejected_unreachable_ions": list(opportunity.rejected_unreachable_ions),
+        "selection_scores": [list(score) for score in opportunity.selection_scores],
+        "phase_before_by_ion": _float_mapping_to_list(opportunity.phase_before_by_ion),
+        "phase_after_by_ion": _float_mapping_to_list(opportunity.phase_after_by_ion),
+        "pulse_timesteps": _timesteps_mapping_to_list(opportunity.pulse_timesteps),
+        "pulse_action_ids": _timesteps_mapping_to_list(opportunity.pulse_action_ids),
+        "transport_actions": list(opportunity.transport_actions),
+        "trajectories": _timesteps_mapping_to_list(opportunity.trajectories),
+        "model_num_variables": opportunity.model_num_variables,
+        "model_num_constraints": opportunity.model_num_constraints,
+    }
+
+
+def _opportunity_from_dict(data: object) -> SADDOpportunityRecord:
+    if not isinstance(data, dict):
+        msg = "each SADD opportunity must be a JSON object"
+        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Malformed JSON uses ValueError.
+    try:
+        window = _json_int_pair(data, "window")
+        return SADDOpportunityRecord(
+            target_pz=_json_str(data, "target_pz"),
+            window=(window[0], window[1]),
+            participating_ions=tuple(_json_int_list(data, "participating_ions")),
+            status=_json_str(data, "status"),
+            validation_status=_json_str(data, "validation_status"),
+            objective_before=_json_float(data, "objective_before"),
+            objective_after=_json_optional_float(data, "objective_after"),
+            accepted=_json_bool(data, "accepted"),
+            pulse_count=_json_int(data, "pulse_count"),
+            transport_action_count=_json_int(data, "transport_action_count"),
+            runtime_s=_json_float(data, "runtime_s"),
+            message=_json_optional_str(data, "message"),
+            eligible_ions=tuple(_json_int_list(data, "eligible_ions")),
+            rejected_busy_ions=tuple(_json_int_list(data, "rejected_busy_ions")),
+            rejected_no_active_segment_ions=tuple(_json_int_list(data, "rejected_no_active_segment_ions")),
+            rejected_unreachable_ions=tuple(_json_int_list(data, "rejected_unreachable_ions")),
+            selection_scores=tuple(_json_selection_scores(data, "selection_scores")),
+            phase_before_by_ion=_json_float_mapping(data, "phase_before_by_ion"),
+            phase_after_by_ion=_json_float_mapping(data, "phase_after_by_ion"),
+            pulse_timesteps=_json_timesteps_mapping(data, "pulse_timesteps"),
+            pulse_action_ids=_json_timesteps_mapping(data, "pulse_action_ids"),
+            transport_actions=tuple(_json_str_list(data, "transport_actions")),
+            trajectories=_json_timesteps_mapping(data, "trajectories"),
+            model_num_variables=_json_int(data, "model_num_variables"),
+            model_num_constraints=_json_int(data, "model_num_constraints"),
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        msg = "malformed SADD opportunity"
+        raise ValueError(msg) from error
+
+
+def _json_int_pair(data: Mapping[str, object], key: str) -> tuple[int, int]:
+    values = _json_int_list(data, key)
+    if len(values) != 2:
+        msg = f"{key} must contain two integers"
+        raise ValueError(msg)
+    return values[0], values[1]
+
+
+def _float_mapping_to_list(values: IonFloatMapping | None) -> list[list[int | float]] | None:
+    if values is None:
+        return None
+    return [[ion, value] for ion, value in values.items()]
+
+
+def _timesteps_mapping_to_list(values: IonTimestepsMapping | None) -> list[list[object]] | None:
+    if values is None:
+        return None
+    return [[ion, list(timesteps)] for ion, timesteps in values.items()]
+
+
+def _json_int(data: Mapping[str, object], key: str) -> int:
+    value = data[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError
+    return value
+
+
+def _json_float(data: Mapping[str, object], key: str) -> float:
+    value = data[key]
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise TypeError
+    return float(value)
+
+
+def _json_optional_float(data: Mapping[str, object], key: str) -> float | None:
+    value = data[key]
+    return None if value is None else _json_float(data, key)
+
+
+def _json_str(data: Mapping[str, object], key: str) -> str:
+    value = data[key]
+    if not isinstance(value, str):
+        raise TypeError
+    return value
+
+
+def _json_optional_str(data: Mapping[str, object], key: str) -> str | None:
+    value = data[key]
+    return None if value is None else _json_str(data, key)
+
+
+def _json_bool(data: Mapping[str, object], key: str) -> bool:
+    value = data[key]
+    if not isinstance(value, bool):
+        raise TypeError
+    return value
+
+
+def _json_list(data: Mapping[str, object], key: str) -> list[object]:
+    value = data[key]
+    if not isinstance(value, list):
+        raise TypeError
+    return value
+
+
+def _json_int_list(data: Mapping[str, object], key: str) -> list[int]:
+    values = _json_list(data, key)
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+        raise TypeError
+    return cast("list[int]", values)
+
+
+def _json_str_list(data: Mapping[str, object], key: str) -> list[str]:
+    values = _json_list(data, key)
+    if any(not isinstance(value, str) for value in values):
+        raise TypeError
+    return cast("list[str]", values)
+
+
+def _json_selection_scores(data: Mapping[str, object], key: str) -> list[tuple[int, float, int]]:
+    result: list[tuple[int, float, int]] = []
+    for value in _json_list(data, key):
+        if not isinstance(value, list) or len(value) != 3:
+            raise TypeError
+        ion, score, distance = value
+        if (
+            isinstance(ion, bool)
+            or not isinstance(ion, int)
+            or isinstance(score, bool)
+            or not isinstance(score, int | float)
+            or isinstance(distance, bool)
+            or not isinstance(distance, int)
+        ):
+            raise TypeError
+        result.append((ion, float(score), distance))
+    return result
+
+
+def _json_float_mapping(data: Mapping[str, object], key: str) -> dict[int, float] | None:
+    values = data[key]
+    if values is None:
+        return None
+    if not isinstance(values, list):
+        raise TypeError
+    result: dict[int, float] = {}
+    for value in values:
+        if not isinstance(value, list) or len(value) != 2:
+            raise TypeError
+        ion, number = value
+        if (
+            isinstance(ion, bool)
+            or not isinstance(ion, int)
+            or isinstance(number, bool)
+            or not isinstance(number, int | float)
+        ):
+            raise TypeError
+        result[ion] = float(number)
+    return result
+
+
+def _json_timesteps_mapping(data: Mapping[str, object], key: str) -> dict[int, tuple[int, ...]] | None:
+    values = data[key]
+    if values is None:
+        return None
+    if not isinstance(values, list):
+        raise TypeError
+    result: dict[int, tuple[int, ...]] = {}
+    for value in values:
+        if not isinstance(value, list) or len(value) != 2:
+            raise TypeError
+        ion, timesteps = value
+        if isinstance(ion, bool) or not isinstance(ion, int) or not isinstance(timesteps, list):
+            raise TypeError
+        if any(isinstance(timestep, bool) or not isinstance(timestep, int) for timestep in timesteps):
+            raise TypeError
+        result[ion] = tuple(timesteps)
+    return result
 
 
 def _require_positive_int(value: object, name: str) -> None:

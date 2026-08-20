@@ -46,9 +46,10 @@ compiler state support that path without depending on the search strategy.
 
 ### Public compiler interface
 
-{py:class}`~mqt.ionshuttler.linear.LinearCompiler` is the main entry point. It
-holds an architecture and configuration, accepts a circuit, creates its initial
-state, and returns a {py:class}`~mqt.ionshuttler.linear.CompilationResult`.
+{py:class}`~mqt.ionshuttler.linear.compiler.LinearCompiler` is the main entry
+point. It holds an architecture and configuration, accepts a circuit, creates
+its initial state, and returns a
+{py:class}`~mqt.ionshuttler.linear.CompilationResult`.
 
 The facade keeps these preparation steps consistent and keeps the lower-level
 search machinery out of normal user code. Compilation itself has no output-file
@@ -135,8 +136,10 @@ and supporting state and architecture information. It is the boundary between
 base compilation and later consumers such as visualization, analysis, or
 additional control passes.
 
-Downstream passes sit on top of compilation. They consume a result and may
-produce a revised schedule together with method-specific diagnostics.
+Downstream passes sit on top of compilation. They consume an `ActionSchedule`
+and produce a revised schedule together with method-specific diagnostics. The
+schedule retains stable action identifiers, while provenance such as the IDs of
+inserted local DD pulses belongs to the pass report.
 
 Examples of downstream consumers include:
 
@@ -214,18 +217,19 @@ custom_circuit.cx(0, 1)
 serialized_result = compiler.compile(custom_circuit).to_json()
 result = CompilationResult.from_json(serialized_result, action_types=(CX,))
 
-next(action for action in result.path if isinstance(action, CX))
+next(action for action in result.schedule.path if isinstance(action, CX))
 ```
 
-The result records the ordered hardware catalog used during compilation.
-Built-in actions decode automatically; supplying a custom class lets its
-inherited `from_dict` method restore ordinary dataclass fields. Actions with
-nested or specialized serialized values can override that method. Catalogs are
-supplied per call rather than installed in global state, so separate
+The nested action schedule records the ordered hardware catalog used during
+compilation. Built-in actions decode automatically; supplying a custom class
+lets its inherited `from_dict` method restore ordinary dataclass fields. Actions
+with nested or specialized serialized values can override that method. Catalogs
+are supplied per call rather than installed in global state, so separate
 applications can use different action sets without affecting one another.
 
 ## See also
 
 - {doc}`linear_compiler` — configure and run the Linear compiler
+- {doc}`linear_dd` — apply and compare dynamical-decoupling methods
 - {doc}`linear_hardware_model` — physical interpretation of the modeled device
 - {doc}`api/mqt/ionshuttler/linear/index` — complete Linear Python API reference

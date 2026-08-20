@@ -17,6 +17,7 @@ from typing import cast
 import pytest
 
 from mqt.ionshuttler.linear import dd
+from mqt.ionshuttler.linear.architecture import Architecture
 from mqt.ionshuttler.linear.dd import (
     DDPassResult,
     GlobalDDConfig,
@@ -30,6 +31,13 @@ from mqt.ionshuttler.linear.dd import (
     SADDReport,
     sadd_solver,
 )
+from mqt.ionshuttler.linear.schedule import ActionSchedule
+from mqt.ionshuttler.linear.state import create_initial_state
+
+
+def _program() -> ActionSchedule:
+    architecture = Architecture(num_sites=1)
+    return ActionSchedule.from_actions([], architecture, create_initial_state(1, architecture))
 
 
 def _opportunity(**overrides: object) -> SADDOpportunityRecord:
@@ -68,6 +76,7 @@ def test_dd_package_exports_only_the_supported_public_surface() -> None:
         "GlobalDDReport",
         "IdealizedHahnConfig",
         "IdealizedHahnReport",
+        "LocalDDSequence",
         "OperationDurations",
         "SADDConfig",
         "SADDMethod",
@@ -102,7 +111,7 @@ def test_comparator_report_types_are_available_without_optional_dependencies() -
 
     assert IdealizedHahnConfig().label == "IdealizedHahn"
     assert GlobalDDConfig(spacing=5).half_first_window
-    assert idealized.insertions == ()
+    assert idealized.sequences == ()
     assert global_report.pulse_timesteps == (1, 3)
 
 
@@ -187,14 +196,15 @@ def test_sadd_values_are_immutable_and_copy_mutable_inputs() -> None:
         pulse_timesteps=pulse_timesteps,
     )
     report = SADDReport(method=SADDMethod.PULSE_ONLY, opportunities=(opportunity,))
-    result = DDPassResult(program="unchanged", report=report)
+    program = _program()
+    result = DDPassResult(schedule=program, report=report)
 
     phase_before[0] = 99.0
     pulse_timesteps[0] = (1, 2)
 
     assert opportunity.phase_before_by_ion == {0: 2.0}
     assert opportunity.pulse_timesteps == {0: (2,)}
-    assert result.program == "unchanged"
+    assert result.schedule is program
     with pytest.raises(TypeError):
         cast("dict[int, float]", opportunity.phase_before_by_ion)[0] = 4.0
     program_attribute = "program"
@@ -207,7 +217,7 @@ def test_dd_pass_result_rejects_empty_unavailability_reason() -> None:
     report = SADDReport(method=SADDMethod.FULL)
 
     with pytest.raises(ValueError, match="unavailable_reason"):
-        DDPassResult(program="unchanged", report=report, unavailable_reason="")
+        DDPassResult(schedule=_program(), report=report, unavailable_reason="")
 
 
 def test_missing_ortools_has_installation_guidance(monkeypatch: pytest.MonkeyPatch) -> None:

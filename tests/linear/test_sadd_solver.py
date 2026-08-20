@@ -21,7 +21,7 @@ from mqt.ionshuttler.linear.dd.sadd_solver import (
     solve_sadd_problem,
 )
 from mqt.ionshuttler.linear.dd.timeline import build_timeline
-from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
+from mqt.ionshuttler.linear.schedule import ActionSchedule
 from mqt.ionshuttler.linear.state import create_initial_state
 
 cp_model = pytest.importorskip("ortools.sat.python.cp_model")
@@ -31,13 +31,11 @@ def _idle_result(
     architecture: Architecture,
     initial_positions: list[int],
     timesteps: int,
-) -> CompilationResult:
-    return CompilationResult(
-        status=CompilationStatus.SUCCESS,
-        path=[AdvanceTime() for _ in range(timesteps)],
-        num_timesteps=timesteps,
-        architecture=architecture,
-        initial_state=create_initial_state(
+) -> ActionSchedule:
+    return ActionSchedule.from_actions(
+        [AdvanceTime() for _ in range(timesteps)],
+        architecture,
+        create_initial_state(
             len(initial_positions),
             architecture,
             initial_positions=initial_positions,
@@ -66,7 +64,6 @@ def test_solver_applies_terminal_parity_to_downstream_phase() -> None:
     result = _idle_result(architecture, [0], 5)
     problem = build_sadd_problem(
         result,
-        architecture,
         target_pz="pz",
         t_start=1,
         t_end=3,
@@ -82,22 +79,22 @@ def test_solver_applies_terminal_parity_to_downstream_phase() -> None:
     assert solution.materialized
 
 
-def test_equal_primary_optima_are_canonicalized_to_the_closing_pulse() -> None:
-    """Choose one stable representative when opening and closing pulses tie."""
+def test_equal_primary_optima_remain_semantically_equivalent() -> None:
+    """Accept either primary optimum when symmetric pulse positions tie."""
     architecture = Architecture(num_sites=3, processing_zones={"pz": [1]})
     result = _idle_result(architecture, [1], 3)
     problem = build_sadd_problem(
         result,
-        architecture,
         target_pz="pz",
         t_start=0,
         t_end=3,
         participating_ions=(0,),
     )
 
-    observed = {solve_sadd_problem(problem, allow_transport=False).pulse_timesteps[0] for _ in range(10)}
+    solutions = [solve_sadd_problem(problem, allow_transport=False) for _ in range(10)]
 
-    assert observed == {(2,)}
+    assert {solution.pulse_timesteps[0] for solution in solutions} <= {(1,), (2,)}
+    assert all(solution.objective_after == pytest.approx(1.0) for solution in solutions)
 
 
 def test_nonunit_operation_intervals_prevent_overlapping_starts() -> None:
@@ -146,7 +143,6 @@ def _duration_model(
     result = _idle_result(architecture, initial_positions, 4)
     problem = build_sadd_problem(
         result,
-        architecture,
         target_pz="pz",
         t_start=0,
         t_end=4,
@@ -174,9 +170,8 @@ def _duration_model(
 def test_problem_infers_existing_transport_durations() -> None:
     """Use uniform schedule timings when no explicit synthesis timings are given."""
     architecture = Architecture(num_sites=3, processing_zones={"pz": [1]})
-    result = CompilationResult(
-        status=CompilationStatus.SUCCESS,
-        path=[
+    result = ActionSchedule.from_actions(
+        [
             Shuttle(0, 0, 1, duration=2),
             AdvanceTime(),
             AdvanceTime(),
@@ -185,13 +180,11 @@ def test_problem_infers_existing_transport_durations() -> None:
             AdvanceTime(),
             AdvanceTime(),
         ],
-        num_timesteps=5,
-        architecture=architecture,
-        initial_state=create_initial_state(2, architecture, initial_positions=[0, 2]),
+        architecture,
+        create_initial_state(2, architecture, initial_positions=[0, 2]),
     )
     problem = build_sadd_problem(
         result,
-        architecture,
         target_pz="pz",
         t_start=0,
         t_end=5,
@@ -207,7 +200,6 @@ def test_materialized_pulse_uses_configured_duration() -> None:
     result = _idle_result(architecture, [0], 3)
     problem = build_sadd_problem(
         result,
-        architecture,
         target_pz="pz",
         t_start=0,
         t_end=3,
@@ -215,5 +207,5 @@ def test_materialized_pulse_uses_configured_duration() -> None:
         operation_durations=OperationDurations(one_qubit_gate=2),
     )
     solution = solve_sadd_problem(problem, timeout_s=1.0, allow_transport=False)
-    assert solution.result is not None
-    assert any(isinstance(action, Rx) and action.duration == 2 for action in solution.result.path)
+    assert solution.schedule is not None
+    assert any(isinstance(action, Rx) and action.duration == 2 for action in solution.schedule.path)

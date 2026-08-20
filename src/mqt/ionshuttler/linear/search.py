@@ -21,6 +21,7 @@ from mqt.ionshuttler.linear.config import LinearCompilerConfig, TransportTiming
 from mqt.ionshuttler.linear.cost import cost, heuristic
 from mqt.ionshuttler.linear.expand import ExpansionOptions, GenerationMode, expand, replay_path
 from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
+from mqt.ionshuttler.linear.schedule import ActionSchedule
 from mqt.ionshuttler.linear.state import State, normalize_initial_state
 
 if TYPE_CHECKING:
@@ -324,7 +325,7 @@ def _run_rolling_search(
         progress.explored_nodes += local_result.explored_nodes or 0
         if local_result.status is not CompilationStatus.SUCCESS:
             return local_result.status
-        _commit_window(progress, local_result.path, local_context, committed_gates)
+        _commit_window(progress, local_result.schedule.path, local_context, committed_gates)
     return CompilationStatus.SUCCESS
 
 
@@ -764,14 +765,12 @@ def _result(
     architecture: Architecture,
     explored_nodes: int,
 ) -> CompilationResult:
-    public_path = list(path)
+    public_path = tuple(path)
     return CompilationResult(
         status=status,
-        path=public_path,
-        num_timesteps=sum(isinstance(action, AdvanceTime) for action in public_path),
+        schedule=ActionSchedule.from_actions(public_path, architecture, final_state),
         score=cost(final_state),
         final_state=final_state,
-        architecture=architecture,
         explored_nodes=explored_nodes,
     )
 
@@ -787,9 +786,12 @@ def _with_public_metadata(
     return replace(
         result,
         wall_clock_s=budget.elapsed(),
-        architecture=architecture,
-        initial_state=initial_state,
-        action_types=tuple(action_type.__name__ for action_type in action_types),
+        schedule=ActionSchedule.from_actions(
+            result.schedule.path,
+            architecture,
+            initial_state,
+            action_types=tuple(action_type.__name__ for action_type in action_types),
+        ),
     )
 
 
