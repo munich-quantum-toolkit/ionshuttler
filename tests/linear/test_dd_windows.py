@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 def _timeline(path: Sequence[Action], _timesteps: int) -> CompiledTimeline:
     architecture = Architecture(num_sites=3, processing_zones={"pz": [0, 1, 2]})
-    return build_timeline(ActionSchedule.from_actions(path, architecture, create_initial_state(1, architecture)))
+    return build_timeline(ActionSchedule.from_actions(path, create_initial_state(1, architecture)), architecture)
 
 
 def test_idle_windows_split_around_full_gate_duration() -> None:

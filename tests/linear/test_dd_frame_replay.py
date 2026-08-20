@@ -30,16 +30,16 @@ from mqt.ionshuttler.linear.field_profile import FieldProfile
 from mqt.ionshuttler.linear.schedule import ActionSchedule
 from mqt.ionshuttler.linear.state import create_initial_state
 
+_ARCHITECTURE = Architecture(num_sites=2, processing_zones={"pz": [0, 1]})
+
 
 def _result(
     path: list[AdvanceTime | GlobalPulse | Rx | Ry | Rz | Shuttle],
     num_timesteps: int,
 ) -> ActionSchedule:
-    architecture = Architecture(num_sites=2, processing_zones={"pz": [0, 1]})
     program = ActionSchedule.from_actions(
         list(path),
-        architecture,
-        create_initial_state(1, architecture, initial_positions=[0]),
+        create_initial_state(1, _ARCHITECTURE, initial_positions=[0]),
     )
     assert program.num_timesteps == num_timesteps
     return program
@@ -75,7 +75,7 @@ def test_frame_history_includes_same_boundary_and_terminal_global_pulses() -> No
         ],
         1,
     )
-    timeline = build_timeline(program)
+    timeline = build_timeline(program, _ARCHITECTURE)
     history = build_frame_history(timeline)
 
     assert history.global_frames_by_time == (PauliFrame("X"), PauliFrame("Z"))
@@ -97,9 +97,9 @@ def test_local_record_identity_and_same_timestep_event_order() -> None:
         1,
     )
 
-    timeline = build_timeline(program)
+    timeline = build_timeline(program, _ARCHITECTURE)
     local_pulse_action_ids = frozenset({program.scheduled_actions[0].action_id})
-    events = framed_action_events(program, timeline, local_pulse_action_ids)
+    events = framed_action_events(program, _ARCHITECTURE, timeline, local_pulse_action_ids)
     history = build_frame_history(timeline, local_pulse_action_ids)
 
     assert [event.kind for event in events] == ["local_dd_pulse", "algorithmic_gate", "advance_time"]
@@ -128,7 +128,8 @@ def test_equal_same_boundary_pulses_retain_distinct_provenance_identity() -> Non
 
     events = framed_action_events(
         program,
-        build_timeline(program),
+        _ARCHITECTURE,
+        build_timeline(program, _ARCHITECTURE),
         frozenset({program.scheduled_actions[0].action_id}),
     )
 

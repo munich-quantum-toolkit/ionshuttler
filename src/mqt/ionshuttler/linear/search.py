@@ -238,7 +238,6 @@ def exhaustive_search(
         budget=budget,
         architecture=architecture,
         initial_state=initial_state,
-        action_types=action_types,
     )
 
 
@@ -288,7 +287,6 @@ def rolling_horizon_search(
         architecture,
         progress.explored_nodes,
         budget,
-        action_types,
     )
 
 
@@ -768,7 +766,8 @@ def _result(
     public_path = tuple(path)
     return CompilationResult(
         status=status,
-        schedule=ActionSchedule.from_actions(public_path, architecture, final_state),
+        schedule=ActionSchedule.from_actions(public_path, final_state),
+        architecture=architecture,
         score=cost(final_state),
         final_state=final_state,
         explored_nodes=explored_nodes,
@@ -781,17 +780,15 @@ def _with_public_metadata(
     budget: _TimeBudget,
     architecture: Architecture,
     initial_state: State,
-    action_types: Sequence[type[Action]],
 ) -> CompilationResult:
     return replace(
         result,
         wall_clock_s=budget.elapsed(),
         schedule=ActionSchedule.from_actions(
             result.schedule.path,
-            architecture,
             initial_state,
-            action_types=tuple(action_type.__name__ for action_type in action_types),
         ),
+        architecture=architecture,
     )
 
 
@@ -803,7 +800,6 @@ def _rolling_result(
     architecture: Architecture,
     explored_nodes: int,
     budget: _TimeBudget,
-    action_types: Sequence[type[Action]],
 ) -> CompilationResult:
     result = _result(path, status, final_state, architecture, explored_nodes)
     return _with_public_metadata(
@@ -811,7 +807,6 @@ def _rolling_result(
         budget=budget,
         architecture=architecture,
         initial_state=initial_state,
-        action_types=action_types,
     )
 
 

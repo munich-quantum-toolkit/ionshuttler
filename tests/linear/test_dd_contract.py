@@ -25,11 +25,10 @@ def test_local_pulse_identity_is_owned_by_the_dd_report() -> None:
     architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
     original = ActionSchedule.from_actions(
         [AdvanceTime() for _ in range(4)],
-        architecture,
         create_initial_state(1, architecture),
     )
 
-    output = apply_idealized_hahn(original)
+    output = apply_idealized_hahn(original, architecture)
     sequence = output.report.sequences[0]
     scheduled_by_id = {item.action_id: item.action for item in output.schedule.scheduled_actions}
 
@@ -46,11 +45,15 @@ def test_report_identity_distinguishes_equal_local_and_algorithmic_gates() -> No
     architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
     schedule = ActionSchedule.from_actions(
         [Rx(ion=0, theta=math.pi), Rx(ion=0, theta=math.pi), AdvanceTime()],
-        architecture,
         create_initial_state(1, architecture),
     )
     local_pulse_action_ids = frozenset({schedule.scheduled_actions[0].action_id})
 
-    events = framed_action_events(schedule, build_timeline(schedule), local_pulse_action_ids)
+    events = framed_action_events(
+        schedule,
+        architecture,
+        build_timeline(schedule, architecture),
+        local_pulse_action_ids,
+    )
 
     assert [event.kind for event in events] == ["local_dd_pulse", "algorithmic_gate", "advance_time"]

@@ -128,7 +128,8 @@ def test_exhaustive_search_attaches_the_public_scheduled_program(monkeypatch: py
     initial_state = create_initial_state(1, architecture)
     internal_result = CompilationResult(
         status=CompilationStatus.SUCCESS,
-        schedule=ActionSchedule.from_actions([], architecture, initial_state),
+        schedule=ActionSchedule.from_actions([], initial_state),
+        architecture=architecture,
     )
     monkeypatch.setattr(search_module, "_search_with_budget", lambda *_args: internal_result)
 

@@ -96,7 +96,7 @@ def _load_source_modules(checkout: Path) -> dict[str, Any]:
     }
 
 
-def _case(case_name: str, source: dict[str, Any]) -> tuple[ActionSchedule, object, object]:
+def _case(case_name: str, source: dict[str, Any]) -> tuple[ActionSchedule, Architecture, object, object]:
     initial_position = 1 if case_name == "local_pulse" else 0
     target_architecture = Architecture(
         num_sites=3,
@@ -105,7 +105,6 @@ def _case(case_name: str, source: dict[str, Any]) -> tuple[ActionSchedule, objec
     )
     target_schedule = ActionSchedule.from_actions(
         [AdvanceTime() for _ in range(3)],
-        target_architecture,
         create_initial_state(1, target_architecture, initial_positions=[initial_position]),
     )
 
@@ -125,7 +124,7 @@ def _case(case_name: str, source: dict[str, Any]) -> tuple[ActionSchedule, objec
             initial_positions=[initial_position],
         ),
     )
-    return target_schedule, source_architecture, source_result
+    return target_schedule, target_architecture, source_architecture, source_result
 
 
 def _actions(path: object) -> list[str]:
@@ -140,11 +139,15 @@ def _opportunities(records: object) -> list[dict[str, object]]:
             "participating_ions": list(record.participating_ions),
             "status": record.status,
             "validation_status": record.validation_status,
-            "objective_before": record.objective_before,
-            "objective_after": record.objective_after,
+            "phase_cost_before": (
+                record.phase_cost_before if hasattr(record, "phase_cost_before") else record.objective_before
+            ),
+            "phase_cost_after": (
+                record.phase_cost_after if hasattr(record, "phase_cost_after") else record.objective_after
+            ),
             "accepted": record.accepted,
             "pulse_count": record.pulse_count,
-            "transport_action_count": record.transport_action_count,
+            "transport_action_count": getattr(record, "transport_action_count", len(record.transport_actions)),
         }
         for record in records
     ]
@@ -180,7 +183,7 @@ def main() -> int:
     source = _load_source_modules(args.ionswapper)
     differences: list[str] = []
     for case_name in ("local_pulse", "transport_required"):
-        target_schedule, source_architecture, source_result = _case(case_name, source)
+        target_schedule, target_architecture, source_architecture, source_result = _case(case_name, source)
         for method in (SADDMethod.PULSE_ONLY, SADDMethod.FULL):
             source_output = source["run"](
                 source_result,
@@ -192,6 +195,7 @@ def main() -> int:
             )
             target_output = run_sadd(
                 target_schedule,
+                target_architecture,
                 method,
                 SADDConfig(max_accepted_windows=1),
             )

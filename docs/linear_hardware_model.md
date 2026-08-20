@@ -110,6 +110,20 @@ RMS-normalized or otherwise calibrated by the hardware model. Normalization, a
 noise-strength convention, and the physical interpretation of the scalar values
 belong to the downstream analysis using the profile.
 
+## Global control pulses
+
+`Architecture.supported_action_types` records the operations available on the
+target hardware. The default catalog contains transport and the standard local
+gate set; add `GlobalPulse` to describe control pulses applied to every ion at
+once. Pulse shape, calibration, and implementation remain the responsibility of
+a downstream control layer.
+
+A compiler or later transformation may use any subset of this catalog. This
+allows a circuit to be compiled without global control and subsequently passed
+to periodic global DD under an architecture extended with `GlobalPulse`. The DD
+pass first checks that the supplied architecture can execute the existing
+schedule and then checks the new capability.
+
 ## See also
 
 - {doc}`linear_compiler` — compile Qiskit and QASM circuits for this model

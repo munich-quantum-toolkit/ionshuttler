@@ -118,11 +118,13 @@ class CompiledTimeline:
 
 def build_timeline(
     schedule: ActionSchedule,
+    architecture: Architecture,
 ) -> CompiledTimeline:
     """Reconstruct a timeline solely from executable schedule information.
 
     Args:
         schedule: Executable schedule to reconstruct.
+        architecture: Hardware model against which to interpret the actions.
 
     Returns:
         The reconstructed immutable timeline.
@@ -131,15 +133,12 @@ def build_timeline(
         ValueError: If required metadata is absent or the makespan disagrees with
             the schedule's time-advance actions.
     """
-    resolved_architecture = schedule.architecture
     initial_positions = to_dict(schedule.initial_state.to_replay_state())
     makespan = schedule.num_timesteps
     positions_by_time: list[dict[int, int]] = [dict(initial_positions) for _ in range(makespan + 1)]
     ion_busy_by_time: dict[int, set[int]] = {ion_id: set() for ion_id in initial_positions}
     ion_gate_busy_by_time: dict[int, set[int]] = {ion_id: set() for ion_id in initial_positions}
-    pz_busy_by_time: dict[str, set[int]] = {
-        zone_name: set() for zone_name in (resolved_architecture.processing_zones or {})
-    }
+    pz_busy_by_time: dict[str, set[int]] = {zone_name: set() for zone_name in (architecture.processing_zones or {})}
     actions_by_time: dict[int, list[Action]] = {}
     scheduled_actions_by_time: dict[int, list[ScheduledAction]] = {}
     current_positions = dict(initial_positions)
@@ -172,7 +171,7 @@ def build_timeline(
                     _action_duration(action),
                     current_time,
                     current_positions,
-                    resolved_architecture,
+                    architecture,
                     ion_busy_by_time,
                     ion_gate_busy_by_time,
                     pz_busy_by_time,
@@ -182,7 +181,7 @@ def build_timeline(
                 duration = _action_duration(action)
                 _mark_busy_range(ion_busy_by_time.setdefault(ion, set()), current_time, duration)
                 _mark_busy_range(ion_gate_busy_by_time.setdefault(ion, set()), current_time, duration)
-            zone = resolved_architecture.get_processing_zone(current_positions[action.ion_a])
+            zone = architecture.get_processing_zone(current_positions[action.ion_a])
             if zone is not None:
                 _mark_busy_range(pz_busy_by_time.setdefault(zone, set()), current_time, duration)
         elif isinstance(action, AdvanceTime):

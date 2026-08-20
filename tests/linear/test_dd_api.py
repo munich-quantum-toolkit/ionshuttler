@@ -34,10 +34,11 @@ from mqt.ionshuttler.linear.dd import (
 from mqt.ionshuttler.linear.schedule import ActionSchedule
 from mqt.ionshuttler.linear.state import create_initial_state
 
+_ARCHITECTURE = Architecture(num_sites=1)
+
 
 def _program() -> ActionSchedule:
-    architecture = Architecture(num_sites=1)
-    return ActionSchedule.from_actions([], architecture, create_initial_state(1, architecture))
+    return ActionSchedule.from_actions([], create_initial_state(1, _ARCHITECTURE))
 
 
 def _opportunity(**overrides: object) -> SADDOpportunityRecord:
@@ -47,11 +48,11 @@ def _opportunity(**overrides: object) -> SADDOpportunityRecord:
         "participating_ions": (0,),
         "status": "OPTIMAL",
         "validation_status": "valid",
-        "objective_before": 2.0,
-        "objective_after": 0.5,
+        "phase_cost_before": 2.0,
+        "phase_cost_after": 0.5,
         "accepted": True,
         "pulse_count": 1,
-        "transport_action_count": 0,
+        "transport_delta": {},
         "runtime_s": 0.1,
         "eligible_ions": (0,),
         "selection_scores": ((0, 2.0, 0),),
@@ -104,9 +105,7 @@ def test_comparator_report_types_are_available_without_optional_dependencies() -
         scheme_name="periodic_x",
         pulse_timesteps=(1, 3),
         spacing=2,
-        sum_absolute_residual_phase=0.0,
-        sum_squared_residual_phase=0.0,
-        max_absolute_residual_phase=0.0,
+        phase_cost=0.0,
     )
 
     assert IdealizedHahnConfig().label == "IdealizedHahn"
@@ -170,10 +169,10 @@ def test_sadd_config_rejects_invalid_values(
     ("overrides", "exception", "message"),
     [
         ({"window": (2, 2)}, ValueError, "window end"),
-        ({"accepted": True, "objective_after": None}, ValueError, "objective_after"),
-        ({"objective_before": float("nan")}, ValueError, "objective_before"),
+        ({"accepted": True, "phase_cost_after": None}, ValueError, "phase_cost_after"),
+        ({"phase_cost_before": float("nan")}, ValueError, "phase_cost_before"),
         ({"pulse_count": 2}, ValueError, "pulse_count"),
-        ({"transport_action_count": 1}, ValueError, "transport_action_count"),
+        ({"transport_delta": {"Shuttle": 0}}, ValueError, "transport_delta"),
         ({"participating_ions": (0, 0)}, ValueError, "duplicate"),
     ],
 )
@@ -191,19 +190,23 @@ def test_sadd_values_are_immutable_and_copy_mutable_inputs() -> None:
     """Prevent reports from mutating either inputs or frozen observations."""
     phase_before = {0: 2.0}
     pulse_timesteps = {0: (2,)}
+    transport_delta = {"Shuttle": 2}
     opportunity = _opportunity(
         phase_before_by_ion=phase_before,
         pulse_timesteps=pulse_timesteps,
+        transport_delta=transport_delta,
     )
     report = SADDReport(method=SADDMethod.PULSE_ONLY, opportunities=(opportunity,))
     program = _program()
-    result = DDPassResult(schedule=program, report=report)
+    result = DDPassResult(schedule=program, architecture=_ARCHITECTURE, report=report)
 
     phase_before[0] = 99.0
     pulse_timesteps[0] = (1, 2)
+    transport_delta["Shuttle"] = 99
 
     assert opportunity.phase_before_by_ion == {0: 2.0}
     assert opportunity.pulse_timesteps == {0: (2,)}
+    assert opportunity.transport_delta == {"Shuttle": 2}
     assert result.schedule is program
     with pytest.raises(TypeError):
         cast("dict[int, float]", opportunity.phase_before_by_ion)[0] = 4.0
@@ -217,7 +220,7 @@ def test_dd_pass_result_rejects_empty_unavailability_reason() -> None:
     report = SADDReport(method=SADDMethod.FULL)
 
     with pytest.raises(ValueError, match="unavailable_reason"):
-        DDPassResult(schedule=_program(), report=report, unavailable_reason="")
+        DDPassResult(schedule=_program(), architecture=_ARCHITECTURE, report=report, unavailable_reason="")
 
 
 def test_missing_ortools_has_installation_guidance(monkeypatch: pytest.MonkeyPatch) -> None:

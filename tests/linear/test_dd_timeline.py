@@ -33,11 +33,10 @@ def test_timeline_reconstructs_positions_resources_and_action_order() -> None:
             PhysicalSwap(ion_a=0, ion_b=1, pos_a=1, pos_b=2),
             AdvanceTime(),
         ],
-        architecture,
         create_initial_state(2, architecture, initial_positions=[0, 2]),
     )
 
-    timeline = build_timeline(program)
+    timeline = build_timeline(program, architecture)
 
     assert [timeline.ion_position(0, timestep) for timestep in range(5)] == [1, 1, 1, 2, 2]
     assert [timeline.ion_position(1, timestep) for timestep in range(5)] == [2, 2, 2, 1, 1]
@@ -54,11 +53,10 @@ def test_timeline_preserves_same_boundary_and_terminal_action_order() -> None:
     terminal = Rz(ion=0, theta=0.25)
     program = ActionSchedule.from_actions(
         [pulse, Shuttle(ion=0, src=0, dst=1), AdvanceTime(), terminal],
-        architecture,
         create_initial_state(1, architecture, initial_positions=[0]),
     )
 
-    timeline = build_timeline(program)
+    timeline = build_timeline(program, architecture)
 
     assert timeline.action_at(0) == (pulse, Shuttle(ion=0, src=0, dst=1), AdvanceTime())
     assert timeline.action_at(1) == (terminal,)
@@ -72,18 +70,16 @@ def test_timeline_distinguishes_virtual_and_physical_rz_resources() -> None:
     initial_state = create_initial_state(1, architecture)
     virtual = ActionSchedule.from_actions(
         [Rz(ion=0, theta=0.2), AdvanceTime()],
-        architecture,
         initial_state,
     )
     physical = ActionSchedule.from_actions(
         [Rz(ion=0, theta=0.2, duration=1, virtual=False), AdvanceTime()],
-        architecture,
         initial_state,
     )
 
-    assert not build_timeline(virtual).ion_gate_busy(0, 0)
-    assert build_timeline(physical).ion_gate_busy(0, 0)
-    assert build_timeline(physical).pz_busy("pz", 0)
+    assert not build_timeline(virtual, architecture).ion_gate_busy(0, 0)
+    assert build_timeline(physical, architecture).ion_gate_busy(0, 0)
+    assert build_timeline(physical, architecture).pz_busy("pz", 0)
 
 
 @pytest.mark.parametrize(
@@ -101,13 +97,12 @@ def test_timeline_rejects_malformed_makespans(
 ) -> None:
     """Reject negative, overlong, and underlong schedule clocks."""
     architecture = Architecture(num_sites=1)
-    valid = ActionSchedule.from_actions(path, architecture, create_initial_state(1, architecture))
+    valid = ActionSchedule.from_actions(path, create_initial_state(1, architecture))
 
     with pytest.raises(ValueError, match=message):
         ActionSchedule(
             scheduled_actions=valid.scheduled_actions,
             num_timesteps=num_timesteps,
-            architecture=architecture,
             initial_state=valid.initial_state,
         )
 
@@ -117,7 +112,6 @@ def test_timeline_rejects_invalid_query_boundaries() -> None:
     architecture = Architecture(num_sites=1)
     program = ActionSchedule.from_actions(
         [],
-        architecture,
         State(
             positions=((0, 0),),
             completed_gates=frozenset(),
@@ -127,7 +121,7 @@ def test_timeline_rejects_invalid_query_boundaries() -> None:
             time=0,
         ),
     )
-    timeline = build_timeline(program)
+    timeline = build_timeline(program, architecture)
     invalid_timestep: int = True
     with pytest.raises(ValueError, match="within"):
         timeline.state_at(1)

@@ -33,7 +33,6 @@ def _result(
 ) -> ActionSchedule:
     program = ActionSchedule.from_actions(
         path,
-        architecture,
         create_initial_state(len(positions), architecture, initial_positions=positions),
     )
     assert program.num_timesteps == num_timesteps
@@ -50,8 +49,8 @@ def test_idealized_hahn_inserts_before_transport_and_at_terminal_boundary() -> N
         positions=[0],
     )
 
-    output = apply_idealized_hahn(original)
-    timeline = build_timeline(output.schedule)
+    output = apply_idealized_hahn(original, architecture)
+    timeline = build_timeline(output.schedule, architecture)
     expected_record = LocalDDSequence(
         ion=0,
         window=(0, 2),
@@ -80,12 +79,12 @@ def test_idealized_hahn_orders_terminal_pulses_before_logical_gates() -> None:
         positions=[0, 1],
     )
 
-    output = apply_idealized_hahn(original)
-    timeline = build_timeline(output.schedule)
+    output = apply_idealized_hahn(original, architecture)
+    timeline = build_timeline(output.schedule, architecture)
     local_pulse_action_ids = frozenset(
         action_id for sequence in output.report.sequences for action_id in sequence.action_ids
     )
-    events = framed_action_events(output.schedule, timeline, local_pulse_action_ids)
+    events = framed_action_events(output.schedule, architecture, timeline, local_pulse_action_ids)
 
     assert timeline.action_at(2) == (
         Rx(ion=0, theta=pi),
@@ -116,12 +115,13 @@ def test_idealized_hahn_rounds_clamps_and_deduplicates_in_sequence_order() -> No
 
     output = apply_idealized_hahn(
         original,
+        architecture,
         config=IdealizedHahnConfig(scheme=scheme, label="RoundingProbe"),
     )
 
     assert output.report.sequences[0].pulse_timesteps == (0, 1, 4)
     assert [type(action) for action in output.schedule.path[:2]] == [Rx, AdvanceTime]
-    assert build_timeline(output.schedule).action_at(4) == (Rx(ion=0, theta=pi),)
+    assert build_timeline(output.schedule, architecture).action_at(4) == (Rx(ion=0, theta=pi),)
 
 
 def test_idealized_hahn_replays_frames_and_round_trips_result_json() -> None:
@@ -134,10 +134,10 @@ def test_idealized_hahn_replays_frames_and_round_trips_result_json() -> None:
         positions=[0],
     )
 
-    output = apply_idealized_hahn(original)
+    output = apply_idealized_hahn(original, architecture)
     restored = DDPassResult.from_json(output.to_json(), IdealizedHahnReport)
     local_pulse_action_ids = frozenset(output.report.sequences[0].action_ids)
-    history = build_frame_history(build_timeline(output.schedule), local_pulse_action_ids)
+    history = build_frame_history(build_timeline(output.schedule, architecture), local_pulse_action_ids)
 
     assert output.report.sequences[0].pulse_timesteps == (2, 4)
     assert history.frame_for_ion(0, 4) == PauliFrame("I")
@@ -151,7 +151,7 @@ def test_idealized_hahn_returns_unchanged_program_without_eligible_windows() -> 
     architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
     original = _result(architecture, [AdvanceTime()], num_timesteps=1, positions=[0])
 
-    output = apply_idealized_hahn(original)
+    output = apply_idealized_hahn(original, architecture)
 
     assert output.schedule is original
     assert output.report.sequences == ()
@@ -163,7 +163,11 @@ def test_idealized_hahn_rejects_unknown_schemes() -> None:
     original = _result(architecture, [AdvanceTime()], num_timesteps=1, positions=[0])
 
     with pytest.raises(ValueError, match="unknown DD scheme"):
-        apply_idealized_hahn(original, config=IdealizedHahnConfig(scheme="unknown", min_idle_timesteps=1))
+        apply_idealized_hahn(
+            original,
+            architecture,
+            config=IdealizedHahnConfig(scheme="unknown", min_idle_timesteps=1),
+        )
 
 
 def test_idealized_hahn_config_rejects_invalid_values() -> None:

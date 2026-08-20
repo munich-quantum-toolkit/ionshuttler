@@ -8,120 +8,248 @@ mystnb:
 
 # Dynamical decoupling for Linear schedules
 
-The Linear backend provides three dynamical-decoupling (DD) passes over an
-{py:class}`~mqt.ionshuttler.linear.ActionSchedule`:
+Dynamical decoupling (DD) adds control pulses to a compiled schedule to reduce
+the phase accumulated by idle ions. The Linear backend provides three methods:
 
-- shuttling-aware dynamical decoupling (SADD), with pulse-only and
-  transport-enabled variants;
-- an idealized Hahn reference that ignores hardware-control constraints; and
-- periodic global DD with optional pulse-position refinement.
+| Method                    | Intended use                                      | Hardware constraints                                   |
+| ------------------------- | ------------------------------------------------- | ------------------------------------------------------ |
+| Shuttling-aware DD (SADD) | Producing a schedule intended for execution       | Respects control locations and existing operations     |
+| Idealized Hahn reference  | Estimating the benefit of unrestricted control    | Deliberately ignores where local pulses can be applied |
+| Periodic global DD        | Applying one pulse to all ions at regular spacing | Uses schedule-wide global pulses                       |
 
-Every pass returns a {py:class}`~mqt.ionshuttler.linear.dd.DDPassResult`. Its
-`schedule` is the transformed action schedule, while its `report` contains
-method-specific decisions and diagnostics. The input schedule is immutable.
+Each method leaves the input {py:class}`~mqt.ionshuttler.linear.ActionSchedule`
+unchanged and returns a {py:class}`~mqt.ionshuttler.linear.dd.DDPassResult`. The
+result contains the transformed `schedule` and a method-specific `report`.
 
-## Schedule and report ownership
+## Installation
 
-An action schedule describes ordered hardware-level actions, their stable
-identifiers, the architecture, and the initial machine state. It does not label
-why a gate was introduced. In particular, a local DD rotation and an equal
-algorithmic rotation have the same action representation.
+The idealized Hahn and global methods use the standard installation. SADD also
+requires OR-Tools:
 
-Local-pulse identity belongs to
-{py:class}`~mqt.ionshuttler.linear.dd.LocalDDSequence`. Each sequence records
-parallel `pulse_timesteps` and `action_ids` tuples. Consumers that distinguish
-local pulses from algorithmic gates should pass the reported IDs explicitly:
-
-```python
-local_pulse_action_ids = frozenset(
-    action_id for sequence in output.report.sequences for action_id in sequence.action_ids
-)
+```console
+pip install "mqt.ionshuttler[dd]"
 ```
 
-Global pulses use the distinct
-{py:class}`~mqt.ionshuttler.linear.actions.GlobalPulse` action and therefore do
-not require a parallel identity record.
+OR-Tools is loaded only when SADD reaches an optimization opportunity.
 
-## Idealized Hahn reference
+## Compile a circuit
 
-The idealized reference inserts a Hahn sequence into every sufficiently long
-ion-local idle window. It is useful as a comparator, but its output is not a
-claim that the inserted controls are executable on the modeled device.
+The examples compile a depth-2 four-qubit circuit for a six-site architecture
+with one two-site processing zone. Executing the circuit requires both transport
+and idle time, giving the DD passes a nontrivial schedule to work with.
 
 ```{code-cell} ipython3
-from mqt.ionshuttler.linear import ActionSchedule, Architecture
-from mqt.ionshuttler.linear.actions import AdvanceTime
-from mqt.ionshuttler.linear.dd import apply_idealized_hahn
-from mqt.ionshuttler.linear.state import create_initial_state
+from collections import Counter
+from dataclasses import replace
 
-architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
-schedule = ActionSchedule.from_actions(
-    [AdvanceTime() for _ in range(4)],
-    architecture,
-    create_initial_state(1, architecture),
+from qiskit import QuantumCircuit
+
+from mqt.ionshuttler.linear import Architecture, LinearCompiler
+from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES, GlobalPulse
+from mqt.ionshuttler.linear.dd import compute_critical_segments
+from mqt.ionshuttler.linear.field_profile import FieldProfile
+
+compilation_architecture = Architecture(
+    num_sites=6,
+    processing_zones={"pz": [2, 3]},
+    field_profile=FieldProfile(
+        6,
+        (
+            (0, 4.0),
+            (1, 3.0),
+            (2, 1.0),
+            (3, 1.0),
+            (4, 3.0),
+            (5, 4.0),
+        ),
+    ),
 )
-output = apply_idealized_hahn(schedule)
 
-output.report.sequences[0].pulse_timesteps
+circuit = QuantumCircuit(4)
+circuit.rx(0.25, 0)
+circuit.ry(0.5, 1)
+circuit.rzz(0.75, 0, 1)
+circuit.rzz(0.5, 2, 3)
+circuit.rx(0.25, 2)
+
+compilation = LinearCompiler(compilation_architecture).compile(circuit)
+schedule = compilation.schedule
+dd_architecture = replace(
+    compilation.architecture,
+    supported_action_types=(*DEFAULT_ACTION_TYPES, GlobalPulse),
+)
+{
+    "circuit_depth": circuit.depth(),
+    "status": compilation.status.value,
+    "timesteps": schedule.num_timesteps,
+    "actions": dict(Counter(type(action).__name__ for action in schedule.path)),
+}
 ```
+
+## Phase metric
+
+Dephasing is modeled as quasistatic, site-dependent longitudinal $Z$-phase
+accumulation. A refocusing pulse reverses the sign of subsequent accumulation,
+allowing positive and negative contributions to cancel.
+
+The phase is evaluated at *critical points*: logical gates that rotate the
+accumulated phase out of the longitudinal axis and therefore terminate a
+phase-coherent segment. Residual phase at these points is considered detrimental
+to execution fidelity and is used as a cost and comparison metric by the DD
+methods. The implementation exposes this as `phase_cost`; it corresponds to
+$J_\phi$, the sum of squared residual phases over all critical segments:
+
+```{code-cell} ipython3
+baseline = compute_critical_segments(schedule, dd_architecture)
+{"critical_segments": len(baseline.segments), "phase_cost": round(baseline.phase_cost, 3)}
+```
+
+Smaller values indicate less residual phase under this model. The value is a
+schedule-comparison metric, not a complete noisy-circuit fidelity estimate.
 
 ## Shuttling-aware dynamical decoupling
 
-{py:func}`~mqt.ionshuttler.linear.dd.run_sadd` solves bounded control windows
-with the optional OR-Tools dependency. `PULSE_ONLY` may insert local pulses but
-does not alter transport. `FULL` may additionally move participating ions to and
-from processing-zone control sites.
+`SADDMethod.PULSE_ONLY` adds local pulses without changing transport.
+`SADDMethod.FULL` may also move ions to and from control sites. Both variants
+use the same SADD backend (publication pending).
 
-```python
+```{code-cell} ipython3
 from mqt.ionshuttler.linear.dd import SADDConfig, SADDMethod, run_sadd
 
-output = run_sadd(
+sadd = run_sadd(
     schedule,
+    dd_architecture,
     SADDMethod.FULL,
-    SADDConfig(max_accepted_windows=1),
+    SADDConfig(max_accepted_windows=1, num_search_workers=1),
 )
+opportunity = next(record for record in sadd.report.opportunities if record.accepted)
+{
+    "window": opportunity.window,
+    "status": opportunity.status,
+    "eligible_ions": opportunity.eligible_ions,
+    "participating_ions": opportunity.participating_ions,
+    "pulse_timesteps": dict(opportunity.pulse_timesteps or {}),
+    "transport_delta": dict(opportunity.transport_delta),
+    "phase_cost_before": round(opportunity.phase_cost_before, 3),
+    "phase_cost_after": round(opportunity.phase_cost_after or 0.0, 3),
+}
 ```
 
-The default `SADDConfig` contains the paper-narrative optimization parameters.
-An opportunity is accepted only when its reconstructed schedule is replay-valid
-and its phase objective improves by more than `improvement_tolerance`. Solver
-runtime, model size, participant selection, pulse positions, trajectories, and
-transport decisions are available in the ordered opportunity records.
+The default {py:class}`~mqt.ionshuttler.linear.dd.SADDConfig` uses the current
+paper configuration: windows of 2–16 timesteps, at most five ions per window, a
+10-second timeout, phase-based ion ordering, chronological windows, eight solver
+workers, and shuttle/swap/local-pulse durations of 1/3/1 timesteps.
+
+The opportunity records expose the solver status, whether a proposal was
+accepted, its objective values, and the inserted pulse and transport actions.
+`transport_delta` gives the signed change in transport actions by type relative
+to the schedule entering that opportunity. Runtime and model-size fields are
+diagnostic and may vary between runs.
+
+## Idealized Hahn reference
+
+The idealized Hahn pass inserts local refocusing sequences without enforcing
+where or alongside which operations the pulses can be applied. It provides a
+comparison point rather than an executable hardware schedule.
+
+```{code-cell} ipython3
+from mqt.ionshuttler.linear.dd import IdealizedHahnConfig, apply_idealized_hahn
+
+hahn = apply_idealized_hahn(
+    schedule,
+    dd_architecture,
+    IdealizedHahnConfig(min_idle_timesteps=11),
+)
+hahn_pulse_ids = frozenset(
+    action_id
+    for sequence in hahn.report.sequences
+    for action_id in sequence.action_ids
+)
+{
+    "sequences": len(hahn.report.sequences),
+    "pulse_timesteps": hahn.report.sequences[0].pulse_timesteps,
+}
+```
+
+The minimum idle-window length restricts this short example to its two longest
+idle intervals. The default processes every idle interval long enough to hold
+the selected pulse sequence.
 
 ## Periodic global DD
 
-{py:func}`~mqt.ionshuttler.linear.dd.apply_periodic_global_dd` places global
-odd-$\pi$ rotations at a configured spacing. With a nonzero `shift_range`, it
-uses coordinate descent to refine pulse boundaries according to the selected
-residual-phase objective.
+Periodic global DD inserts X pulses that act on all ions. `spacing` sets their
+nominal separation. A nonzero `shift_range` allows small position adjustments
+that minimize the same critical-segment $J_\phi$ metric used by SADD.
 
-```python
+```{code-cell} ipython3
 from mqt.ionshuttler.linear.dd import GlobalDDConfig, apply_periodic_global_dd
 
-output = apply_periodic_global_dd(schedule, GlobalDDConfig(spacing=4))
+global_dd = apply_periodic_global_dd(schedule, dd_architecture, GlobalDDConfig(spacing=10))
+{
+    "pulse_timesteps": global_dd.report.pulse_timesteps,
+    "phase_cost": round(global_dd.report.phase_cost, 3),
+}
 ```
 
-## Comparison utilities
+The ten-timestep spacing inserts one global pulse in this 15-timestep schedule.
+Shorter spacing would assume a substantially higher global control rate.
 
-The DD package includes critical-segment reconstruction, Pauli-frame replay, and
-reusable schedule metrics. Local-pulse-aware functions accept the explicit set
-of report-owned action identifiers:
+The base circuit was compiled before `GlobalPulse` was added to the architecture
+catalog. The DD pass accepts the extended architecture because the original
+schedule remains valid on it. It would reject an architecture without
+`GlobalPulse` or one that cannot execute the existing schedule.
 
-```python
-from mqt.ionshuttler.linear.dd import compute_critical_segments
+## Comparing results
 
-trace = compute_critical_segments(
-    output.schedule,
-    local_pulse_action_ids=local_pulse_action_ids,
+Local DD pulses use ordinary single-qubit actions. Pass their report-owned
+action IDs to the phase analysis so they are not interpreted as logical gates:
+
+```{code-cell} ipython3
+sadd_pulse_ids = frozenset(
+    action_id
+    for sequence in sadd.report.sequences
+    for action_id in sequence.action_ids
 )
-trace.j_phi
+
+{
+    "without_dd": round(compute_critical_segments(schedule, dd_architecture).phase_cost, 3),
+    "sadd": round(
+        compute_critical_segments(
+            sadd.schedule,
+            dd_architecture,
+            local_pulse_action_ids=sadd_pulse_ids,
+        ).phase_cost,
+        3,
+    ),
+    "idealized_hahn": round(
+        compute_critical_segments(
+            hahn.schedule,
+            dd_architecture,
+            local_pulse_action_ids=hahn_pulse_ids,
+        ).phase_cost,
+        3,
+    ),
+    "global_dd": round(global_dd.report.phase_cost, 3),
+}
 ```
 
-The phase metrics are schedule-ranking and comparison proxies. They are not a
-complete noisy-circuit simulation; the simulation stack is a separate layer.
+Use the same field profile and metric settings for all schedules in a
+comparison. These values do not compare methods under equal control constraints:
+idealized Hahn assumes unconstrained local pulses, while global DD assumes
+schedule-wide pulses, which reflects substantially relaxed control constraints.
+
+## Limitations
+
+- Equal-quality SADD solutions may place pulses differently; compare their
+  validity and objective values rather than one exact placement.
+- The idealized Hahn result is intentionally not hardware constrained.
+- These phase metrics are comparison proxies. Full noisy-circuit simulation is
+  provided by a separate simulation layer.
 
 ## See also
 
 - {doc}`linear_compiler` — compile circuits into action schedules
-- {doc}`linear_hardware_model` — understand sites, processing zones, and timing
-- {doc}`api/mqt/ionshuttler/linear/dd/index` — complete DD Python API reference
+- {doc}`linear_hardware_model` — define sites, processing zones, timing, and
+  field profiles
+- {doc}`api/mqt/ionshuttler/linear/dd/index` — consult the complete DD Python
+  API

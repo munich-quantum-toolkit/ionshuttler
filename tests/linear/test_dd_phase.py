@@ -30,9 +30,9 @@ def _timeline(path: Sequence[Action], _num_timesteps: int) -> CompiledTimeline:
     return build_timeline(
         ActionSchedule.from_actions(
             path,
-            architecture,
             create_initial_state(1, architecture, initial_positions=[0]),
-        )
+        ),
+        architecture,
     )
 
 

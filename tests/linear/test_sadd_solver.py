@@ -34,7 +34,6 @@ def _idle_result(
 ) -> ActionSchedule:
     return ActionSchedule.from_actions(
         [AdvanceTime() for _ in range(timesteps)],
-        architecture,
         create_initial_state(
             len(initial_positions),
             architecture,
@@ -64,6 +63,7 @@ def test_solver_applies_terminal_parity_to_downstream_phase() -> None:
     result = _idle_result(architecture, [0], 5)
     problem = build_sadd_problem(
         result,
+        architecture,
         target_pz="pz",
         t_start=1,
         t_end=3,
@@ -85,6 +85,7 @@ def test_equal_primary_optima_remain_semantically_equivalent() -> None:
     result = _idle_result(architecture, [1], 3)
     problem = build_sadd_problem(
         result,
+        architecture,
         target_pz="pz",
         t_start=0,
         t_end=3,
@@ -143,13 +144,14 @@ def _duration_model(
     result = _idle_result(architecture, initial_positions, 4)
     problem = build_sadd_problem(
         result,
+        architecture,
         target_pz="pz",
         t_start=0,
         t_end=4,
         participating_ions=tuple(range(len(initial_positions))),
         operation_durations=durations,
     )
-    timeline = build_timeline(result)
+    timeline = build_timeline(result, architecture)
     model = cp_model.CpModel()
     x = {}
     for ion in problem.participating_ions:
@@ -180,11 +182,11 @@ def test_problem_infers_existing_transport_durations() -> None:
             AdvanceTime(),
             AdvanceTime(),
         ],
-        architecture,
         create_initial_state(2, architecture, initial_positions=[0, 2]),
     )
     problem = build_sadd_problem(
         result,
+        architecture,
         target_pz="pz",
         t_start=0,
         t_end=5,
@@ -200,6 +202,7 @@ def test_materialized_pulse_uses_configured_duration() -> None:
     result = _idle_result(architecture, [0], 3)
     problem = build_sadd_problem(
         result,
+        architecture,
         target_pz="pz",
         t_start=0,
         t_end=3,

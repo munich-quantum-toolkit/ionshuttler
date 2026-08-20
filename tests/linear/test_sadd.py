@@ -36,7 +36,6 @@ def _idle_result(
 ) -> ActionSchedule:
     return ActionSchedule.from_actions(
         [AdvanceTime() for _ in range(timesteps)],
-        architecture,
         create_initial_state(
             len(initial_positions),
             architecture,
@@ -66,7 +65,7 @@ def test_sadd_returns_unchanged_noop_without_an_eligible_window() -> None:
     architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
     result = _idle_result(architecture, initial_positions=[0], timesteps=1)
 
-    output = run_sadd(result, SADDMethod.PULSE_ONLY)
+    output = run_sadd(result, architecture, SADDMethod.PULSE_ONLY)
 
     assert output.schedule is result
     assert output.report.opportunities == ()
@@ -84,7 +83,7 @@ def test_sadd_reports_unavailable_solver_without_mutating_input(monkeypatch: pyt
         raise ImportError(msg)
 
     monkeypatch.setattr(sadd_module, "solve_sadd_problem", unavailable)
-    output = run_sadd(result, SADDMethod.FULL)
+    output = run_sadd(result, architecture, SADDMethod.FULL)
 
     assert output.schedule is result
     assert output.report.opportunities == ()
@@ -106,7 +105,7 @@ def test_sadd_records_unsolved_opportunity(
 
     monkeypatch.setattr(sadd_module, "solve_sadd_problem", unsolved)
 
-    output = run_sadd(result, SADDMethod.PULSE_ONLY)
+    output = run_sadd(result, architecture, SADDMethod.PULSE_ONLY)
 
     assert output.schedule is result
     assert len(output.report.opportunities) == 1
@@ -140,7 +139,7 @@ def test_sadd_rejects_replay_valid_non_improvement(monkeypatch: pytest.MonkeyPat
         )
 
     monkeypatch.setattr(sadd_module, "solve_sadd_problem", unchanged)
-    output = run_sadd(result, SADDMethod.PULSE_ONLY)
+    output = run_sadd(result, architecture, SADDMethod.PULSE_ONLY)
 
     assert output.schedule is result
     assert not output.report.opportunities[0].accepted
@@ -158,10 +157,42 @@ def test_sadd_method_is_the_only_transport_switch(monkeypatch: pytest.MonkeyPatc
         return _unsolved("UNKNOWN")
 
     monkeypatch.setattr(sadd_module, "solve_sadd_problem", capture)
-    run_sadd(result, SADDMethod.PULSE_ONLY)
-    run_sadd(result, SADDMethod.FULL)
+    run_sadd(result, architecture, SADDMethod.PULSE_ONLY)
+    run_sadd(result, architecture, SADDMethod.FULL)
 
     assert observed == [False, True]
+
+
+def test_sadd_reports_transport_changes_by_action_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Describe schedule transport changes rather than only synthesized actions."""
+    architecture = Architecture(num_sites=3, processing_zones={"pz": [1]})
+    schedule = _idle_result(architecture, initial_positions=[0], timesteps=3)
+
+    def add_shuttle(problem: SADDProblem, **_kwargs: object) -> SADDSolution:
+        updated = insert_action_at_time(
+            problem.schedule,
+            problem.architecture,
+            problem.t_start,
+            Shuttle(ion=0, src=0, dst=1),
+        )
+        return SADDSolution(
+            status="OPTIMAL",
+            objective_before=problem.objective_before,
+            objective_after=max(0.0, problem.objective_before - 1.0),
+            trajectories={0: (1, 1, 1)},
+            pulse_timesteps={0: ()},
+            pulse_action_ids={0: ()},
+            transport_actions=((problem.t_start, Shuttle(ion=0, src=0, dst=1)),),
+            schedule=updated,
+            validation_status="valid",
+            validation_error=None,
+            runtime_s=0.0,
+        )
+
+    monkeypatch.setattr(sadd_module, "solve_sadd_problem", add_shuttle)
+    output = run_sadd(schedule, architecture, SADDMethod.FULL)
+
+    assert output.report.opportunities[0].transport_delta == {"Shuttle": 1}
 
 
 def test_sadd_threads_accepted_pulse_identity_into_later_windows(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -174,6 +205,7 @@ def test_sadd_threads_accepted_pulse_identity_into_later_windows(monkeypatch: py
         observed_prior_ids.append(problem.local_pulse_action_ids)
         updated = insert_action_at_time(
             problem.schedule,
+            problem.architecture,
             problem.t_start,
             Rx(ion=0, theta=pi),
         )
@@ -195,6 +227,7 @@ def test_sadd_threads_accepted_pulse_identity_into_later_windows(monkeypatch: py
     monkeypatch.setattr(sadd_module, "solve_sadd_problem", insert_one_pulse)
     output = run_sadd(
         schedule,
+        architecture,
         SADDMethod.PULSE_ONLY,
         SADDConfig(min_window_length=2, max_window_length=2),
     )
@@ -211,6 +244,7 @@ def test_problem_validation_and_final_slot_constraints() -> None:
     result = _idle_result(architecture, initial_positions=[0, 2], timesteps=4)
     problem = build_sadd_problem(
         result,
+        architecture,
         target_pz="pz",
         t_start=1,
         t_end=3,
@@ -221,9 +255,16 @@ def test_problem_validation_and_final_slot_constraints() -> None:
     assert problem.fixed_positions[1, 2] == 2
     assert problem.objective_before > 0.0
     with pytest.raises(ValueError, match="unknown processing zone"):
-        build_sadd_problem(result, target_pz="missing", t_start=0, t_end=2, participating_ions=(0,))
+        build_sadd_problem(
+            result,
+            architecture,
+            target_pz="missing",
+            t_start=0,
+            t_end=2,
+            participating_ions=(0,),
+        )
     with pytest.raises(ValueError, match="participating_ions"):
-        build_sadd_problem(result, target_pz="pz", t_start=0, t_end=2, participating_ions=())
+        build_sadd_problem(result, architecture, target_pz="pz", t_start=0, t_end=2, participating_ions=())
 
 
 def test_invalid_materialization_reports_replay_failure() -> None:
@@ -231,11 +272,11 @@ def test_invalid_materialization_reports_replay_failure() -> None:
     architecture = Architecture(num_sites=3, processing_zones={"pz": [1]})
     result = ActionSchedule.from_actions(
         [AdvanceTime(), Rx(ion=0, theta=pi), AdvanceTime(), AdvanceTime()],
-        architecture,
         create_initial_state(1, architecture, initial_positions=[1]),
     )
     problem = build_sadd_problem(
         result,
+        architecture,
         target_pz="pz",
         t_start=0,
         t_end=3,

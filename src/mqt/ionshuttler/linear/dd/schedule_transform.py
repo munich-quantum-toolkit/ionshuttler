@@ -37,6 +37,7 @@ class _TimedGate(Protocol):
 
 def insert_action_at_time(
     schedule: ActionSchedule,
+    architecture: Architecture,
     timestep: int,
     action: Action,
 ) -> ActionSchedule:
@@ -44,6 +45,7 @@ def insert_action_at_time(
 
     Args:
         schedule: Schedule to transform.
+        architecture: Hardware model used to validate the insertion.
         timestep: Boundary at which the action starts.
         action: Action to insert.
 
@@ -56,8 +58,8 @@ def insert_action_at_time(
     if not 0 <= timestep <= schedule.num_timesteps:
         msg = f"timestep must be within [0, {schedule.num_timesteps}]"
         raise ValueError(msg)
-    timeline = build_timeline(schedule)
-    if not is_action_valid(timeline.state_at(timestep), action, schedule.architecture):
+    timeline = build_timeline(schedule, architecture)
+    if not is_action_valid(timeline.state_at(timestep), action, architecture):
         msg = "action is not valid at the requested timestep"
         raise ValueError(msg)
     insert_index = _path_insert_index(schedule.scheduled_actions, timestep)
@@ -72,10 +74,10 @@ def rebuild_schedule(
     original_schedule: ActionSchedule,
     scheduled_actions: Sequence[ScheduledAction],
 ) -> ActionSchedule:
-    """Rebuild a schedule while preserving hardware metadata and action identity.
+    """Rebuild a schedule while preserving its initial state and action identity.
 
     Args:
-        original_schedule: Schedule whose hardware metadata is preserved.
+        original_schedule: Schedule whose initial state is preserved.
         scheduled_actions: Complete replacement ordered schedule.
 
     Returns:
@@ -85,23 +87,21 @@ def rebuild_schedule(
     return ActionSchedule(
         scheduled_actions=actions,
         num_timesteps=sum(item.action.timestep_increment for item in actions if isinstance(item.action, AdvanceTime)),
-        architecture=original_schedule.architecture,
         initial_state=original_schedule.initial_state,
-        action_types=original_schedule.action_types,
     )
 
 
-def validate_rebuilt_schedule(schedule: ActionSchedule) -> bool:
+def validate_rebuilt_schedule(schedule: ActionSchedule, architecture: Architecture) -> bool:
     """Return whether every concurrent action layer is physically valid."""
     state = schedule.initial_state.to_replay_state()
     timestep_actions: list[Action] = []
     for item in schedule.scheduled_actions:
         action = item.action
         if isinstance(action, AdvanceTime):
-            updated = _apply_valid_timestep_actions(state, timestep_actions, schedule.architecture)
+            updated = _apply_valid_timestep_actions(state, timestep_actions, architecture)
             if updated is None:
                 return False
-            state = action.apply(updated, schedule.architecture)
+            state = action.apply(updated, architecture)
             timestep_actions = []
         else:
             timestep_actions.append(action)
@@ -112,7 +112,35 @@ def validate_rebuilt_schedule(schedule: ActionSchedule) -> bool:
         return True
     if any(not _can_end_without_time_advance(action) for action in timestep_actions):
         return False
-    return _apply_valid_timestep_actions(state, timestep_actions, schedule.architecture) is not None
+    return _apply_valid_timestep_actions(state, timestep_actions, architecture) is not None
+
+
+def validate_schedule_compatibility(schedule: ActionSchedule, architecture: Architecture) -> None:
+    """Require that an architecture can execute every action in a schedule.
+
+    Raises:
+        ValueError: If sites, resources, capabilities, or action replay are
+            incompatible with the architecture.
+    """
+    if any(not 0 <= site < architecture.num_sites for _ion, site in schedule.initial_state.positions):
+        msg = "schedule initial positions fall outside the architecture"
+        raise ValueError(msg)
+    schedule_zones = {zone for zone, _free_time in schedule.initial_state.pzs_busy_until}
+    architecture_zones = set(architecture.processing_zones or {})
+    if schedule_zones != architecture_zones:
+        msg = "schedule processing-zone resources do not match the architecture"
+        raise ValueError(msg)
+    unsupported = sorted({
+        type(item.action).__name__
+        for item in schedule.scheduled_actions
+        if not isinstance(item.action, AdvanceTime) and not architecture.supports(type(item.action))
+    })
+    if unsupported:
+        msg = f"schedule uses actions unsupported by the architecture: {', '.join(unsupported)}"
+        raise ValueError(msg)
+    if not validate_rebuilt_schedule(schedule, architecture):
+        msg = "schedule actions are not valid for the architecture"
+        raise ValueError(msg)
 
 
 def _apply_valid_timestep_actions(
@@ -157,4 +185,9 @@ def _path_insert_index(path: Sequence[ScheduledAction], target_time: int) -> int
     return len(path)
 
 
-__all__ = ["insert_action_at_time", "rebuild_schedule", "validate_rebuilt_schedule"]
+__all__ = [
+    "insert_action_at_time",
+    "rebuild_schedule",
+    "validate_rebuilt_schedule",
+    "validate_schedule_compatibility",
+]

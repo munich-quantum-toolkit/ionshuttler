@@ -15,11 +15,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mqt.ionshuttler.linear.actions import (
-    BUILTIN_ACTION_TYPES,
     Action,
     AdvanceTime,
+    build_action_type_registry,
 )
-from mqt.ionshuttler.linear.architecture import Architecture
 from mqt.ionshuttler.linear.state import State
 
 from .._json_utils import (
@@ -28,7 +27,6 @@ from .._json_utils import (
     require_list,
     require_mapping,
     require_str_int_pairs,
-    require_str_list,
 )
 
 ActionDecoder = Callable[[Mapping[str, object]], Action]
@@ -178,16 +176,14 @@ class ActionSchedule:
 
     scheduled_actions: tuple[ScheduledAction, ...]
     num_timesteps: int
-    architecture: Architecture
     initial_state: MachineState
-    action_types: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         """Freeze and validate the executable schedule.
 
         Raises:
             TypeError: If a schedule field has the wrong type.
-            ValueError: If identifiers, timing, or capabilities are inconsistent.
+            ValueError: If identifiers or timing are inconsistent.
         """
         scheduled_actions = tuple(self.scheduled_actions)
         if any(not isinstance(item, ScheduledAction) for item in scheduled_actions):
@@ -209,21 +205,10 @@ class ActionSchedule:
         if actual_timesteps != self.num_timesteps:
             msg = "num_timesteps must equal the schedule's total time advancement"
             raise ValueError(msg)
-        if not isinstance(self.architecture, Architecture):
-            msg = "architecture must be an Architecture"
-            raise TypeError(msg)
         if not isinstance(self.initial_state, MachineState):
             msg = "initial_state must be a MachineState"
             raise TypeError(msg)
-        action_types = tuple(self.action_types)
-        if any(not isinstance(action_type, str) for action_type in action_types):
-            msg = "action_types must contain strings"
-            raise TypeError(msg)
-        if len(set(action_types)) != len(action_types):
-            msg = "action_types must not contain duplicates"
-            raise ValueError(msg)
         object.__setattr__(self, "scheduled_actions", scheduled_actions)
-        object.__setattr__(self, "action_types", action_types)
 
     @property
     def path(self) -> tuple[Action, ...]:
@@ -239,19 +224,14 @@ class ActionSchedule:
     def from_actions(
         cls,
         actions: Sequence[Action],
-        architecture: Architecture,
         initial_state: State | MachineState,
-        *,
-        action_types: Sequence[str] = (),
     ) -> ActionSchedule:
         """Create a schedule and assign deterministic action identifiers.
 
         Args:
             actions: Ordered executable operations.
-            architecture: Hardware model used by the schedule.
             initial_state: Initial hardware or compiler state. Compiler progress
                 fields are deliberately discarded.
-            action_types: Serialized names of hardware capabilities.
 
         Returns:
             The immutable action schedule.
@@ -267,9 +247,7 @@ class ActionSchedule:
                 ScheduledAction(action_id=index, action=action) for index, action in enumerate(action_values)
             ),
             num_timesteps=sum(action.timestep_increment for action in action_values if isinstance(action, AdvanceTime)),
-            architecture=architecture,
             initial_state=machine_state,
-            action_types=tuple(action_types),
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -286,9 +264,7 @@ class ActionSchedule:
                 current_time += item.action.timestep_increment
         return {
             "num_timesteps": self.num_timesteps,
-            "architecture": self.architecture.to_dict(),
             "initial_state": self.initial_state.to_dict(),
-            "action_types": list(self.action_types),
             "actions": actions,
         }
 
@@ -326,16 +302,10 @@ class ActionSchedule:
             scheduled_actions.append(ScheduledAction(action_id=require_int(item, "action_id"), action=action))
             if isinstance(action, AdvanceTime):
                 current_time += action.timestep_increment
-        architecture_data = mapping.get("architecture")
-        if not isinstance(architecture_data, dict):
-            msg = "architecture must be a JSON object"
-            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Malformed JSON uses ValueError.
         return cls(
             scheduled_actions=tuple(scheduled_actions),
             num_timesteps=require_int(mapping, "num_timesteps"),
-            architecture=Architecture.from_dict(architecture_data),
             initial_state=MachineState.from_dict(mapping.get("initial_state")),
-            action_types=tuple(require_str_list(mapping, "action_types")),
         )
 
     def to_json(self) -> str:
@@ -392,21 +362,6 @@ class ActionSchedule:
             action_types=action_types,
             action_decoders=action_decoders,
         )
-
-
-def build_action_type_registry(action_types: Sequence[type[Action]] | None) -> dict[str, type[Action]]:
-    registry = {action_type.__name__: action_type for action_type in (*BUILTIN_ACTION_TYPES, AdvanceTime)}
-    for action_type in () if action_types is None else action_types:
-        if not isinstance(action_type, type) or not issubclass(action_type, Action):
-            msg = "action_types must contain Action subclasses"
-            raise TypeError(msg)
-        name = action_type.__name__
-        existing = registry.get(name)
-        if existing is not None and existing is not action_type:
-            msg = f"duplicate serialized action type {name!r}"
-            raise ValueError(msg)
-        registry[name] = action_type
-    return registry
 
 
 def decode_action(

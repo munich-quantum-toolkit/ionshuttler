@@ -68,6 +68,7 @@ class SADDProblem:
     """Contain one bounded control-window CP-SAT problem."""
 
     schedule: ActionSchedule
+    architecture: Architecture
     target_pz: str
     t_start: int
     t_end: int
@@ -89,11 +90,6 @@ class SADDProblem:
     def duration(self) -> int:
         """Number of discrete intervals in the opportunity."""
         return self.t_end - self.t_start
-
-    @property
-    def architecture(self) -> Architecture:
-        """Hardware model owned by the input schedule."""
-        return self.schedule.architecture
 
 
 @dataclass(frozen=True)
@@ -123,6 +119,7 @@ class SADDSolution:
 
 def build_sadd_problem(
     schedule: ActionSchedule,
+    architecture: Architecture,
     *,
     target_pz: str,
     t_start: int,
@@ -141,7 +138,6 @@ def build_sadd_problem(
     Raises:
         ValueError: If schedule metadata or problem bounds are invalid.
     """
-    architecture = schedule.architecture
     if target_pz not in (architecture.processing_zones or {}):
         msg = f"unknown processing zone: {target_pz!r}"
         raise ValueError(msg)
@@ -159,7 +155,7 @@ def build_sadd_problem(
         raise ValueError(msg)
 
     durations = operation_durations or _infer_operation_durations(schedule)
-    timeline = build_timeline(schedule)
+    timeline = build_timeline(schedule, architecture)
     positions_before = _positions_before_timesteps(schedule)
     fixed_positions, fixed_transport_timesteps = _fixed_positions_for_interval(
         timeline,
@@ -168,7 +164,11 @@ def build_sadd_problem(
         t_start,
         t_end,
     )
-    trace = compute_critical_segments(schedule, local_pulse_action_ids=local_pulse_action_ids)
+    trace = compute_critical_segments(
+        schedule,
+        architecture,
+        local_pulse_action_ids=local_pulse_action_ids,
+    )
     phase_segments = tuple(
         segment
         for segment in trace.segments
@@ -176,6 +176,7 @@ def build_sadd_problem(
     )
     return SADDProblem(
         schedule=schedule,
+        architecture=architecture,
         target_pz=target_pz,
         t_start=t_start,
         t_end=t_end,
@@ -209,7 +210,7 @@ def solve_sadd_problem(
     """
     cp_model = _load_cp_model()
     started = time.perf_counter()
-    timeline = build_timeline(problem.schedule)
+    timeline = build_timeline(problem.schedule, problem.architecture)
     model = cp_model.CpModel()
     rel_times = range(problem.duration)
 
@@ -800,11 +801,11 @@ def _materialize_and_validate(
     pulse_timesteps: dict[int, tuple[int, ...]],
 ) -> tuple[ActionSchedule, dict[int, tuple[int, ...]]]:
     updated, pulse_action_ids = _rewrite_control_window(problem, transport_actions, pulse_timesteps)
-    if not validate_rebuilt_schedule(updated):
+    if not validate_rebuilt_schedule(updated, problem.architecture):
         msg = "decoded solution fails full schedule replay validation"
         raise ValueError(msg)
-    updated_timeline = build_timeline(updated)
-    original_timeline = build_timeline(problem.schedule)
+    updated_timeline = build_timeline(updated, problem.architecture)
+    original_timeline = build_timeline(problem.schedule, problem.architecture)
     if (
         updated_timeline.state_at(problem.schedule.num_timesteps).positions
         != original_timeline.state_at(problem.schedule.num_timesteps).positions
@@ -819,7 +820,7 @@ def _rewrite_control_window(
     transport_actions: tuple[tuple[int, Action], ...],
     pulse_timesteps: dict[int, tuple[int, ...]],
 ) -> tuple[ActionSchedule, dict[int, tuple[int, ...]]]:
-    timeline = build_timeline(problem.schedule)
+    timeline = build_timeline(problem.schedule, problem.architecture)
     participant_set = set(problem.participating_ions)
     decoded_transport_by_time: dict[int, list[Action]] = {}
     for timestep, action in transport_actions:
@@ -867,6 +868,7 @@ def _objective_for_result(program: ActionSchedule, problem: SADDProblem) -> floa
     )
     trace = compute_critical_segments(
         program,
+        problem.architecture,
         local_pulse_action_ids=problem.local_pulse_action_ids.union(inserted_action_ids),
     )
     segment_keys = {(segment.ion, segment.index, segment.start, segment.end) for segment in problem.phase_segments}

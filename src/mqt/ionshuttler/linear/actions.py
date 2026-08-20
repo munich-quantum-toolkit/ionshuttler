@@ -726,6 +726,32 @@ class AdvanceTime(SchedulableAction):
         )
 
 
+def build_action_type_registry(
+    action_types: Iterable[type[Action]] | None = None,
+    *,
+    include_advance_time: bool = True,
+) -> dict[str, type[Action]]:
+    """Return built-in and caller-provided action classes by serialized name.
+
+    Raises:
+        TypeError: If a supplied entry is not an action class.
+        ValueError: If two different action classes have the same serialized name.
+    """
+    builtins = (*BUILTIN_ACTION_TYPES, AdvanceTime) if include_advance_time else BUILTIN_ACTION_TYPES
+    registry = {action_type.__name__: action_type for action_type in builtins}
+    for action_type in () if action_types is None else action_types:
+        if not isinstance(action_type, type) or not issubclass(action_type, Action):
+            msg = "action_types must contain Action subclasses"
+            raise TypeError(msg)
+        name = action_type.__name__
+        existing = registry.get(name)
+        if existing is not None and existing is not action_type:
+            msg = f"duplicate serialized action type {name!r}"
+            raise ValueError(msg)
+        registry[name] = action_type
+    return registry
+
+
 def is_adjacent(pos_a: int, pos_b: int) -> bool:
     """Return whether two Linear site indices are adjacent."""
     return abs(pos_a - pos_b) == 1
@@ -877,4 +903,5 @@ __all__ = [
     "SingleQubitGate",
     "TransportAction",
     "TwoQubitGate",
+    "build_action_type_registry",
 ]

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import count
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from mqt.ionshuttler.linear.actions import Action, AdvanceTime, GateSpec, Rx, Ry, Rz
 from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
@@ -20,6 +20,9 @@ from mqt.ionshuttler.linear.dd.schemes import DDScheme, get_dd_scheme
 from mqt.ionshuttler.linear.dd.timeline import build_timeline
 from mqt.ionshuttler.linear.dd.windows import find_idle_windows
 from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
+
+if TYPE_CHECKING:
+    from mqt.ionshuttler.linear.architecture import Architecture
 
 
 @dataclass(frozen=True)
@@ -102,6 +105,7 @@ class IdealizedHahnReport:
 
 def apply_idealized_hahn(
     schedule: ActionSchedule,
+    architecture: Architecture,
     config: IdealizedHahnConfig | None = None,
 ) -> DDPassResult[IdealizedHahnReport]:
     """Insert constraint-relaxed Hahn pulses into every eligible idle window.
@@ -116,7 +120,7 @@ def apply_idealized_hahn(
     resolved_config = config or IdealizedHahnConfig()
     scheme = _resolve_scheme(resolved_config.scheme)
     min_idle_timesteps = resolved_config.min_idle_timesteps or scheme.num_pulses
-    timeline = build_timeline(schedule)
+    timeline = build_timeline(schedule, architecture)
     pulses_by_time: dict[int, list[tuple[int, Action]]] = {}
     pending_sequences: list[tuple[int, tuple[int, int], tuple[int, ...]]] = []
 
@@ -134,7 +138,7 @@ def apply_idealized_hahn(
             pending_sequences.append((ion, window, gate_timesteps))
 
     if not pending_sequences:
-        return DDPassResult(schedule=schedule, report=IdealizedHahnReport())
+        return DDPassResult(schedule=schedule, architecture=architecture, report=IdealizedHahnReport())
 
     scheduled_actions, action_ids_by_sequence = _path_with_inserted_pulses(schedule, pulses_by_time)
     sequences = tuple(
@@ -148,7 +152,11 @@ def apply_idealized_hahn(
         for sequence_index, (ion, window, gate_timesteps) in enumerate(pending_sequences)
     )
     report = IdealizedHahnReport(sequences)
-    return DDPassResult(schedule=rebuild_schedule(schedule, scheduled_actions), report=report)
+    return DDPassResult(
+        schedule=rebuild_schedule(schedule, scheduled_actions),
+        architecture=architecture,
+        report=report,
+    )
 
 
 def _resolve_scheme(scheme: str | DDScheme) -> DDScheme:

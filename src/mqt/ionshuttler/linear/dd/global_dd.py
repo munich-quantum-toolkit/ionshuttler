@@ -13,30 +13,34 @@ import logging
 from dataclasses import dataclass, field
 from itertools import count
 from math import isfinite, pi
-from typing import ClassVar, Literal, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from mqt.ionshuttler.linear.actions import AdvanceTime, GateSpec, GlobalPulse
+from mqt.ionshuttler.linear.dd.critical_segments import CriticalSegmentResult, compute_critical_segments
 from mqt.ionshuttler.linear.dd.frame_replay import frame_operation_for_gate_spec, global_pulse_timesteps
-from mqt.ionshuttler.linear.dd.metrics import ResidualPhaseSummary, summarize_residual_phases
 from mqt.ionshuttler.linear.dd.result import DDPassResult
-from mqt.ionshuttler.linear.dd.schedule_transform import rebuild_schedule
-from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
+from mqt.ionshuttler.linear.dd.schedule_transform import rebuild_schedule, validate_schedule_compatibility
+from mqt.ionshuttler.linear.dd.timeline import build_timeline
 from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
 
 from ..._json_utils import require_int, require_int_list, require_number, require_str
 
-ShiftObjective = Literal["sum_abs", "sum_squared"]
-_SHIFT_OBJECTIVES = frozenset({"sum_abs", "sum_squared"})
+if TYPE_CHECKING:
+    from mqt.ionshuttler.linear.architecture import Architecture
+
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class GlobalDDConfig:
-    """Configure a periodic sequence of schedule-wide global X pulses."""
+    """Configure a periodic sequence of schedule-wide global X pulses.
+
+    Shift optimization minimizes the logic-aware critical-segment phase
+    cost shared with SADD.
+    """
 
     spacing: int
     shift_range: int = 0
-    shift_objective: ShiftObjective = "sum_abs"
     half_first_window: bool = True
     pulse: GateSpec = field(default_factory=lambda: GateSpec("Rx", theta=pi))
     scheme_name: str = "periodic_x"
@@ -50,13 +54,6 @@ class GlobalDDConfig:
         """
         _require_int(self.spacing, "spacing", minimum=1)
         _require_int(self.shift_range, "shift_range", minimum=0)
-        if not isinstance(self.shift_objective, str):
-            msg = "shift_objective must be a string"
-            raise TypeError(msg)
-        if self.shift_objective not in _SHIFT_OBJECTIVES:
-            available = ", ".join(sorted(_SHIFT_OBJECTIVES))
-            msg = f"shift_objective must be one of {{{available}}}"
-            raise ValueError(msg)
         if not isinstance(self.half_first_window, bool):
             msg = "half_first_window must be a Boolean"
             raise TypeError(msg)
@@ -77,16 +74,14 @@ class GlobalDDConfig:
 
 @dataclass(frozen=True)
 class GlobalDDReport:
-    """Summarize the selected global pulse sequence and residual phases."""
+    """Summarize the selected global pulse sequence and phase cost."""
 
     report_type: ClassVar[str] = "periodic_global_dd"
 
     scheme_name: str
     pulse_timesteps: tuple[int, ...]
     spacing: int
-    sum_absolute_residual_phase: float
-    sum_squared_residual_phase: float
-    max_absolute_residual_phase: float
+    phase_cost: float
 
     def __post_init__(self) -> None:
         """Freeze pulse positions and validate their ordering.
@@ -108,18 +103,12 @@ class GlobalDDReport:
         if tuple(sorted(set(pulse_timesteps))) != pulse_timesteps:
             msg = "pulse_timesteps must be strictly increasing"
             raise ValueError(msg)
-        for name in (
-            "sum_absolute_residual_phase",
-            "sum_squared_residual_phase",
-            "max_absolute_residual_phase",
-        ):
-            value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, int | float):
-                msg = f"{name} must be numeric"
-                raise TypeError(msg)
-            if value < 0.0 or not isfinite(value):
-                msg = f"{name} must be finite and non-negative"
-                raise ValueError(msg)
+        if isinstance(self.phase_cost, bool) or not isinstance(self.phase_cost, int | float):
+            msg = "phase_cost must be numeric"
+            raise TypeError(msg)
+        if self.phase_cost < 0.0 or not isfinite(self.phase_cost):
+            msg = "phase_cost must be finite and non-negative"
+            raise ValueError(msg)
         object.__setattr__(self, "pulse_timesteps", pulse_timesteps)
 
     def to_dict(self) -> dict[str, object]:
@@ -128,9 +117,7 @@ class GlobalDDReport:
             "scheme_name": self.scheme_name,
             "pulse_timesteps": list(self.pulse_timesteps),
             "spacing": self.spacing,
-            "sum_absolute_residual_phase": self.sum_absolute_residual_phase,
-            "sum_squared_residual_phase": self.sum_squared_residual_phase,
-            "max_absolute_residual_phase": self.max_absolute_residual_phase,
+            "phase_cost": self.phase_cost,
         }
 
     @classmethod
@@ -151,14 +138,13 @@ class GlobalDDReport:
             scheme_name=require_str(mapping, "scheme_name"),
             pulse_timesteps=tuple(require_int_list(mapping, "pulse_timesteps")),
             spacing=require_int(mapping, "spacing"),
-            sum_absolute_residual_phase=require_number(mapping, "sum_absolute_residual_phase"),
-            sum_squared_residual_phase=require_number(mapping, "sum_squared_residual_phase"),
-            max_absolute_residual_phase=require_number(mapping, "max_absolute_residual_phase"),
+            phase_cost=require_number(mapping, "phase_cost"),
         )
 
 
 def apply_periodic_global_dd(
     schedule: ActionSchedule,
+    architecture: Architecture,
     config: GlobalDDConfig,
 ) -> DDPassResult[GlobalDDReport]:
     """Insert periodic global X pulses, optionally shifting them by phase cost.
@@ -171,9 +157,14 @@ def apply_periodic_global_dd(
         The transformed schedule and selected pulse/phase summary.
 
     Raises:
-        ValueError: If replay metadata is absent or global pulses already exist.
+        ValueError: If the architecture does not support global pulses, replay
+            metadata is absent, or global pulses already exist.
     """
-    timeline = build_timeline(schedule)
+    validate_schedule_compatibility(schedule, architecture)
+    if not architecture.supports(GlobalPulse):
+        msg = "periodic global DD requires an architecture with global-pulse support"
+        raise ValueError(msg)
+    timeline = build_timeline(schedule, architecture)
     existing_pulse_times = global_pulse_timesteps(timeline)
     if existing_pulse_times:
         msg = (
@@ -188,38 +179,40 @@ def apply_periodic_global_dd(
         half_first_window=config.half_first_window,
     )
     if not candidate_times:
-        report = _global_dd_report(config, (), summarize_residual_phases(schedule, timeline=timeline))
-        return DDPassResult(schedule=schedule, report=report)
+        report = _global_dd_report(config, (), compute_critical_segments(schedule, architecture))
+        return DDPassResult(schedule=schedule, architecture=architecture, report=report)
 
     pulse_timesteps, updated, summary = _optimize_global_pulse_timesteps(
         schedule,
+        architecture,
         config,
         candidate_times,
     )
     report = _global_dd_report(config, pulse_timesteps, summary)
     logger.info(
-        "inserted periodic global DD: scheme=%s spacing=%s shift_range=%s shift_objective=%s pulse_timesteps=%s",
+        "inserted periodic global DD: scheme=%s spacing=%s shift_range=%s pulse_timesteps=%s",
         config.scheme_name,
         config.spacing,
         config.shift_range,
-        config.shift_objective,
         pulse_timesteps,
     )
-    return DDPassResult(schedule=updated, report=report)
+    return DDPassResult(schedule=updated, architecture=architecture, report=report)
 
 
 def _optimize_global_pulse_timesteps(
     program: ActionSchedule,
+    architecture: Architecture,
     config: GlobalDDConfig,
     base_pulse_timesteps: tuple[int, ...],
-) -> tuple[tuple[int, ...], ActionSchedule, ResidualPhaseSummary]:
+) -> tuple[tuple[int, ...], ActionSchedule, CriticalSegmentResult]:
     best_timesteps = base_pulse_timesteps
-    best_result, _timeline, best_summary = _materialize_candidate(
+    best_result, best_summary = _materialize_candidate(
         program,
+        architecture,
         base_pulse_timesteps,
         config.pulse,
     )
-    best_score = _residual_phase_objective(best_summary, config.shift_objective)
+    best_score = best_summary.phase_cost
     if config.shift_range == 0:
         return best_timesteps, best_result, best_summary
 
@@ -234,12 +227,13 @@ def _optimize_global_pulse_timesteps(
             program.num_timesteps,
             config.shift_range,
         ):
-            candidate_result, _timeline, candidate_summary = _materialize_candidate(
+            candidate_result, candidate_summary = _materialize_candidate(
                 program,
+                architecture,
                 candidate_timesteps,
                 config.pulse,
             )
-            candidate_score = _residual_phase_objective(candidate_summary, config.shift_objective)
+            candidate_score = candidate_summary.phase_cost
             if candidate_score < pulse_best_score:
                 pulse_best_timesteps = candidate_timesteps
                 pulse_best_result = candidate_result
@@ -254,19 +248,13 @@ def _optimize_global_pulse_timesteps(
 
 def _materialize_candidate(
     program: ActionSchedule,
+    architecture: Architecture,
     pulse_timesteps: tuple[int, ...],
     pulse_spec: GateSpec,
-) -> tuple[ActionSchedule, CompiledTimeline, ResidualPhaseSummary]:
+) -> tuple[ActionSchedule, CriticalSegmentResult]:
     scheduled_actions = _path_with_inserted_global_pulses(program, pulse_timesteps, pulse_spec)
     updated = rebuild_schedule(program, scheduled_actions)
-    timeline = build_timeline(updated)
-    return updated, timeline, summarize_residual_phases(updated, timeline=timeline)
-
-
-def _residual_phase_objective(summary: ResidualPhaseSummary, objective: ShiftObjective) -> float:
-    if objective == "sum_abs":
-        return summary.sum_absolute_residual_phase
-    return summary.sum_squared_residual_phase
+    return updated, compute_critical_segments(updated, architecture)
 
 
 def _shifted_pulse_timestep_candidates(
@@ -325,15 +313,13 @@ def _periodic_pulse_timesteps(
 def _global_dd_report(
     config: GlobalDDConfig,
     pulse_timesteps: tuple[int, ...],
-    summary: ResidualPhaseSummary,
+    summary: CriticalSegmentResult,
 ) -> GlobalDDReport:
     return GlobalDDReport(
         scheme_name=config.scheme_name,
         pulse_timesteps=pulse_timesteps,
         spacing=config.spacing,
-        sum_absolute_residual_phase=summary.sum_absolute_residual_phase,
-        sum_squared_residual_phase=summary.sum_squared_residual_phase,
-        max_absolute_residual_phase=summary.max_absolute_residual_phase,
+        phase_cost=summary.phase_cost,
     )
 
 
@@ -346,4 +332,4 @@ def _require_int(value: object, name: str, *, minimum: int) -> None:
         raise ValueError(msg)
 
 
-__all__ = ["GlobalDDConfig", "GlobalDDReport", "ShiftObjective", "apply_periodic_global_dd"]
+__all__ = ["GlobalDDConfig", "GlobalDDReport", "apply_periodic_global_dd"]

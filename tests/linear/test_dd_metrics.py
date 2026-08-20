@@ -46,7 +46,7 @@ def _result(
     *,
     num_ions: int = 1,
     fields: tuple[float, ...] | None = None,
-) -> ActionSchedule:
+) -> tuple[ActionSchedule, Architecture]:
     field_values = fields or tuple(1.0 for _ in range(num_ions))
     architecture = Architecture(
         num_sites=num_ions,
@@ -55,11 +55,10 @@ def _result(
     )
     program = ActionSchedule.from_actions(
         path,
-        architecture,
         create_initial_state(num_ions, architecture),
     )
     assert program.num_timesteps == timesteps
-    return program
+    return program, architecture
 
 
 def test_decoupling_ratio_merges_overlapping_windows_and_counts_ion_time() -> None:
@@ -69,7 +68,7 @@ def test_decoupling_ratio_merges_overlapping_windows_and_counts_ion_time() -> No
         LocalDDSequence(0, (4, 10), "hahn", (7, 10), (12, 13)),
         LocalDDSequence(1, (2, 6), "hahn", (4, 6), (14, 15)),
     )
-    result = _result([AdvanceTime() for _ in range(10)], 10, num_ions=2)
+    result, _architecture = _result([AdvanceTime() for _ in range(10)], 10, num_ions=2)
 
     assert decoupling_ratio(result, records) == pytest.approx(0.7)
     assert phase_reduction_per_gate(result, records) == pytest.approx(0.0)
@@ -77,8 +76,8 @@ def test_decoupling_ratio_merges_overlapping_windows_and_counts_ion_time() -> No
 
 def test_global_pulses_refocus_schedule_end_metrics() -> None:
     """Compute residual metrics from frame-aware replay."""
-    base = _result([AdvanceTime() for _ in range(4)], 4)
-    refocused = _result(
+    base, architecture = _result([AdvanceTime() for _ in range(4)], 4)
+    refocused, refocused_architecture = _result(
         [
             AdvanceTime(),
             GlobalPulse(GateSpec("Rx", pi)),
@@ -90,16 +89,18 @@ def test_global_pulses_refocus_schedule_end_metrics() -> None:
         4,
     )
 
-    assert residual_phase_by_ion(base) == {0: 4.0}
-    assert sum_absolute_residual_phase(base) == pytest.approx(4.0)
-    assert sum_squared_residual_phase(base) == pytest.approx(16.0)
-    assert residual_phase_by_ion(refocused) == {0: 0.0}
-    assert summarize_residual_phases(refocused).max_absolute_residual_phase == pytest.approx(0.0)
+    assert residual_phase_by_ion(base, architecture) == {0: 4.0}
+    assert sum_absolute_residual_phase(base, architecture) == pytest.approx(4.0)
+    assert sum_squared_residual_phase(base, architecture) == pytest.approx(16.0)
+    assert residual_phase_by_ion(refocused, refocused_architecture) == {0: 0.0}
+    assert summarize_residual_phases(refocused, refocused_architecture).max_absolute_residual_phase == pytest.approx(
+        0.0
+    )
 
 
 def test_gate_events_ignore_local_dd_and_preserve_order_and_duration() -> None:
     """Observe algorithmic gates without counting recorded DD pulses."""
-    result = _result(
+    result, architecture = _result(
         [
             Rx(ion=0, theta=pi),
             Ry(ion=0, theta=0.25, duration=2),
@@ -112,6 +113,7 @@ def test_gate_events_ignore_local_dd_and_preserve_order_and_duration() -> None:
     )
     events = gate_residual_events_by_ion(
         result,
+        architecture,
         local_pulse_action_ids=frozenset({result.scheduled_actions[0].action_id}),
     )[0]
 
@@ -123,7 +125,7 @@ def test_gate_events_ignore_local_dd_and_preserve_order_and_duration() -> None:
 
 def test_window_and_prefix_metrics_distinguish_inherited_phase() -> None:
     """Keep window-only exposure separate from its closing prefix value."""
-    result = _result(
+    result, architecture = _result(
         [
             Ry(ion=0, theta=0.25),
             AdvanceTime(),
@@ -134,32 +136,32 @@ def test_window_and_prefix_metrics_distinguish_inherited_phase() -> None:
         ],
         4,
     )
-    assert window_residual_phase(result, 0, (1, 4)) == pytest.approx(-1.0)
-    assert residual_phase_at_timestep(result, 0, 4) == pytest.approx(0.0)
-    assert residual_phase_at_window_end(result, 0, (1, 4)) == pytest.approx(0.0)
+    assert window_residual_phase(result, architecture, 0, (1, 4)) == pytest.approx(-1.0)
+    assert residual_phase_at_timestep(result, architecture, 0, 4) == pytest.approx(0.0)
+    assert residual_phase_at_window_end(result, architecture, 0, (1, 4)) == pytest.approx(0.0)
     with pytest.raises(ValueError, match="within"):
-        residual_phase_at_timestep(result, 0, 5)
+        residual_phase_at_timestep(result, architecture, 0, 5)
 
 
 def test_window_end_reduction_and_ranking_are_deterministic() -> None:
     """Compare endpoint magnitudes and rank equal-phase ions by identifier."""
-    before = _result([AdvanceTime(), AdvanceTime()], 2, num_ions=2, fields=(1.0, 2.0))
-    after = _result(
+    before, architecture = _result([AdvanceTime(), AdvanceTime()], 2, num_ions=2, fields=(1.0, 2.0))
+    after, _ = _result(
         [AdvanceTime(), GlobalPulse(GateSpec("Rx", pi)), AdvanceTime()],
         2,
         num_ions=2,
         fields=(1.0, 2.0),
     )
-    assert residual_phase_at_window_end_reduction(before, after, 1, (0, 2)) == pytest.approx(4.0)
-    assert rank_ions_by_residual_phase(before) == ((1, 4.0), (0, 2.0))
+    assert residual_phase_at_window_end_reduction(before, after, architecture, 1, (0, 2)) == pytest.approx(4.0)
+    assert rank_ions_by_residual_phase(before, architecture) == ((1, 4.0), (0, 2.0))
 
 
 def test_gate_summed_metric_counts_each_two_qubit_operand() -> None:
     """Sum prefix phase separately for both participants of a two-ion gate."""
-    result = _result(
+    result, architecture = _result(
         [AdvanceTime(), Ry(ion=0, theta=0.5), AdvanceTime(), Rzz(0, 1, 1.0), AdvanceTime()],
         3,
         num_ions=2,
         fields=(1.0, 2.0),
     )
-    assert sum_absolute_residual_phases_at_gates(result) == pytest.approx(7.0)
+    assert sum_absolute_residual_phases_at_gates(result, architecture) == pytest.approx(7.0)

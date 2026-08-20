@@ -182,22 +182,22 @@ from mqt.ionshuttler.linear import Architecture
 architecture = Architecture(
     num_sites=5,
     processing_zones={"gate_zone": [2, 3]},
+    supported_action_types=(*DEFAULT_ACTION_TYPES, CX),
 )
-compiler = LinearCompiler(
-    architecture,
-    action_types=(*DEFAULT_ACTION_TYPES, CX),
-)
+compiler = LinearCompiler(architecture)
 ```
 
-This catalog describes the complete set of hardware operations. The compiler
-rejects a circuit immediately when it requires a gate type absent from the
-catalog. For operations such as shuttling that are proposed from the current
-hardware state, the action class additionally provides its available instances.
-`AdvanceTime` remains part of the scheduler and does not belong in the hardware
-catalog. The compiler recognizes the class's `circuit_name` in either QASM or
-Qiskit input. `TwoQubitGate` checks the two operands and constructs the custom
-gate; parameterized gate families can declare their parameter names or override
-`from_instruction` when they need different lowering behavior.
+The architecture catalog describes the complete set of hardware operations. The
+compiler uses that catalog by default, or it can receive an explicit supported
+subset through `action_types`. It rejects a circuit immediately when the
+selected subset lacks a required gate. For operations such as shuttling that are
+proposed from the current hardware state, the action class additionally provides
+its available instances. `AdvanceTime` remains part of the scheduler and does
+not belong in the hardware catalog. The compiler recognizes the class's
+`circuit_name` in either QASM or Qiskit input. `TwoQubitGate` checks the two
+operands and constructs the custom gate; parameterized gate families can declare
+their parameter names or override `from_instruction` when they need different
+lowering behavior.
 
 Note that CX is used here as a familiar example. Controlled-X gates are not
 typically native in real-world trapped ion hardware. The default catalog uses
@@ -220,12 +220,13 @@ result = CompilationResult.from_json(serialized_result, action_types=(CX,))
 next(action for action in result.schedule.path if isinstance(action, CX))
 ```
 
-The nested action schedule records the ordered hardware catalog used during
-compilation. Built-in actions decode automatically; supplying a custom class
-lets its inherited `from_dict` method restore ordinary dataclass fields. Actions
-with nested or specialized serialized values can override that method. Catalogs
-are supplied per call rather than installed in global state, so separate
-applications can use different action sets without affecting one another.
+The architecture records the supported catalog alongside the action schedule in
+the compilation result. Built-in actions decode automatically; supplying a
+custom class lets both the architecture catalog and scheduled actions be
+restored. Actions with nested or specialized serialized values can override
+`from_dict`. Catalogs are supplied per call rather than installed in global
+state, so separate applications can use different action sets without affecting
+one another.
 
 ## See also
 

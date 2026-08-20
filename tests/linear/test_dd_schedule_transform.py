@@ -24,33 +24,33 @@ from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
 from mqt.ionshuttler.linear.state import create_initial_state
 
 
-def _base_program() -> ActionSchedule:
+def _base_program() -> tuple[ActionSchedule, Architecture]:
     architecture = Architecture(num_sites=3, processing_zones={"pz": [1, 2]})
-    return ActionSchedule.from_actions(
-        [Shuttle(ion=0, src=0, dst=1), AdvanceTime(), AdvanceTime()],
+    return (
+        ActionSchedule.from_actions(
+            [Shuttle(ion=0, src=0, dst=1), AdvanceTime(), AdvanceTime()],
+            create_initial_state(1, architecture, initial_positions=[0]),
+        ),
         architecture,
-        create_initial_state(1, architecture, initial_positions=[0]),
-        action_types=("Shuttle", "Rx"),
     )
 
 
 def test_insert_action_preserves_existing_identity_without_mutating_source() -> None:
     """Keep existing IDs and metadata while assigning one fresh pulse ID."""
-    original = _base_program()
+    original, architecture = _base_program()
     inserted = Rx(ion=0, theta=pi)
 
-    rebuilt = insert_action_at_time(original, 1, inserted)
+    rebuilt = insert_action_at_time(original, architecture, 1, inserted)
 
     assert original.path == (Shuttle(ion=0, src=0, dst=1), AdvanceTime(), AdvanceTime())
     assert rebuilt.path == (Shuttle(ion=0, src=0, dst=1), AdvanceTime(), inserted, AdvanceTime())
     assert tuple(item.action_id for item in rebuilt.scheduled_actions) == (0, 1, 3, 2)
-    assert rebuilt.action_types == original.action_types
     assert ActionSchedule.from_json(rebuilt.to_json()) == rebuilt
 
 
 def test_rebuild_program_reconstructs_makespan_and_preserves_metadata() -> None:
     """Derive the makespan from replacement scheduled actions."""
-    original = _base_program()
+    original, architecture = _base_program()
     replacement = (
         original.scheduled_actions[0],
         original.scheduled_actions[1],
@@ -62,8 +62,7 @@ def test_rebuild_program_reconstructs_makespan_and_preserves_metadata() -> None:
 
     assert rebuilt.num_timesteps == 2
     assert rebuilt.initial_state == original.initial_state
-    assert rebuilt.architecture is original.architecture
-    assert validate_rebuilt_schedule(rebuilt)
+    assert validate_rebuilt_schedule(rebuilt, architecture)
 
 
 def test_schedule_validation_accepts_concurrent_and_terminal_actions() -> None:
@@ -77,11 +76,10 @@ def test_schedule_validation_accepts_concurrent_and_terminal_actions() -> None:
             GlobalPulse(GateSpec("Rx", pi)),
             Rz(ion=0, theta=0.2),
         ],
-        architecture,
         create_initial_state(2, architecture, initial_positions=[0, 2]),
     )
 
-    assert validate_rebuilt_schedule(program)
+    assert validate_rebuilt_schedule(program, architecture)
 
 
 def test_schedule_validation_rejects_conflicts_and_physical_terminal_gate() -> None:
@@ -90,19 +88,18 @@ def test_schedule_validation_rejects_conflicts_and_physical_terminal_gate() -> N
     initial_state = create_initial_state(2, architecture, initial_positions=[0, 2])
     conflict = ActionSchedule.from_actions(
         [Shuttle(ion=0, src=0, dst=1), Shuttle(ion=1, src=2, dst=1), AdvanceTime()],
-        architecture,
         initial_state,
     )
-    terminal = ActionSchedule.from_actions([Rx(ion=0, theta=pi)], architecture, initial_state)
+    terminal = ActionSchedule.from_actions([Rx(ion=0, theta=pi)], initial_state)
 
-    assert not validate_rebuilt_schedule(conflict)
-    assert not validate_rebuilt_schedule(terminal)
+    assert not validate_rebuilt_schedule(conflict, architecture)
+    assert not validate_rebuilt_schedule(terminal, architecture)
 
 
 def test_transform_rejects_invalid_time_and_action() -> None:
     """Report invalid transform requests without mutating the program."""
-    base = _base_program()
+    base, architecture = _base_program()
     with pytest.raises(ValueError, match="within"):
-        insert_action_at_time(base, 3, Rz(ion=0, theta=0.2))
+        insert_action_at_time(base, architecture, 3, Rz(ion=0, theta=0.2))
     with pytest.raises(ValueError, match="not valid"):
-        insert_action_at_time(base, 0, Rx(ion=0, theta=pi))
+        insert_action_at_time(base, architecture, 0, Rx(ion=0, theta=pi))

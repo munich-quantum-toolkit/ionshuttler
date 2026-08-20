@@ -35,6 +35,7 @@ from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from mqt.ionshuttler.linear.architecture import Architecture
     from mqt.ionshuttler.linear.field_profile import FieldProfile
     from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
 
@@ -177,11 +178,12 @@ def build_frame_history(
 
 def framed_action_events(
     schedule: ActionSchedule,
+    architecture: Architecture,
     timeline: CompiledTimeline | None = None,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> tuple[FramedActionEvent, ...]:
     """Return ordered schedule actions annotated with their effective frames."""
-    resolved_timeline = build_timeline(schedule) if timeline is None else timeline
+    resolved_timeline = build_timeline(schedule, architecture) if timeline is None else timeline
     frame_history = build_frame_history(resolved_timeline, local_pulse_action_ids)
     events: list[FramedActionEvent] = []
     for timestep in range(resolved_timeline.makespan + 1):

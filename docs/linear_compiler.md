@@ -254,10 +254,12 @@ The result status describes why compilation stopped:
 `result.schedule` is the immutable
 {py:class}`~mqt.ionshuttler.linear.ActionSchedule` that downstream DD and
 simulation stages consume. Its `path` contains the ordered gate, movement, and
-time-advance actions, and its `num_timesteps` is the makespan. It also owns the
-architecture, machine-only initial state, hardware capability names, and a
-stable identifier for every action. Compiler search progress and control-pass
-provenance are deliberately absent from this execution boundary.
+time-advance actions, and its `num_timesteps` is the makespan. It also contains
+the machine-only initial state and a stable identifier for every action. The
+architecture is stored alongside it as `result.architecture`, allowing later
+passes to supply a compatible architecture with additional capabilities.
+Compiler search progress and control-pass provenance are deliberately absent
+from this execution boundary.
 
 The containing result owns compiler-only diagnostics: `result.wall_clock_s`,
 `result.score`, `result.final_state`, and `result.explored_nodes`. Always check

@@ -122,7 +122,7 @@ def test_compiler_produces_a_compact_replayable_schedule() -> None:
         AdvanceTime(),
         AdvanceTime(),
     ]
-    assert result.action_types == ("PhysicalSwap", "Shuttle", "Rx", "Ry", "Rz", "Rzz")
+    assert result.architecture.supported_action_types == DEFAULT_ACTION_TYPES
     assert result.final_state is not None
     assert result.final_state.time == 5
     assert result.final_state.completed_gates == frozenset({0, 1, 2})
@@ -130,7 +130,11 @@ def test_compiler_produces_a_compact_replayable_schedule() -> None:
 
 def test_compiler_uses_the_hardware_action_catalog() -> None:
     """Discover a custom action through its class-owned availability method."""
-    architecture = Architecture(num_sites=3, processing_zones={"pz": [2]})
+    architecture = Architecture(
+        num_sites=3,
+        processing_zones={"pz": [2]},
+        supported_action_types=(*DEFAULT_ACTION_TYPES, _LongShuttle),
+    )
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.5) q[0];\n'
 
     custom_result = LinearCompiler(
@@ -163,7 +167,8 @@ def test_compiler_requires_explicit_opt_in_for_non_default_gates() -> None:
     with pytest.raises(ValueError, match="unavailable gate 'rxx'"):
         LinearCompiler(architecture).compile(qasm)
 
-    result = LinearCompiler(architecture, action_types=(*DEFAULT_ACTION_TYPES, Rxx)).compile(qasm)
+    extended_architecture = replace(architecture, supported_action_types=(*DEFAULT_ACTION_TYPES, Rxx))
+    result = LinearCompiler(extended_architecture, action_types=(*DEFAULT_ACTION_TYPES, Rxx)).compile(qasm)
     assert result.status is CompilationStatus.SUCCESS
 
 
@@ -179,7 +184,11 @@ def test_compiler_rejects_circuit_gates_missing_from_hardware_catalog() -> None:
 @pytest.mark.parametrize("circuit_kind", ["qasm", "qiskit"])
 def test_compiler_lowers_custom_gate_types_from_each_frontend(circuit_kind: str) -> None:
     """Use one action-owned lowerer for QASM and Qiskit circuit inputs."""
-    architecture = Architecture(num_sites=2, processing_zones={"pz": [0, 1]})
+    architecture = Architecture(
+        num_sites=2,
+        processing_zones={"pz": [0, 1]},
+        supported_action_types=(*DEFAULT_ACTION_TYPES, _CX),
+    )
     if circuit_kind == "qasm":
         circuit: str | QuantumCircuit = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\ncx q[0],q[1];\n'
     else:
@@ -193,12 +202,12 @@ def test_compiler_lowers_custom_gate_types_from_each_frontend(circuit_kind: str)
 
     assert result.status is CompilationStatus.SUCCESS
     assert any(isinstance(action, _CX) for action in result.path)
-    assert result.action_types[-1] == "_CX"
-    with pytest.raises(ValueError, match="unknown action type"):
+    assert result.architecture.supports(_CX)
+    with pytest.raises(ValueError, match="unknown architecture action type"):
         CompilationResult.from_json(result.to_json())
     restored = CompilationResult.from_json(result.to_json(), action_types=(_CX,))
     assert restored.path == result.path
-    assert restored.action_types == result.action_types
+    assert restored.architecture == result.architecture
 
 
 def test_compiler_rejects_non_action_types() -> None:
@@ -328,7 +337,8 @@ def test_failed_search_result_is_returned(monkeypatch: pytest.MonkeyPatch) -> No
     architecture = Architecture(num_sites=1)
     failed = CompilationResult(
         status=CompilationStatus.FAILED,
-        schedule=ActionSchedule.from_actions([], architecture, create_initial_state(1, architecture)),
+        schedule=ActionSchedule.from_actions([], create_initial_state(1, architecture)),
+        architecture=architecture,
     )
 
     def fail_search(*_args: object, **_kwargs: object) -> CompilationResult:

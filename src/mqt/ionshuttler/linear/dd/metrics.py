@@ -29,6 +29,7 @@ from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from mqt.ionshuttler.linear.architecture import Architecture
     from mqt.ionshuttler.linear.dd.result import LocalDDSequence
     from mqt.ionshuttler.linear.schedule import ActionSchedule
 
@@ -77,11 +78,15 @@ def decoupling_ratio(schedule: ActionSchedule, sequences: Sequence[LocalDDSequen
     return covered_volume / (schedule.num_timesteps * num_ions)
 
 
-def relative_phase_reduction(schedule: ActionSchedule, sequences: Sequence[LocalDDSequence] = ()) -> float:
+def relative_phase_reduction(
+    schedule: ActionSchedule,
+    architecture: Architecture,
+    sequences: Sequence[LocalDDSequence] = (),
+) -> float:
     """Return recorded absolute phase reduction relative to unrefocused phase."""
     if not sequences:
         return 0.0
-    timeline = build_timeline(schedule)
+    timeline = build_timeline(schedule, architecture)
     total_phase = sum(
         abs(
             accumulated_phase(
@@ -89,7 +94,7 @@ def relative_phase_reduction(schedule: ActionSchedule, sequences: Sequence[Local
                 ion=ion,
                 t_start=0,
                 t_end=timeline.makespan,
-                field_profile=schedule.architecture.field_profile,
+                field_profile=architecture.field_profile,
             )
         )
         for ion in _infer_ion_ids(schedule)
@@ -110,6 +115,7 @@ def phase_reduction_per_gate(schedule: ActionSchedule, sequences: Sequence[Local
 
 def summarize_residual_phases(
     schedule: ActionSchedule,
+    architecture: Architecture,
     timeline: CompiledTimeline | None = None,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> ResidualPhaseSummary:
@@ -118,7 +124,7 @@ def summarize_residual_phases(
     Returns:
         The aggregate and per-ion residual-phase values.
     """
-    resolved_timeline = timeline or build_timeline(schedule)
+    resolved_timeline = timeline or build_timeline(schedule, architecture)
     frame_history = build_frame_history(resolved_timeline, local_pulse_action_ids)
     per_ion = {
         ion: accumulated_frame_phase(
@@ -126,7 +132,7 @@ def summarize_residual_phases(
             ion=ion,
             t_start=0,
             t_end=resolved_timeline.makespan,
-            field_profile=schedule.architecture.field_profile,
+            field_profile=architecture.field_profile,
             frame_history=frame_history,
         )
         for ion in _infer_ion_ids(schedule)
@@ -139,6 +145,7 @@ def summarize_residual_phases(
         max_absolute_residual_phase=max(absolute, default=0.0),
         sum_absolute_residual_phases_at_gates=_sum_absolute_residual_phases_at_gates(
             schedule,
+            architecture,
             resolved_timeline,
             frame_history,
             local_pulse_action_ids,
@@ -148,63 +155,80 @@ def summarize_residual_phases(
 
 def residual_phase_by_ion(
     schedule: ActionSchedule,
+    architecture: Architecture,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> dict[int, float]:
     """Return schedule-end residual phase for every ion."""
     return dict(
-        summarize_residual_phases(schedule, local_pulse_action_ids=local_pulse_action_ids).residual_phase_by_ion
+        summarize_residual_phases(
+            schedule,
+            architecture,
+            local_pulse_action_ids=local_pulse_action_ids,
+        ).residual_phase_by_ion
     )
 
 
 def sum_absolute_residual_phase(
     schedule: ActionSchedule,
+    architecture: Architecture,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> float:
     """Return the sum of absolute schedule-end residual phases."""
     return summarize_residual_phases(
-        schedule, local_pulse_action_ids=local_pulse_action_ids
+        schedule, architecture, local_pulse_action_ids=local_pulse_action_ids
     ).sum_absolute_residual_phase
 
 
 def sum_squared_residual_phase(
     schedule: ActionSchedule,
+    architecture: Architecture,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> float:
     """Return the sum of squared schedule-end residual phases."""
     return summarize_residual_phases(
         schedule,
+        architecture,
         local_pulse_action_ids=local_pulse_action_ids,
     ).sum_squared_residual_phase
 
 
 def max_absolute_residual_phase(
     schedule: ActionSchedule,
+    architecture: Architecture,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> float:
     """Return the largest absolute schedule-end residual phase."""
     return summarize_residual_phases(
-        schedule, local_pulse_action_ids=local_pulse_action_ids
+        schedule, architecture, local_pulse_action_ids=local_pulse_action_ids
     ).max_absolute_residual_phase
 
 
 def sum_absolute_residual_phases_at_gates(
     schedule: ActionSchedule,
+    architecture: Architecture,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> float:
     """Return summed absolute prefix phase at algorithmic gate boundaries."""
-    timeline = build_timeline(schedule)
+    timeline = build_timeline(schedule, architecture)
     history = build_frame_history(timeline, local_pulse_action_ids)
-    return _sum_absolute_residual_phases_at_gates(schedule, timeline, history, local_pulse_action_ids)
+    return _sum_absolute_residual_phases_at_gates(
+        schedule,
+        architecture,
+        timeline,
+        history,
+        local_pulse_action_ids,
+    )
 
 
 def gate_residual_events(
     schedule: ActionSchedule,
+    architecture: Architecture,
     timeline: CompiledTimeline | None = None,
     frame_history: FrameHistory | None = None,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> tuple[GateResidualEvent, ...]:
     """Return ordered residual-phase observations at algorithmic gates."""
-    resolved_timeline = timeline or build_timeline(schedule)
+    resolved_timeline = timeline or build_timeline(schedule, architecture)
     history = frame_history or build_frame_history(resolved_timeline, local_pulse_action_ids)
     events: list[GateResidualEvent] = []
     for timestep in range(resolved_timeline.makespan):
@@ -215,10 +239,12 @@ def gate_residual_events(
             if isinstance(action, SingleQubitGate):
                 if item.action_id in local_pulse_action_ids:
                     continue
-                events.append(_gate_event(schedule, resolved_timeline, history, action.ion, timestep, action))
+                events.append(
+                    _gate_event(schedule, architecture, resolved_timeline, history, action.ion, timestep, action)
+                )
             elif isinstance(action, TwoQubitGate):
                 events.extend(
-                    _gate_event(schedule, resolved_timeline, history, ion, timestep, action)
+                    _gate_event(schedule, architecture, resolved_timeline, history, ion, timestep, action)
                     for ion in (action.ion_a, action.ion_b)
                 )
     return tuple(events)
@@ -226,6 +252,7 @@ def gate_residual_events(
 
 def gate_residual_events_by_ion(
     schedule: ActionSchedule,
+    architecture: Architecture,
     timeline: CompiledTimeline | None = None,
     frame_history: FrameHistory | None = None,
     local_pulse_action_ids: frozenset[int] = frozenset(),
@@ -238,6 +265,7 @@ def gate_residual_events_by_ion(
     grouped: dict[int, list[GateResidualEvent]] = {}
     for event in gate_residual_events(
         schedule,
+        architecture,
         timeline=timeline,
         frame_history=frame_history,
         local_pulse_action_ids=local_pulse_action_ids,
@@ -248,6 +276,7 @@ def gate_residual_events_by_ion(
 
 def rank_ions_by_residual_phase(
     schedule: ActionSchedule,
+    architecture: Architecture,
     timeline: CompiledTimeline | None = None,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> tuple[tuple[int, float], ...]:
@@ -256,12 +285,18 @@ def rank_ions_by_residual_phase(
     Returns:
         Pairs of ion identifiers and residual phases in rank order.
     """
-    summary = summarize_residual_phases(schedule, timeline=timeline, local_pulse_action_ids=local_pulse_action_ids)
+    summary = summarize_residual_phases(
+        schedule,
+        architecture,
+        timeline=timeline,
+        local_pulse_action_ids=local_pulse_action_ids,
+    )
     return tuple(sorted(summary.residual_phase_by_ion.items(), key=lambda entry: (-abs(entry[1]), entry[0])))
 
 
 def window_residual_phase(
     schedule: ActionSchedule,
+    architecture: Architecture,
     ion: int,
     window: tuple[int, int],
     timeline: CompiledTimeline | None = None,
@@ -269,20 +304,21 @@ def window_residual_phase(
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> float:
     """Return frame-aware residual phase within a half-open window."""
-    resolved_timeline = timeline or build_timeline(schedule)
+    resolved_timeline = timeline or build_timeline(schedule, architecture)
     history = frame_history or build_frame_history(resolved_timeline, local_pulse_action_ids)
     return accumulated_frame_phase(
         resolved_timeline,
         ion,
         window[0],
         window[1],
-        schedule.architecture.field_profile,
+        architecture.field_profile,
         history,
     )
 
 
 def residual_phase_at_timestep(
     schedule: ActionSchedule,
+    architecture: Architecture,
     ion: int,
     timestep: int,
     timeline: CompiledTimeline | None = None,
@@ -294,7 +330,7 @@ def residual_phase_at_timestep(
     Raises:
         ValueError: If ``timestep`` lies outside the schedule.
     """
-    resolved_timeline = timeline or build_timeline(schedule)
+    resolved_timeline = timeline or build_timeline(schedule, architecture)
     if not 0 <= timestep <= resolved_timeline.makespan:
         msg = f"timestep must be within [0, {resolved_timeline.makespan}]"
         raise ValueError(msg)
@@ -304,13 +340,14 @@ def residual_phase_at_timestep(
         ion,
         0,
         timestep,
-        schedule.architecture.field_profile,
+        architecture.field_profile,
         history,
     )
 
 
 def residual_phase_at_window_end(
     schedule: ActionSchedule,
+    architecture: Architecture,
     ion: int,
     window: tuple[int, int],
     timeline: CompiledTimeline | None = None,
@@ -318,12 +355,21 @@ def residual_phase_at_window_end(
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> float:
     """Return inherited prefix phase at a window's closing boundary."""
-    return residual_phase_at_timestep(schedule, ion, window[1], timeline, frame_history, local_pulse_action_ids)
+    return residual_phase_at_timestep(
+        schedule,
+        architecture,
+        ion,
+        window[1],
+        timeline,
+        frame_history,
+        local_pulse_action_ids,
+    )
 
 
 def residual_phase_at_window_end_reduction(
     before_schedule: ActionSchedule,
     after_schedule: ActionSchedule,
+    architecture: Architecture,
     ion: int,
     window: tuple[int, int],
     before_timeline: CompiledTimeline | None = None,
@@ -336,6 +382,7 @@ def residual_phase_at_window_end_reduction(
     """Return reduction in absolute inherited phase at a window boundary."""
     before_phase = residual_phase_at_window_end(
         before_schedule,
+        architecture,
         ion,
         window,
         before_timeline,
@@ -344,6 +391,7 @@ def residual_phase_at_window_end_reduction(
     )
     after_phase = residual_phase_at_window_end(
         after_schedule,
+        architecture,
         ion,
         window,
         after_timeline,
@@ -355,6 +403,7 @@ def residual_phase_at_window_end_reduction(
 
 def _gate_event(
     program: ActionSchedule,
+    architecture: Architecture,
     timeline: CompiledTimeline,
     frame_history: FrameHistory,
     ion: int,
@@ -368,6 +417,7 @@ def _gate_event(
         gate_name=type(action).__name__,
         residual_phase_at_gate=residual_phase_at_timestep(
             program,
+            architecture,
             ion,
             timestep,
             timeline,
@@ -378,6 +428,7 @@ def _gate_event(
 
 def _sum_absolute_residual_phases_at_gates(
     program: ActionSchedule,
+    architecture: Architecture,
     timeline: CompiledTimeline,
     frame_history: FrameHistory,
     local_pulse_action_ids: frozenset[int],
@@ -386,6 +437,7 @@ def _sum_absolute_residual_phases_at_gates(
         abs(event.residual_phase_at_gate)
         for event in gate_residual_events(
             program,
+            architecture,
             timeline=timeline,
             frame_history=frame_history,
             local_pulse_action_ids=local_pulse_action_ids,

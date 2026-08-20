@@ -11,15 +11,18 @@ from __future__ import annotations
 
 import math
 import operator
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
+from mqt.ionshuttler.linear.actions import PhysicalSwap, Rx, Shuttle, TransportAction
 from mqt.ionshuttler.linear.dd.critical_segments import CriticalSegment, compute_critical_segments
 from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
 from mqt.ionshuttler.linear.dd.sadd_solver import build_sadd_problem, solve_sadd_problem
+from mqt.ionshuttler.linear.dd.schedule_transform import validate_schedule_compatibility
 from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
 
 if TYPE_CHECKING:
@@ -122,18 +125,22 @@ class SADDConfig:
 
 @dataclass(frozen=True)
 class SADDOpportunityRecord:
-    """Describe one ordered SADD optimization opportunity and its outcome."""
+    """Describe one ordered SADD optimization opportunity and its outcome.
+
+    ``transport_delta`` records the signed change in scheduled transport actions
+    by concrete action type between the opportunity input and proposed result.
+    """
 
     target_pz: str
     window: tuple[int, int]
     participating_ions: tuple[int, ...]
     status: str
     validation_status: str
-    objective_before: float
-    objective_after: float | None
+    phase_cost_before: float
+    phase_cost_after: float | None
     accepted: bool
     pulse_count: int
-    transport_action_count: int
+    transport_delta: Mapping[str, int]
     runtime_s: float
     message: str | None = None
     eligible_ions: tuple[int, ...] = ()
@@ -175,17 +182,17 @@ class SADDOpportunityRecord:
         if not self.validation_status:
             msg = "validation_status must be non-empty"
             raise ValueError(msg)
-        _require_nonnegative_finite(self.objective_before, "objective_before")
-        if self.objective_after is not None:
-            _require_nonnegative_finite(self.objective_after, "objective_after")
+        _require_nonnegative_finite(self.phase_cost_before, "phase_cost_before")
+        if self.phase_cost_after is not None:
+            _require_nonnegative_finite(self.phase_cost_after, "phase_cost_after")
         if not isinstance(self.accepted, bool):
             msg = "accepted must be a Boolean"
             raise TypeError(msg)
-        if self.accepted and self.objective_after is None:
-            msg = "accepted opportunities require objective_after"
+        if self.accepted and self.phase_cost_after is None:
+            msg = "accepted opportunities require phase_cost_after"
             raise ValueError(msg)
         _require_nonnegative_int(self.pulse_count, "pulse_count")
-        _require_nonnegative_int(self.transport_action_count, "transport_action_count")
+        object.__setattr__(self, "transport_delta", _freeze_transport_delta(self.transport_delta))
         _require_nonnegative_finite(self.runtime_s, "runtime_s")
         object.__setattr__(self, "selection_scores", _freeze_selection_scores(self.selection_scores))
         object.__setattr__(
@@ -228,9 +235,6 @@ class SADDOpportunityRecord:
             ):
                 msg = "pulse_action_ids must contain one identifier for every pulse timestep"
                 raise ValueError(msg)
-        if self.transport_action_count != len(self.transport_actions):
-            msg = "transport_action_count must match transport_actions"
-            raise ValueError(msg)
 
 
 @dataclass(frozen=True)
@@ -322,6 +326,7 @@ class _ParticipantSelection:
 
 def run_sadd(
     schedule: ActionSchedule,
+    architecture: Architecture,
     method: SADDMethod,
     config: SADDConfig | None = None,
 ) -> DDPassResult[SADDReport]:
@@ -335,22 +340,30 @@ def run_sadd(
 
     Raises:
         TypeError: If ``method`` is not a :class:`SADDMethod`.
+        ValueError: If the schedule and architecture are incompatible or the
+            architecture lacks actions required by the selected method.
     """
     if not isinstance(method, SADDMethod):
         msg = "method must be a SADDMethod"
         raise TypeError(msg)
+    validate_schedule_compatibility(schedule, architecture)
+    required_actions = (Rx,) if method is SADDMethod.PULSE_ONLY else (Rx, Shuttle, PhysicalSwap)
+    unsupported = [action_type.__name__ for action_type in required_actions if not architecture.supports(action_type)]
+    if unsupported:
+        msg = f"SADD requires actions unsupported by the architecture: {', '.join(unsupported)}"
+        raise ValueError(msg)
     resolved_config = config or SADDConfig()
-    resolved_architecture = schedule.architecture
     updated = schedule
     records: list[SADDOpportunityRecord] = []
     local_pulse_action_ids: set[int] = set()
     accepted_count = 0
-    for target_pz, window in _iter_control_windows(updated, resolved_architecture, resolved_config):
+    for target_pz, window in _iter_control_windows(updated, architecture, resolved_config):
+        opportunity_input = updated
         if resolved_config.max_accepted_windows is not None and accepted_count >= resolved_config.max_accepted_windows:
             break
         selection = _select_participating_ions(
             updated,
-            resolved_architecture,
+            architecture,
             target_pz,
             window,
             resolved_config,
@@ -361,6 +374,7 @@ def run_sadd(
         try:
             problem = build_sadd_problem(
                 updated,
+                architecture,
                 target_pz=target_pz,
                 t_start=window[0],
                 t_end=window[1],
@@ -379,6 +393,7 @@ def run_sadd(
         except ImportError as error:
             return DDPassResult(
                 schedule=updated,
+                architecture=architecture,
                 report=SADDReport(method=method, opportunities=tuple(records)),
                 unavailable_reason=str(error),
             )
@@ -402,11 +417,11 @@ def run_sadd(
                 participating_ions=selection.selected_ions,
                 status=solution.status,
                 validation_status=solution.validation_status,
-                objective_before=solution.objective_before,
-                objective_after=solution.objective_after,
+                phase_cost_before=solution.objective_before,
+                phase_cost_after=solution.objective_after,
                 accepted=accepted,
                 pulse_count=sum(len(timesteps) for timesteps in solution.pulse_timesteps.values()),
-                transport_action_count=len(solution.transport_actions),
+                transport_delta=_transport_delta(opportunity_input, solution.schedule),
                 runtime_s=solution.runtime_s,
                 message=solution.validation_error,
                 eligible_ions=selection.eligible_ions,
@@ -418,6 +433,7 @@ def run_sadd(
                 phase_after_by_ion=(
                     _phase_by_ion_for_program(
                         solution.schedule,
+                        architecture,
                         problem.phase_segments,
                         solution_local_pulse_action_ids,
                     )
@@ -432,7 +448,11 @@ def run_sadd(
                 model_num_constraints=solution.model_num_constraints,
             )
         )
-    return DDPassResult(schedule=updated, report=SADDReport(method=method, opportunities=tuple(records)))
+    return DDPassResult(
+        schedule=updated,
+        architecture=architecture,
+        report=SADDReport(method=method, opportunities=tuple(records)),
+    )
 
 
 def _iter_control_windows(
@@ -440,7 +460,7 @@ def _iter_control_windows(
     architecture: Architecture,
     config: SADDConfig,
 ) -> tuple[tuple[str, tuple[int, int]], ...]:
-    timeline = build_timeline(program)
+    timeline = build_timeline(program, architecture)
     windows: list[tuple[str, tuple[int, int]]] = []
     for pz_name in sorted(architecture.processing_zones or {}):
         start: int | None = None
@@ -484,8 +504,8 @@ def _select_participating_ions(
     config: SADDConfig,
     local_pulse_action_ids: frozenset[int],
 ) -> _ParticipantSelection:
-    timeline = build_timeline(program)
-    trace = compute_critical_segments(program, local_pulse_action_ids=local_pulse_action_ids)
+    timeline = build_timeline(program, architecture)
+    trace = compute_critical_segments(program, architecture, local_pulse_action_ids=local_pulse_action_ids)
     processing_zones = architecture.processing_zones or {}
     zone_sites = processing_zones[target_pz]
     ion_scores: list[tuple[float, int, int]] = []
@@ -575,10 +595,11 @@ def _phase_by_ion(segments: tuple[CriticalSegment, ...]) -> dict[int, float]:
 
 def _phase_by_ion_for_program(
     program: ActionSchedule,
+    architecture: Architecture,
     source_segments: tuple[CriticalSegment, ...],
     local_pulse_action_ids: frozenset[int],
 ) -> dict[int, float]:
-    trace = compute_critical_segments(program, local_pulse_action_ids=local_pulse_action_ids)
+    trace = compute_critical_segments(program, architecture, local_pulse_action_ids=local_pulse_action_ids)
     segment_keys = {(segment.ion, segment.index, segment.start, segment.end) for segment in source_segments}
     return _phase_by_ion(
         tuple(
@@ -589,6 +610,22 @@ def _phase_by_ion_for_program(
     )
 
 
+def _transport_delta(
+    before: ActionSchedule,
+    after: ActionSchedule | None,
+) -> dict[str, int]:
+    if after is None:
+        return {}
+    before_counts = Counter(type(action).__name__ for action in before.path if isinstance(action, TransportAction))
+    after_counts = Counter(type(action).__name__ for action in after.path if isinstance(action, TransportAction))
+    action_types = sorted(before_counts.keys() | after_counts.keys())
+    return {
+        action_type: delta
+        for action_type in action_types
+        if (delta := after_counts[action_type] - before_counts[action_type]) != 0
+    }
+
+
 def _opportunity_to_dict(opportunity: SADDOpportunityRecord) -> dict[str, object]:
     return {
         "target_pz": opportunity.target_pz,
@@ -596,11 +633,11 @@ def _opportunity_to_dict(opportunity: SADDOpportunityRecord) -> dict[str, object
         "participating_ions": list(opportunity.participating_ions),
         "status": opportunity.status,
         "validation_status": opportunity.validation_status,
-        "objective_before": opportunity.objective_before,
-        "objective_after": opportunity.objective_after,
+        "phase_cost_before": opportunity.phase_cost_before,
+        "phase_cost_after": opportunity.phase_cost_after,
         "accepted": opportunity.accepted,
         "pulse_count": opportunity.pulse_count,
-        "transport_action_count": opportunity.transport_action_count,
+        "transport_delta": dict(opportunity.transport_delta),
         "runtime_s": opportunity.runtime_s,
         "message": opportunity.message,
         "eligible_ions": list(opportunity.eligible_ions),
@@ -631,11 +668,11 @@ def _opportunity_from_dict(data: object) -> SADDOpportunityRecord:
             participating_ions=tuple(_json_int_list(data, "participating_ions")),
             status=_json_str(data, "status"),
             validation_status=_json_str(data, "validation_status"),
-            objective_before=_json_float(data, "objective_before"),
-            objective_after=_json_optional_float(data, "objective_after"),
+            phase_cost_before=_json_float(data, "phase_cost_before"),
+            phase_cost_after=_json_optional_float(data, "phase_cost_after"),
             accepted=_json_bool(data, "accepted"),
             pulse_count=_json_int(data, "pulse_count"),
-            transport_action_count=_json_int(data, "transport_action_count"),
+            transport_delta=_json_str_int_mapping(data, "transport_delta"),
             runtime_s=_json_float(data, "runtime_s"),
             message=_json_optional_str(data, "message"),
             eligible_ions=tuple(_json_int_list(data, "eligible_ions")),
@@ -734,6 +771,18 @@ def _json_str_list(data: Mapping[str, object], key: str) -> list[str]:
     if any(not isinstance(value, str) for value in values):
         raise TypeError
     return cast("list[str]", values)
+
+
+def _json_str_int_mapping(data: Mapping[str, object], key: str) -> dict[str, int]:
+    value = data[key]
+    if not isinstance(value, dict):
+        raise TypeError
+    result: dict[str, int] = {}
+    for name, delta in value.items():
+        if not isinstance(name, str) or isinstance(delta, bool) or not isinstance(delta, int):
+            raise TypeError
+        result[name] = delta
+    return result
 
 
 def _json_selection_scores(data: Mapping[str, object], key: str) -> list[tuple[int, float, int]]:
@@ -863,6 +912,25 @@ def _freeze_selection_scores(
         _require_nonnegative_finite(score, "selection score phase")
         _require_nonnegative_int(distance, "selection score distance")
     return frozen
+
+
+def _freeze_transport_delta(values: Mapping[str, int]) -> Mapping[str, int]:
+    frozen: dict[str, int] = {}
+    for action_type, delta in values.items():
+        if not isinstance(action_type, str):
+            msg = "transport_delta action types must be strings"
+            raise TypeError(msg)
+        if not action_type:
+            msg = "transport_delta action types must be non-empty"
+            raise ValueError(msg)
+        if isinstance(delta, bool) or not isinstance(delta, int):
+            msg = "transport_delta values must be integers"
+            raise TypeError(msg)
+        if delta == 0:
+            msg = "transport_delta must omit unchanged action types"
+            raise ValueError(msg)
+        frozen[action_type] = delta
+    return MappingProxyType(frozen)
 
 
 def _freeze_float_mapping(values: IonFloatMapping | None, name: str) -> IonFloatMapping | None:

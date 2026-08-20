@@ -64,7 +64,7 @@ class CriticalSegment:
 class CriticalSegmentResult:
     """Contain logic-aware normalized-phase replay over critical segments.
 
-    ``j_phi`` is a schedule-ranking surrogate: the sum of squared normalized
+    ``phase_cost`` is a schedule-ranking surrogate: the sum of squared normalized
     segment phases. It is not a joint-coherence decay exponent or a complete
     circuit-error model.
     """
@@ -72,7 +72,7 @@ class CriticalSegmentResult:
     segments: tuple[CriticalSegment, ...]
     phase_per_ion: Mapping[int, float] = field(default_factory=dict)
     squared_phase_per_ion: Mapping[int, float] = field(default_factory=dict)
-    sum_squared_phase: float = 0.0
+    phase_cost: float = 0.0
     sensitivity_profile: tuple[float, ...] = ()
     dt: float = 1.0
 
@@ -81,11 +81,6 @@ class CriticalSegmentResult:
         object.__setattr__(self, "segments", tuple(self.segments))
         object.__setattr__(self, "phase_per_ion", MappingProxyType(dict(self.phase_per_ion)))
         object.__setattr__(self, "squared_phase_per_ion", MappingProxyType(dict(self.squared_phase_per_ion)))
-
-    @property
-    def j_phi(self) -> float:
-        """The logic-aware normalized squared-phase cost."""
-        return self.sum_squared_phase
 
 
 def normalized_sensitivity_values(
@@ -138,6 +133,7 @@ def gate_z_effect(action: Action, ion: int) -> int | None:
 
 def compute_critical_segments(
     schedule: ActionSchedule,
+    architecture: Architecture,
     *,
     sensitivity_profile: FieldProfile | None = None,
     dt: float = 1.0,
@@ -155,14 +151,13 @@ def compute_critical_segments(
     if dt <= 0.0:
         msg = "dt must be positive"
         raise ValueError(msg)
-    resolved_architecture = schedule.architecture
     if segmentation not in {"critical", "whole_schedule"}:
         msg = "segmentation must be 'critical' or 'whole_schedule'"
         raise ValueError(msg)
 
-    timeline = build_timeline(schedule)
+    timeline = build_timeline(schedule, architecture)
     frame_history = build_frame_history(timeline, local_pulse_action_ids)
-    sensitivities = normalized_sensitivity_values(resolved_architecture, sensitivity_profile)
+    sensitivities = normalized_sensitivity_values(architecture, sensitivity_profile)
     ion_ids = _ion_ids(schedule)
     segments: list[CriticalSegment] = []
     for ion in ion_ids:
@@ -226,7 +221,7 @@ def compute_critical_segments(
         segments=tuple(segments),
         phase_per_ion=phase_per_ion,
         squared_phase_per_ion=squared_per_ion,
-        sum_squared_phase=sum(squared_per_ion.values()),
+        phase_cost=sum(squared_per_ion.values()),
         sensitivity_profile=sensitivities,
         dt=dt,
     )

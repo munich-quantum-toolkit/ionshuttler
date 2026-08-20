@@ -16,6 +16,7 @@ from math import isfinite
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from mqt.ionshuttler.linear.architecture import Architecture
 from mqt.ionshuttler.linear.schedule import ActionDecoder, ActionDecoders, ActionSchedule
 from mqt.ionshuttler.linear.state import State
 
@@ -33,7 +34,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from mqt.ionshuttler.linear.actions import Action
-    from mqt.ionshuttler.linear.architecture import Architecture
     from mqt.ionshuttler.linear.schedule import MachineState
 
 
@@ -50,13 +50,14 @@ class CompilationStatus(str, Enum):
 class CompilationResult:
     """Contain an executable schedule and compiler diagnostics.
 
-    The action schedule owns hardware and execution information. This result
-    owns search completion, cost, runtime, explored-node count, and the compiler
-    state reached at termination.
+    The architecture and action schedule are parallel compilation artifacts.
+    This result also owns search completion, cost, runtime, explored-node count,
+    and the compiler state reached at termination.
     """
 
     status: CompilationStatus
     schedule: ActionSchedule
+    architecture: Architecture
     wall_clock_s: float = 0.0
     score: int | None = None
     final_state: State | None = None
@@ -74,6 +75,9 @@ class CompilationResult:
             raise TypeError(msg)
         if not isinstance(self.schedule, ActionSchedule):
             msg = "schedule must be an ActionSchedule"
+            raise TypeError(msg)
+        if not isinstance(self.architecture, Architecture):
+            msg = "architecture must be an Architecture"
             raise TypeError(msg)
         if isinstance(self.wall_clock_s, bool) or not isinstance(self.wall_clock_s, int | float):
             msg = "wall_clock_s must be numeric"
@@ -106,23 +110,14 @@ class CompilationResult:
         return self.schedule.num_timesteps
 
     @property
-    def architecture(self) -> Architecture:
-        """The schedule's Linear hardware model."""
-        return self.schedule.architecture
-
-    @property
     def initial_state(self) -> MachineState:
         """The schedule's machine-only initial state."""
         return self.schedule.initial_state
 
-    @property
-    def action_types(self) -> tuple[str, ...]:
-        """The schedule's serialized hardware capability names."""
-        return self.schedule.action_types
-
     def to_dict(self) -> dict[str, object]:
         """Return the compilation result using JSON-compatible values."""
         return {
+            "architecture": self.architecture.to_dict(),
             "schedule": self.schedule.to_dict(),
             "diagnostics": {
                 "status": self.status.value,
@@ -160,6 +155,7 @@ class CompilationResult:
         final_state_data = diagnostics.get("final_state")
         return cls(
             status=status,
+            architecture=Architecture.from_dict(mapping.get("architecture"), action_types=action_types),
             schedule=ActionSchedule.from_dict(
                 mapping.get("schedule"),
                 action_types=action_types,

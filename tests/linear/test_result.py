@@ -41,9 +41,7 @@ def _program(actions: list[Action] | None = None) -> ActionSchedule:
     architecture = Architecture(num_sites=2, processing_zones={"pz": [0, 1]})
     return ActionSchedule.from_actions(
         actions or [AdvanceTime()],
-        architecture,
         create_initial_state(1, architecture, initial_positions=[0]),
-        action_types=("Shuttle", "Rx"),
     )
 
 
@@ -58,7 +56,6 @@ def test_action_schedule_round_trips_identity_and_machine_metadata() -> None:
             AdvanceTime(),
             Rz(ion=0, theta=0.2),
         ],
-        architecture,
         create_initial_state(1, architecture),
     )
 
@@ -71,6 +68,8 @@ def test_action_schedule_round_trips_identity_and_machine_metadata() -> None:
     assert isinstance(actions, list)
     assert isinstance(actions[0], dict)
     assert "purpose" not in actions[0]
+    assert "architecture" not in serialized
+    assert "action_types" not in serialized
     assert "schema" not in serialized
     assert "version" not in serialized
 
@@ -102,6 +101,7 @@ def test_compilation_result_round_trips_only_compiler_diagnostics() -> None:
     result = CompilationResult(
         status=CompilationStatus.SUCCESS,
         schedule=program,
+        architecture=Architecture(num_sites=2, processing_zones={"pz": [0, 1]}),
         wall_clock_s=0.5,
         score=1,
         final_state=final_state,
@@ -112,6 +112,7 @@ def test_compilation_result_round_trips_only_compiler_diagnostics() -> None:
 
     assert restored == result
     assert "schedule" in restored.to_dict()
+    assert restored.to_dict()["architecture"] == result.architecture.to_dict()
     assert "schema" not in restored.to_dict()
     assert "version" not in restored.to_dict()
     assert "dd_insertions" not in restored.to_dict()
@@ -120,7 +121,7 @@ def test_compilation_result_round_trips_only_compiler_diagnostics() -> None:
 def test_artifacts_support_custom_action_types_and_files(tmp_path: Path) -> None:
     """Use explicit codecs for extensions and load UTF-8 artifacts from disk."""
     architecture = Architecture(num_sites=1)
-    program = ActionSchedule.from_actions([_Marker("probe")], architecture, create_initial_state(1, architecture))
+    program = ActionSchedule.from_actions([_Marker("probe")], create_initial_state(1, architecture))
     path = program.save(tmp_path / "program")
 
     with pytest.raises(ValueError, match="unknown action type"):
