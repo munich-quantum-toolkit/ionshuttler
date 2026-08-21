@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
+import subprocess
+import sys
 
 
 def test_linear_module_imports() -> None:
@@ -28,15 +30,33 @@ def test_package_exports_only_the_supported_facade() -> None:
 
     assert package.__all__ == [
         "DEFAULT_ACTION_TYPES",
+        "ActionSchedule",
         "Architecture",
         "CompilationResult",
         "CompilationStatus",
-        "DDInsertionRecord",
         "GateTiming",
-        "GlobalDDRecord",
         "HardwareTiming",
         "LinearCompiler",
         "LinearCompilerConfig",
+        "MachineState",
+        "ScheduledAction",
         "SearchConfig",
         "TransportTiming",
     ]
+
+
+def test_action_schedule_import_does_not_load_compiler_search() -> None:
+    """Keep the execution boundary independent of compiler implementation modules."""
+    command = (
+        "import sys; "
+        "from mqt.ionshuttler.linear.schedule import ActionSchedule; "
+        "assert 'mqt.ionshuttler.linear.search' not in sys.modules"
+    )
+    completed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - Fixed interpreter command.
+        [sys.executable, "-c", command],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr

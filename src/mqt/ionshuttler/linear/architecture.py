@@ -15,6 +15,12 @@ from itertools import combinations, pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from mqt.ionshuttler.linear.actions import (
+    DEFAULT_ACTION_TYPES,
+    Action,
+    AdvanceTime,
+    build_action_type_registry,
+)
 from mqt.ionshuttler.linear.field_profile import FieldProfile
 
 if TYPE_CHECKING:
@@ -25,11 +31,12 @@ IMPLICIT_PROCESSING_ZONE = "all_sites"
 
 @dataclass(frozen=True)
 class Architecture:
-    """Describe the available sites, processing zones, and site-dependent field."""
+    """Describe the available sites, processing zones, and control capabilities."""
 
     num_sites: int
     processing_zones: Mapping[str, Sequence[int]] | None = None
     field_profile: FieldProfile | None = None
+    supported_action_types: tuple[type[Action], ...] = DEFAULT_ACTION_TYPES
     valid_two_qubit_site_pairs: tuple[tuple[int, int], ...] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -41,6 +48,16 @@ class Architecture:
         if self.num_sites < 1:
             msg = "num_sites must be >= 1"
             raise ValueError(msg)
+        supported_action_types = tuple(self.supported_action_types)
+        build_action_type_registry(supported_action_types)
+        if AdvanceTime in supported_action_types:
+            msg = "AdvanceTime is a scheduler operation, not a hardware-supported action"
+            raise ValueError(msg)
+        serialized_names = [action_type.__name__ for action_type in supported_action_types]
+        if len(set(serialized_names)) != len(serialized_names):
+            msg = "supported_action_types must have unique class names"
+            raise ValueError(msg)
+        object.__setattr__(self, "supported_action_types", supported_action_types)
 
         processing_zones = _normalize_processing_zones(self.num_sites, self.processing_zones)
         object.__setattr__(self, "processing_zones", processing_zones)
@@ -73,6 +90,10 @@ class Architecture:
         """Return whether any site differs from the unit field profile."""
         return _has_nontrivial_field_profile(self._field_profile())
 
+    def supports(self, action_type: type[Action]) -> bool:
+        """Return whether the hardware exposes an action type."""
+        return action_type in self.supported_action_types
+
     def sites_share_processing_zone(self, *sites: int) -> bool:
         """Return whether all supplied sites belong to one processing zone."""
         if not sites:
@@ -97,6 +118,8 @@ class Architecture:
         field_profile = self._field_profile()
         if _has_nontrivial_field_profile(field_profile):
             result["field_profile"] = field_profile.to_dict()
+        if self.supported_action_types != DEFAULT_ACTION_TYPES:
+            result["supported_action_types"] = [action_type.__name__ for action_type in self.supported_action_types]
         return result
 
     def to_json(self) -> str:
@@ -108,11 +131,18 @@ class Architecture:
         return json.dumps(self.to_dict())
 
     @classmethod
-    def from_dict(cls, data: object) -> Architecture:
+    def from_dict(
+        cls,
+        data: object,
+        *,
+        action_types: Sequence[type[Action]] | None = None,
+    ) -> Architecture:
         """Construct an architecture from a JSON-style mapping.
 
         Args:
             data: Architecture mapping.
+            action_types: Additional action classes available when resolving the
+                serialized supported-action catalog.
 
         Returns:
             A validated architecture.
@@ -151,25 +181,55 @@ class Architecture:
                 raise ValueError(msg)
             field_profile = FieldProfile.from_dict(field_profile_raw, num_sites=num_sites)
 
-        return cls(num_sites=num_sites, processing_zones=processing_zones, field_profile=field_profile)
+        supported_action_names = mapping.get("supported_action_types")
+        supported_action_types = DEFAULT_ACTION_TYPES
+        if supported_action_names is not None:
+            if not isinstance(supported_action_names, list) or any(
+                not isinstance(name, str) for name in supported_action_names
+            ):
+                msg = "architecture.supported_action_types must be a list of strings"
+                raise TypeError(msg)
+            registry = build_action_type_registry(action_types, include_advance_time=False)
+            try:
+                supported_action_types = tuple(registry[name] for name in supported_action_names)
+            except KeyError as error:
+                msg = f"unknown architecture action type: {error.args[0]!r}"
+                raise ValueError(msg) from error
+
+        return cls(
+            num_sites=num_sites,
+            processing_zones=processing_zones,
+            field_profile=field_profile,
+            supported_action_types=supported_action_types,
+        )
 
     @classmethod
-    def from_json(cls, raw: str) -> Architecture:
+    def from_json(
+        cls,
+        raw: str,
+        *,
+        action_types: Sequence[type[Action]] | None = None,
+    ) -> Architecture:
         """Deserialize an architecture from JSON.
 
         Returns:
             A validated architecture.
         """
-        return cls.from_dict(json.loads(raw))
+        return cls.from_dict(json.loads(raw), action_types=action_types)
 
     @classmethod
-    def load(cls, filename: str | Path) -> Architecture:
+    def load(
+        cls,
+        filename: str | Path,
+        *,
+        action_types: Sequence[type[Action]] | None = None,
+    ) -> Architecture:
         """Load an architecture from a UTF-8 JSON file.
 
         Returns:
             A validated architecture.
         """
-        return cls.from_json(Path(filename).read_text(encoding="utf-8"))
+        return cls.from_json(Path(filename).read_text(encoding="utf-8"), action_types=action_types)
 
     def _processing_zones(self) -> dict[str, tuple[int, ...]]:
         return cast("dict[str, tuple[int, ...]]", self.processing_zones)
