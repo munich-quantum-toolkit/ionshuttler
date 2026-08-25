@@ -16,6 +16,7 @@ import pytest
 from mqt.ionshuttler.linear.actions import AdvanceTime, GateSpec, GlobalPulse, Rx, Ry, Rz, Shuttle
 from mqt.ionshuttler.linear.architecture import Architecture
 from mqt.ionshuttler.linear.dd.frame_replay import (
+    FrameHistory,
     PauliFrame,
     PauliFrameOperation,
     accumulated_frame_phase,
@@ -88,6 +89,66 @@ def test_frame_history_includes_same_boundary_and_terminal_global_pulses() -> No
         field_profile=FieldProfile(num_sites=2, site_field=((0, 0.5),)),
         frame_history=history,
     ) == pytest.approx(-0.5)
+
+
+def test_accumulated_frame_phase_rejects_interval_outside_schedule() -> None:
+    """Reject a requested phase interval that lies outside the schedule."""
+    program = _result(
+        [
+            GlobalPulse(GateSpec("Rx", pi)),
+            AdvanceTime(),
+            GlobalPulse(GateSpec("Ry", pi)),
+        ],
+        1,
+    )
+    timeline = build_timeline(program, _ARCHITECTURE)
+    history = build_frame_history(timeline)
+
+    with pytest.raises(ValueError, match="t_start"):
+        accumulated_frame_phase(
+            timeline,
+            ion=0,
+            t_start=0,
+            t_end=2,
+            field_profile=FieldProfile(num_sites=2, site_field=((0, 0.5),)),
+            frame_history=history,
+        )
+
+
+def test_frame_for_ion_rejects_out_of_range_timestep() -> None:
+    """Reject a timestep outside the tracked schedule boundaries."""
+    program = _result(
+        [
+            GlobalPulse(GateSpec("Rx", pi)),
+            AdvanceTime(),
+            GlobalPulse(GateSpec("Ry", pi)),
+        ],
+        1,
+    )
+    timeline = build_timeline(program, _ARCHITECTURE)
+    history = build_frame_history(timeline)
+
+    with pytest.raises(ValueError, match="timestep"):
+        history.frame_for_ion(0, 2)
+
+
+def test_build_frame_history_rejects_unsupported_local_pulse_action() -> None:
+    """Raise instead of silently ignoring a non-Rx/Ry/Rz local pulse record."""
+    program = _result([Shuttle(ion=0, src=0, dst=1), AdvanceTime()], 1)
+    timeline = build_timeline(program, _ARCHITECTURE)
+    local_pulse_action_ids = frozenset({program.scheduled_actions[0].action_id})
+
+    with pytest.raises(ValueError, match="unsupported local DD pulse"):
+        build_frame_history(timeline, local_pulse_action_ids)
+
+
+def test_frame_history_rejects_mismatched_local_override_length() -> None:
+    """Reject a local override that does not span every schedule boundary."""
+    with pytest.raises(ValueError, match="local_frame_overrides"):
+        FrameHistory(
+            global_frames_by_time=(PauliFrame(), PauliFrame()),
+            local_frame_overrides={0: (PauliFrame(),)},
+        )
 
 
 def test_local_record_identity_and_same_timestep_event_order() -> None:

@@ -35,7 +35,9 @@ def __getattr__(name: str) -> object:
         AttributeError: If ``name`` is not a deferred public object.
     """
     if name == "LinearCompiler":
-        from mqt.ionshuttler.linear.compiler import LinearCompiler  # ruff: ignore[import-outside-top-level]
+        from mqt.ionshuttler.linear.compiler import (  # ruff: ignore[import-outside-top-level] - Deferred to keep the root import backend-neutral.
+            LinearCompiler,
+        )
 
         return LinearCompiler
     msg = f"module {__name__!r} has no attribute {name!r}"

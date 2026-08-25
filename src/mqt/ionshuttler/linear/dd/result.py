@@ -73,12 +73,14 @@ class LocalDDSequence:
         if isinstance(self.ion, bool) or not isinstance(self.ion, int):
             msg = "ion must be an integer"
             raise TypeError(msg)
-        if len(self.window) != 2 or any(isinstance(value, bool) or not isinstance(value, int) for value in self.window):
+        window = tuple(self.window)
+        if len(window) != 2 or any(isinstance(value, bool) or not isinstance(value, int) for value in window):
             msg = "window must contain two integers"
             raise TypeError(msg)
-        if self.window[0] < 0 or self.window[1] < self.window[0]:
+        if window[0] < 0 or window[1] < window[0]:
             msg = "window must be an ordered non-negative interval"
             raise ValueError(msg)
+        object.__setattr__(self, "window", window)
         if not isinstance(self.scheme_name, str):
             msg = "scheme_name must be a string"
             raise TypeError(msg)

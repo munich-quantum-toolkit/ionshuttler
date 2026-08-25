@@ -102,6 +102,8 @@ def test_whole_schedule_mode_and_phase_cost_semantics() -> None:
     assert trace.phase_cost == pytest.approx(2.25)
     with pytest.raises(ValueError, match="segmentation"):
         compute_critical_segments(result, _ARCHITECTURE, segmentation=cast("SegmentationMode", "invalid"))
+    with pytest.raises(ValueError, match="dt"):
+        compute_critical_segments(result, _ARCHITECTURE, dt=0.0)
 
 
 def test_sensitivity_profile_is_rms_normalized_and_validated() -> None:

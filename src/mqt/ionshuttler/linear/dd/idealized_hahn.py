@@ -128,7 +128,7 @@ def apply_idealized_hahn(
         for window in find_idle_windows(timeline, ion):
             if window[1] - window[0] < min_idle_timesteps:
                 continue
-            pulses = _rounded_scheme_pulses(window, scheme)
+            pulses = scheme.clamped_pulses(window)
             if not pulses:
                 continue
             sequence_index = len(pending_sequences)
@@ -161,23 +161,6 @@ def apply_idealized_hahn(
 
 def _resolve_scheme(scheme: str | DDScheme) -> DDScheme:
     return scheme if isinstance(scheme, DDScheme) else get_dd_scheme(scheme)
-
-
-def _rounded_scheme_pulses(
-    window: tuple[int, int],
-    scheme: DDScheme,
-) -> tuple[tuple[int, GateSpec], ...]:
-    start, end = window
-    length = end - start
-    seen: set[int] = set()
-    pulses: list[tuple[int, GateSpec]] = []
-    for relative_time, spec in zip(scheme.relative_gate_times, scheme.gate_specs, strict=True):
-        timestep = min(max(round(start + relative_time * length), start), end)
-        if timestep in seen:
-            continue
-        seen.add(timestep)
-        pulses.append((timestep, spec))
-    return tuple(pulses)
 
 
 def _make_local_gate(spec: GateSpec, ion: int) -> Action:

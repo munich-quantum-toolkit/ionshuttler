@@ -52,6 +52,31 @@ def test_scheme_resolution_handles_rounding_and_duplicate_boundaries() -> None:
     assert rounded.resolved_gate_timesteps((0, 1)) is None
 
 
+def test_scheme_quantization_uses_relative_ties_to_even() -> None:
+    """Avoid directional bias while preserving pulse placement under time shifts."""
+    rounded = DDScheme(
+        "balanced-ties",
+        (0.25, 0.5, 0.75, 1.0),
+        tuple(GateSpec("Rx", pi) for _ in range(4)),
+        allow_rounding=True,
+    )
+
+    assert rounded.gate_timesteps((0, 6)) == (2, 3, 4, 6)
+    assert rounded.resolved_gate_timesteps((0, 6)) == (2, 3, 4, 6)
+    assert tuple(timestep for timestep, _spec in rounded.clamped_pulses((0, 6))) == (2, 3, 4, 6)
+    assert rounded.gate_timesteps((5, 11)) == (7, 8, 9, 11)
+
+
+def test_clamped_pulses_round_and_clamp_to_window_deduplicating() -> None:
+    """Round pulse boundaries to the window and drop duplicate timesteps."""
+    rounded = DDScheme(
+        "clamped",
+        (0.0, 0.1, 1.0),
+        (GateSpec("Rx", pi), GateSpec("Rx", pi), GateSpec("Rx", pi)),
+    )
+    assert rounded.clamped_pulses((0, 4)) == ((0, GateSpec("Rx", pi)), (4, GateSpec("Rx", pi)))
+
+
 @pytest.mark.parametrize("scheme", [XY4, XY8, XY16, CDD_1, CDD_2, CDD_3])
 def test_registered_sequences_resolve_on_matching_windows(scheme: DDScheme) -> None:
     """Resolve every built-in sequence at its natural discrete length."""
@@ -81,6 +106,8 @@ def test_scheme_validation_and_registry_copy() -> None:
     """Reject malformed schemes and prevent registry mutation."""
     with pytest.raises(ValueError, match="same length"):
         DDScheme("bad", (0.5,), (GateSpec("Rx", pi), GateSpec("Rx", pi)))
+    with pytest.raises(ValueError, match="must not be empty"):
+        DDScheme("empty", (), ())
     registry = available_dd_schemes()
     registry.clear()
     assert get_dd_scheme("hahn") is HAHN_ECHO

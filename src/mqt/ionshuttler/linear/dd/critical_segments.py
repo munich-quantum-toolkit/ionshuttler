@@ -160,7 +160,11 @@ def compute_critical_segments(
     sensitivities = normalized_sensitivity_values(architecture, sensitivity_profile)
     ion_ids = _ion_ids(schedule)
     segments: list[CriticalSegment] = []
+    phase_per_ion: dict[int, float] = {}
+    squared_per_ion: dict[int, float] = {}
     for ion in ion_ids:
+        ion_phase = 0.0
+        ion_squared_phase = 0.0
         segment_start = 0
         local_sign = 1
         positions: list[int] = []
@@ -177,19 +181,20 @@ def compute_critical_segments(
                 effect = gate_z_effect(action, ion)
                 if effect is None:
                     if positions:
-                        segments.append(
-                            _make_segment(
-                                ion,
-                                segment_index,
-                                segment_start,
-                                timestep,
-                                positions,
-                                signs,
-                                weights,
-                                dt,
-                                type(action).__name__,
-                            )
+                        segment = _make_segment(
+                            ion,
+                            segment_index,
+                            segment_start,
+                            timestep,
+                            positions,
+                            signs,
+                            weights,
+                            dt,
+                            type(action).__name__,
                         )
+                        segments.append(segment)
+                        ion_phase += segment.phase
+                        ion_squared_phase += segment.squared_phase
                         segment_index += 1
                     segment_start = timestep
                     positions, signs, weights = [], [], []
@@ -201,22 +206,22 @@ def compute_critical_segments(
             signs.append(local_sign * frame_history.phase_sign_for_ion(ion, timestep, axis="Z"))
             weights.append(sensitivities[position])
         if positions:
-            segments.append(
-                _make_segment(
-                    ion,
-                    segment_index,
-                    segment_start,
-                    timeline.makespan,
-                    positions,
-                    signs,
-                    weights,
-                    dt,
-                    None,
-                )
+            segment = _make_segment(
+                ion,
+                segment_index,
+                segment_start,
+                timeline.makespan,
+                positions,
+                signs,
+                weights,
+                dt,
+                None,
             )
-
-    phase_per_ion = {ion: sum(segment.phase for segment in segments if segment.ion == ion) for ion in ion_ids}
-    squared_per_ion = {ion: sum(segment.squared_phase for segment in segments if segment.ion == ion) for ion in ion_ids}
+            segments.append(segment)
+            ion_phase += segment.phase
+            ion_squared_phase += segment.squared_phase
+        phase_per_ion[ion] = ion_phase
+        squared_per_ion[ion] = ion_squared_phase
     return CriticalSegmentResult(
         segments=tuple(segments),
         phase_per_ion=phase_per_ion,

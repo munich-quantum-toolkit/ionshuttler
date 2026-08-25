@@ -128,10 +128,6 @@ def build_timeline(
 
     Returns:
         The reconstructed immutable timeline.
-
-    Raises:
-        ValueError: If required metadata is absent or the makespan disagrees with
-            the schedule's time-advance actions.
     """
     initial_positions = to_dict(schedule.initial_state.to_replay_state())
     makespan = schedule.num_timesteps
@@ -146,9 +142,6 @@ def build_timeline(
 
     for scheduled_action in schedule.scheduled_actions:
         action = scheduled_action.action
-        if current_time > makespan:
-            msg = "schedule actions advance beyond schedule.num_timesteps"
-            raise ValueError(msg)
         actions_by_time.setdefault(current_time, []).append(action)
         scheduled_actions_by_time.setdefault(current_time, []).append(scheduled_action)
 
@@ -186,10 +179,6 @@ def build_timeline(
                 _mark_busy_range(pz_busy_by_time.setdefault(zone, set()), current_time, duration)
         elif isinstance(action, AdvanceTime):
             current_time += action.timestep_increment
-
-    if current_time != makespan:
-        msg = "schedule.num_timesteps does not match the time-advance actions"
-        raise ValueError(msg)
 
     return CompiledTimeline(
         makespan=makespan,

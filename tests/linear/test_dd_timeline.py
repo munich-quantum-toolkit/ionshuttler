@@ -90,12 +90,12 @@ def test_timeline_distinguishes_virtual_and_physical_rz_resources() -> None:
         (2, [AdvanceTime()], "total time advancement"),
     ],
 )
-def test_timeline_rejects_malformed_makespans(
+def test_action_schedule_rejects_malformed_makespans(
     num_timesteps: int,
     path: list[Action],
     message: str,
 ) -> None:
-    """Reject negative, overlong, and underlong schedule clocks."""
+    """Reject negative, overlong, and underlong schedule clocks at construction."""
     architecture = Architecture(num_sites=1)
     valid = ActionSchedule.from_actions(path, create_initial_state(1, architecture))
 

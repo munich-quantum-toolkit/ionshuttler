@@ -229,8 +229,15 @@ def solve_sadd_problem(
     control = _add_control_constraints(model, problem, timeline, x, move, allow_pulses=allow_pulses)
     _add_operation_duration_constraints(model, problem, timeline, shuttle, swap, control)
     parity = _add_parity_constraints(model, problem, control)
-    square_terms = _add_phase_objective_terms(model, problem, x, parity)
-    objective = sum(square_terms) * 1_000_000 + sum(control.values()) * 1_000 + sum(move.values())
+    secondary_objective_bound = len(control) * 1_000 + len(move)
+    square_terms = _add_phase_objective_terms(
+        model,
+        problem,
+        x,
+        parity,
+        secondary_objective_bound=secondary_objective_bound,
+    )
+    objective = sum(square_terms) * _PHASE_OBJECTIVE_WEIGHT + sum(control.values()) * 1_000 + sum(move.values())
     model.Minimize(objective)
     model_proto = model.Proto()
     model_num_variables = len(model_proto.variables)
@@ -653,26 +660,52 @@ def _add_parity_constraints(
     return parity
 
 
+_CP_SAT_INT64_MAX = 2**63 - 1
+_PHASE_OBJECTIVE_WEIGHT = 1_000_000
+
+
+@dataclass(frozen=True)
+class _PhaseTermData:
+    """Contain the fixed values and safe domain bound for one phase term."""
+
+    segment: CriticalSegment
+    overlap_start: int
+    overlap_end: int
+    phase_before_overlap: int
+    phase_after_opportunity: int
+    phase_bound: int
+
+
 def _add_phase_objective_terms(
     model: SolverObject,
     problem: SADDProblem,
     x: dict[tuple[int, int, int], SolverObject],
     parity: dict[tuple[int, int], SolverObject],
+    *,
+    secondary_objective_bound: int = 0,
 ) -> list[SolverObject]:
+    """Build one squared-phase objective term per critical segment.
+
+    Returns:
+        The squared-phase solver variables to minimize.
+
+    Raises:
+        ValueError: If the scaled squared objective would exceed CP-SAT's int64 limit.
+    """
+    term_data = _phase_term_data(problem)
+    objective_bound = (
+        sum(data.phase_bound * data.phase_bound for data in term_data) * _PHASE_OBJECTIVE_WEIGHT
+        + secondary_objective_bound
+    )
+    if objective_bound > _CP_SAT_INT64_MAX:
+        msg = "scaled SADD objective bound exceeds CP-SAT's int64 limit; reduce SADDConfig.scale"
+        raise ValueError(msg)
+
     terms = []
-    phase_bound = problem.scale * problem.duration * max(1, problem.architecture.num_sites) * 4
-    for term_index, segment in enumerate(problem.phase_segments):
-        overlap_start = max(segment.start, problem.t_start)
-        overlap_end = min(segment.end, problem.t_end)
-        phase_before_overlap = 0
-        phase_after_opportunity = 0
+    for term_index, data in enumerate(term_data):
+        segment = data.segment
         expression_terms = []
-        for t_abs in range(segment.start, overlap_start):
-            offset = t_abs - segment.start
-            phase_before_overlap += round(
-                problem.scale * segment.toggling_signs[offset] * segment.sensitivities[offset]
-            )
-        for t_abs in range(overlap_start, overlap_end):
+        for t_abs in range(data.overlap_start, data.overlap_end):
             offset = t_abs - segment.start
             rel_t = t_abs - problem.t_start
             base_sign = segment.toggling_signs[offset]
@@ -684,20 +717,62 @@ def _add_phase_objective_terms(
                 model.Add(toggled <= parity[segment.ion, rel_t])
                 model.Add(toggled >= x[segment.ion, rel_t, site] + parity[segment.ion, rel_t] - 1)
                 expression_terms.append(-2 * weight * toggled)
-        for t_abs in range(max(overlap_end, problem.t_end), segment.end):
-            offset = t_abs - segment.start
-            phase_after_opportunity += round(
-                problem.scale * segment.toggling_signs[offset] * segment.sensitivities[offset]
-            )
-        if phase_after_opportunity:
+        if data.phase_after_opportunity:
             terminal_parity = parity[segment.ion, problem.duration - 1]
-            expression_terms.extend((phase_after_opportunity, -2 * phase_after_opportunity * terminal_parity))
-        phase = model.NewIntVar(-phase_bound, phase_bound, f"phase_seg{term_index}")
-        model.Add(phase == phase_before_overlap + sum(expression_terms))
-        square = model.NewIntVar(0, phase_bound * phase_bound, f"phase_square_seg{term_index}")
+            expression_terms.extend((
+                data.phase_after_opportunity,
+                -2 * data.phase_after_opportunity * terminal_parity,
+            ))
+        phase = model.NewIntVar(-data.phase_bound, data.phase_bound, f"phase_seg{term_index}")
+        model.Add(phase == data.phase_before_overlap + sum(expression_terms))
+        square = model.NewIntVar(0, data.phase_bound * data.phase_bound, f"phase_square_seg{term_index}")
         model.AddMultiplicationEquality(square, [phase, phase])
         terms.append(square)
     return terms
+
+
+def _phase_term_data(problem: SADDProblem) -> tuple[_PhaseTermData, ...]:
+    """Derive safe, contribution-based bounds for all phase expressions.
+
+    Returns:
+        The fixed contributions and domain bound for each critical segment.
+    """
+    maximum_overlap_weight = max(
+        (abs(round(problem.scale * sensitivity)) for sensitivity in problem.sensitivity_profile),
+        default=0,
+    )
+    result: list[_PhaseTermData] = []
+    for segment in problem.phase_segments:
+        overlap_start = max(segment.start, problem.t_start)
+        overlap_end = min(segment.end, problem.t_end)
+        phase_before_overlap = sum(
+            round(
+                problem.scale
+                * segment.toggling_signs[t_abs - segment.start]
+                * segment.sensitivities[t_abs - segment.start]
+            )
+            for t_abs in range(segment.start, overlap_start)
+        )
+        phase_after_opportunity = sum(
+            round(
+                problem.scale
+                * segment.toggling_signs[t_abs - segment.start]
+                * segment.sensitivities[t_abs - segment.start]
+            )
+            for t_abs in range(max(overlap_end, problem.t_end), segment.end)
+        )
+        overlap_bound = (overlap_end - overlap_start) * maximum_overlap_weight
+        result.append(
+            _PhaseTermData(
+                segment=segment,
+                overlap_start=overlap_start,
+                overlap_end=overlap_end,
+                phase_before_overlap=phase_before_overlap,
+                phase_after_opportunity=phase_after_opportunity,
+                phase_bound=abs(phase_before_overlap) + overlap_bound + abs(phase_after_opportunity),
+            )
+        )
+    return tuple(result)
 
 
 def _selected_site(

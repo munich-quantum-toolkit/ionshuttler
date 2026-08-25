@@ -390,6 +390,7 @@ def _require_unique_keys(values: Sequence[tuple[object, object]], label: str) ->
 
 __all__ = [
     "ActionDecoder",
+    "ActionDecoders",
     "ActionSchedule",
     "MachineState",
     "ScheduledAction",

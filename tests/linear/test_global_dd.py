@@ -272,3 +272,5 @@ def test_global_dd_report_rejects_malformed_public_values() -> None:
             spacing=2,
             phase_cost=-1.0,
         )
+    with pytest.raises(ValueError, match="JSON object"):
+        GlobalDDReport.from_dict([])

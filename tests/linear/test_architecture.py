@@ -159,7 +159,7 @@ def test_architecture_and_field_profile_reject_invalid_shapes() -> None:
     with pytest.raises(TypeError, match=r"architecture\.num_sites"):
         Architecture.from_dict({"num_sites": True})
     with pytest.raises(TypeError, match="Action subclasses"):
-        Architecture(num_sites=1, supported_action_types=(1,))  # ty: ignore[invalid-argument-type]
+        Architecture(num_sites=1, supported_action_types=(1,))  # ty: ignore[invalid-argument-type] - Intentionally invalid entry to test runtime validation.
     with pytest.raises(TypeError, match="list of strings"):
         Architecture.from_dict({"num_sites": 1, "supported_action_types": "GlobalPulse"})
     with pytest.raises(ValueError, match="scheduler operation"):

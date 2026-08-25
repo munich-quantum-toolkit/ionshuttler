@@ -515,6 +515,7 @@ def _select_participating_ions(
     for ion, _site in timeline.state_at(0).positions:
         if any(timeline.ion_busy(ion, timestep) for timestep in range(window[0], window[1])):
             busy_ions.append(ion)
+            continue
         active_segments = [
             segment
             for segment in trace.segments

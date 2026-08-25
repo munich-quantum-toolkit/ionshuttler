@@ -66,44 +66,87 @@ class DDScheme:
         """The number of pulses in this sequence."""
         return len(self.gate_specs)
 
+    def _boundary_offsets(self, window: tuple[int, int]) -> tuple[float, ...]:
+        """Convert relative pulse times to offsets within a schedule window.
+
+        Returns:
+            The unrounded boundary offset for every pulse.
+        """
+        t_start, t_end = window
+        length = t_end - t_start
+        return tuple(relative_time * length for relative_time in self.relative_gate_times)
+
     def gate_timesteps(self, window: tuple[int, int]) -> tuple[int, ...]:
-        """Map relative pulse times to left-boundary schedule timesteps.
+        """Map relative pulse times to the nearest schedule boundaries.
+
+        Offsets are rounded to nearest with ties-to-even before adding the window
+        start. A pulse at boundary ``t`` acts before phase accumulates over
+        ``[t, t + 1)``.
 
         Returns:
             The schedule boundary for every pulse.
         """
-        t_start, t_end = window
-        length = t_end - t_start
-        timesteps = tuple(t_start + int(relative_time * length) for relative_time in self.relative_gate_times)
+        t_start, _t_end = window
+        timesteps = tuple(_quantized_boundary(t_start, offset) for offset in self._boundary_offsets(window))
         logger.debug(
-            "computed raw DD gate timesteps scheme=%s window=%s length=%s timesteps=%s",
+            "computed raw DD gate timesteps scheme=%s window=%s timesteps=%s",
             self.name,
             window,
-            length,
             timesteps,
         )
         return timesteps
 
     def resolved_gate_timesteps(self, window: tuple[int, int]) -> tuple[int, ...] | None:
-        """Return distinct integral pulse boundaries, or ``None`` if infeasible."""
+        """Return distinct integral pulse boundaries, or ``None`` if infeasible.
+
+        With ``allow_rounding`` unset, a pulse time must already coincide with a
+        schedule boundary within tolerance. With ``allow_rounding`` set, a pulse
+        time is rounded to the nearest boundary and rejected only if that falls
+        outside the window.
+        """
         t_start, t_end = window
-        length = t_end - t_start
         resolved: list[int] = []
-        for relative_time in self.relative_gate_times:
-            t_float = t_start + relative_time * length
+        for offset in self._boundary_offsets(window):
+            timestep = _quantized_boundary(t_start, offset)
+            nearest_offset = timestep - t_start
             if self.allow_rounding:
-                t_gate = round(t_float)
-                if not t_start <= t_gate <= t_end:
+                if not t_start <= timestep <= t_end:
                     return None
-            else:
-                nearest_timestep = round(t_float)
-                if not isclose(t_float, nearest_timestep, rel_tol=0.0, abs_tol=1e-9):
-                    return None
-                t_gate = int(nearest_timestep)
-            resolved.append(t_gate)
+            elif not isclose(offset, nearest_offset, rel_tol=0.0, abs_tol=1e-9):
+                return None
+            resolved.append(timestep)
         if len(set(resolved)) != len(resolved):
             return None
         return tuple(resolved)
+
+    def clamped_pulses(self, window: tuple[int, int]) -> tuple[tuple[int, GateSpec], ...]:
+        """Return rounded, window-clamped, deduplicated pulse boundaries with their gate specs.
+
+        Unlike :meth:`resolved_gate_timesteps`, a pulse time outside the window is
+        clamped to the nearer boundary instead of making the sequence infeasible.
+
+        Returns:
+            The ordered, deduplicated ``(timestep, gate_spec)`` pairs to insert.
+        """
+        t_start, t_end = window
+        seen: set[int] = set()
+        pulses: list[tuple[int, GateSpec]] = []
+        for offset, spec in zip(self._boundary_offsets(window), self.gate_specs, strict=True):
+            timestep = min(max(_quantized_boundary(t_start, offset), t_start), t_end)
+            if timestep in seen:
+                continue
+            seen.add(timestep)
+            pulses.append((timestep, spec))
+        return tuple(pulses)
+
+
+def _quantized_boundary(window_start: int, relative_offset: float) -> int:
+    """Quantize a relative offset with ties-to-even and add its window start.
+
+    Returns:
+        The translation-invariant nearest schedule boundary.
+    """
+    return window_start + round(relative_offset)
 
 
 def make_cpmg_scheme(num_pulses: int) -> DDScheme:

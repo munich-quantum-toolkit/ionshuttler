@@ -73,7 +73,10 @@ def decoupling_ratio(schedule: ActionSchedule, sequences: Sequence[LocalDDSequen
         return 0.0
     windows_by_ion: dict[int, list[tuple[int, int]]] = {}
     for record in sequences:
-        windows_by_ion.setdefault(record.ion, []).append(record.window)
+        start, end = record.window
+        clamped = (max(0, min(start, schedule.num_timesteps)), max(0, min(end, schedule.num_timesteps)))
+        if clamped[1] > clamped[0]:
+            windows_by_ion.setdefault(record.ion, []).append(clamped)
     covered_volume = sum(end - start for windows in windows_by_ion.values() for start, end in _merge_windows(windows))
     return covered_volume / (schedule.num_timesteps * num_ions)
 

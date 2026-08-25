@@ -733,6 +733,9 @@ def build_action_type_registry(
 ) -> dict[str, type[Action]]:
     """Return built-in and caller-provided action classes by serialized name.
 
+    Returns:
+        A mapping from serialized action name to its action class.
+
     Raises:
         TypeError: If a supplied entry is not an action class.
         ValueError: If two different action classes have the same serialized name.

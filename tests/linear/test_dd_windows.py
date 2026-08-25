@@ -22,21 +22,18 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
-def _timeline(path: Sequence[Action], _timesteps: int) -> CompiledTimeline:
+def _timeline(path: Sequence[Action]) -> CompiledTimeline:
     architecture = Architecture(num_sites=3, processing_zones={"pz": [0, 1, 2]})
     return build_timeline(ActionSchedule.from_actions(path, create_initial_state(1, architecture)), architecture)
 
 
 def test_idle_windows_split_around_full_gate_duration() -> None:
     """Exclude every occupied gate interval from maximal idle windows."""
-    timeline = _timeline(
-        [AdvanceTime(), Rx(ion=0, theta=1.0, duration=2), AdvanceTime(), AdvanceTime(), AdvanceTime()],
-        4,
-    )
+    timeline = _timeline([AdvanceTime(), Rx(ion=0, theta=1.0, duration=2), AdvanceTime(), AdvanceTime(), AdvanceTime()])
     assert find_idle_windows(timeline, ion=0) == ((0, 1), (3, 4))
 
 
 def test_transport_only_interval_remains_gate_idle() -> None:
     """Treat transport as phase exposure rather than a gate boundary."""
-    timeline = _timeline([Shuttle(ion=0, src=0, dst=1), AdvanceTime(), AdvanceTime()], 2)
+    timeline = _timeline([Shuttle(ion=0, src=0, dst=1), AdvanceTime(), AdvanceTime()])
     assert find_idle_windows(timeline, ion=0) == ((0, 2),)

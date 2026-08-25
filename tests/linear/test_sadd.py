@@ -163,6 +163,28 @@ def test_sadd_method_is_the_only_transport_switch(monkeypatch: pytest.MonkeyPatc
     assert observed == [False, True]
 
 
+def test_participant_selection_excludes_ions_busy_during_window() -> None:
+    """Report a busy ion without allowing it to reach candidate scoring."""
+    architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
+    schedule = ActionSchedule.from_actions(
+        [Rx(ion=0, theta=pi, duration=2), AdvanceTime(), AdvanceTime()],
+        create_initial_state(1, architecture),
+    )
+
+    selection = sadd_module._select_participating_ions(
+        schedule,
+        architecture,
+        "pz",
+        (0, 2),
+        SADDConfig(),
+        frozenset(),
+    )
+
+    assert selection.busy_ions == (0,)
+    assert selection.eligible_ions == ()
+    assert selection.selected_ions == ()
+
+
 def test_sadd_reports_transport_changes_by_action_type(monkeypatch: pytest.MonkeyPatch) -> None:
     """Describe schedule transport changes rather than only synthesized actions."""
     architecture = Architecture(num_sites=3, processing_zones={"pz": [1]})

@@ -79,6 +79,44 @@ def test_solver_applies_terminal_parity_to_downstream_phase() -> None:
     assert solution.materialized
 
 
+def test_phase_bounds_cover_the_full_critical_segment() -> None:
+    """Include fixed phase on both sides of the optimized opportunity."""
+    architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
+    result = _idle_result(architecture, [0], 5)
+    problem = build_sadd_problem(
+        result,
+        architecture,
+        target_pz="pz",
+        t_start=1,
+        t_end=3,
+        participating_ions=(0,),
+    )
+
+    (term_data,) = sadd_solver_module._phase_term_data(problem)
+
+    assert term_data.phase_before_overlap == 1_000
+    assert term_data.phase_after_opportunity == 2_000
+    assert term_data.phase_bound == 5_000
+
+
+def test_solver_rejects_objective_outside_cp_sat_integer_domain() -> None:
+    """Reject an oversized scaled objective before constructing phase variables."""
+    architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
+    result = _idle_result(architecture, [0], 5)
+    problem = build_sadd_problem(
+        result,
+        architecture,
+        target_pz="pz",
+        t_start=1,
+        t_end=3,
+        participating_ions=(0,),
+        scale=10**10,
+    )
+
+    with pytest.raises(ValueError, match="int64"):
+        solve_sadd_problem(problem, timeout_s=1.0, allow_transport=False)
+
+
 def test_equal_primary_optima_remain_semantically_equivalent() -> None:
     """Accept either primary optimum when symmetric pulse positions tie."""
     architecture = Architecture(num_sites=3, processing_zones={"pz": [1]})

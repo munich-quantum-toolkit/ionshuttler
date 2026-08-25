@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from dataclasses import FrozenInstanceError
@@ -24,6 +25,7 @@ from mqt.ionshuttler.linear.dd import (
     GlobalDDReport,
     IdealizedHahnConfig,
     IdealizedHahnReport,
+    LocalDDSequence,
     OperationDurations,
     SADDConfig,
     SADDMethod,
@@ -112,6 +114,15 @@ def test_comparator_report_types_are_available_without_optional_dependencies() -
     assert GlobalDDConfig(spacing=5).half_first_window
     assert idealized.sequences == ()
     assert global_report.pulse_timesteps == (1, 3)
+
+
+def test_local_dd_sequence_normalizes_window_to_immutable_tuple() -> None:
+    """Freeze a list-valued window alongside the other nested sequence fields."""
+    sequence = LocalDDSequence(0, [0, 2], "hahn", (1,), (7,))  # ty: ignore[invalid-argument-type]
+
+    assert sequence.window == (0, 2)
+    assert isinstance(sequence.window, tuple)
+    hash(sequence)
 
 
 def test_sadd_defaults_freeze_the_paper_configuration() -> None:
@@ -210,9 +221,64 @@ def test_sadd_values_are_immutable_and_copy_mutable_inputs() -> None:
     assert result.schedule is program
     with pytest.raises(TypeError):
         cast("dict[int, float]", opportunity.phase_before_by_ion)[0] = 4.0
-    program_attribute = "program"
+    schedule_attribute = "schedule"
     with pytest.raises(FrozenInstanceError):
-        setattr(result, program_attribute, "mutated")
+        setattr(result, schedule_attribute, "mutated")
+
+
+def test_sadd_report_round_trips_through_dict_and_json() -> None:
+    """Restore a fully populated SADD report from its serialized form."""
+    opportunity = _opportunity(
+        pulse_action_ids={0: (7,)},
+        message="synthesized",
+    )
+    report = SADDReport(method=SADDMethod.FULL, opportunities=(opportunity,))
+
+    restored = SADDReport.from_dict(report.to_dict())
+
+    assert restored == report
+    assert restored.opportunities[0].pulse_action_ids == {0: (7,)}
+
+    json_text = json.dumps(report.to_dict())
+    restored_from_json = SADDReport.from_dict(json.loads(json_text))
+
+    assert restored_from_json == report
+
+
+def test_sadd_report_round_trips_opportunities_with_none_mappings() -> None:
+    """Restore optional mapping fields left unset as ``None``."""
+    opportunity = _opportunity(
+        phase_before_by_ion=None,
+        phase_after_by_ion=None,
+        pulse_timesteps=None,
+        pulse_action_ids=None,
+        trajectories=None,
+        pulse_count=0,
+        accepted=False,
+        phase_cost_after=None,
+    )
+    report = SADDReport(method=SADDMethod.PULSE_ONLY, opportunities=(opportunity,))
+
+    restored = SADDReport.from_dict(report.to_dict())
+
+    assert restored == report
+    assert restored.opportunities[0].phase_before_by_ion is None
+    assert restored.opportunities[0].pulse_action_ids is None
+
+
+@pytest.mark.parametrize(
+    ("data", "message"),
+    [
+        ([], "JSON object"),
+        ({"method": "full_sadd", "opportunities": "not-a-list"}, "opportunities must be a list"),
+        ({"method": "unknown", "opportunities": []}, "unknown SADD method"),
+        ({"method": "full_sadd", "opportunities": [{"target_pz": "pz"}]}, "malformed SADD opportunity"),
+    ],
+)
+def test_sadd_report_from_dict_rejects_malformed_input(data: object, message: str) -> None:
+    """Reject a serialized SADD report that is not well-formed."""
+    with pytest.raises(ValueError, match=message):
+        SADDReport.from_dict(data)
 
 
 def test_dd_pass_result_rejects_empty_unavailability_reason() -> None:

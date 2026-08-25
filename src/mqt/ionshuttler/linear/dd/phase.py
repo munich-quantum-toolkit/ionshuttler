@@ -23,7 +23,7 @@ def accumulated_phase(
     t_end: int,
     field_profile: FieldProfile | None,
 ) -> float:
-    """Return the unsigned field exposure over a half-open time interval.
+    """Return the signed field exposure over a half-open time interval.
 
     Args:
         timeline: Reconstructed compiled schedule.
@@ -38,11 +38,11 @@ def accumulated_phase(
     Raises:
         ValueError: If the requested interval lies outside the timeline.
     """
-    if field_profile is None:
-        return 0.0
     if not 0 <= t_start <= t_end <= timeline.makespan:
         msg = f"expected 0 <= t_start <= t_end <= {timeline.makespan}"
         raise ValueError(msg)
+    if field_profile is None:
+        return 0.0
     return sum(field_profile.field_at(timeline.ion_position(ion, timestep)) for timestep in range(t_start, t_end))
 
 

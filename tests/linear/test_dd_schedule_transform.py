@@ -13,12 +13,13 @@ from math import pi
 
 import pytest
 
-from mqt.ionshuttler.linear.actions import AdvanceTime, GateSpec, GlobalPulse, Rx, Rz, Shuttle
+from mqt.ionshuttler.linear.actions import AdvanceTime, GateSpec, GlobalPulse, PhysicalSwap, Rx, Rz, Shuttle
 from mqt.ionshuttler.linear.architecture import Architecture
 from mqt.ionshuttler.linear.dd.schedule_transform import (
     insert_action_at_time,
     rebuild_schedule,
     validate_rebuilt_schedule,
+    validate_schedule_compatibility,
 )
 from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
 from mqt.ionshuttler.linear.state import create_initial_state
@@ -94,6 +95,61 @@ def test_schedule_validation_rejects_conflicts_and_physical_terminal_gate() -> N
 
     assert not validate_rebuilt_schedule(conflict, architecture)
     assert not validate_rebuilt_schedule(terminal, architecture)
+
+
+def test_schedule_compatibility_rejects_out_of_range_initial_positions() -> None:
+    """Reject a schedule whose initial ion positions fall outside the architecture."""
+    source_architecture = Architecture(num_sites=3)
+    program = ActionSchedule.from_actions(
+        [AdvanceTime()],
+        create_initial_state(1, source_architecture, initial_positions=[2]),
+    )
+    small_architecture = Architecture(num_sites=2)
+
+    with pytest.raises(ValueError, match="initial positions"):
+        validate_schedule_compatibility(program, small_architecture)
+
+
+def test_schedule_compatibility_rejects_mismatched_processing_zones() -> None:
+    """Reject a schedule built against a different set of processing zones."""
+    architecture = Architecture(num_sites=3, processing_zones={"pz": [1, 2]})
+    program = ActionSchedule.from_actions(
+        [AdvanceTime()],
+        create_initial_state(1, architecture, initial_positions=[0]),
+    )
+    other_architecture = Architecture(num_sites=3, processing_zones={"other_pz": [1, 2]})
+
+    with pytest.raises(ValueError, match="processing-zone resources"):
+        validate_schedule_compatibility(program, other_architecture)
+
+
+def test_schedule_compatibility_rejects_unsupported_action_types() -> None:
+    """Reject a schedule using an action class the architecture does not support."""
+    architecture = Architecture(num_sites=3, processing_zones={"pz": [1, 2]})
+    program = ActionSchedule.from_actions(
+        [Rx(ion=0, theta=pi), AdvanceTime()],
+        create_initial_state(1, architecture, initial_positions=[0]),
+    )
+    restricted_architecture = Architecture(
+        num_sites=3,
+        processing_zones={"pz": [1, 2]},
+        supported_action_types=(PhysicalSwap, Shuttle),
+    )
+
+    with pytest.raises(ValueError, match="unsupported by the architecture"):
+        validate_schedule_compatibility(program, restricted_architecture)
+
+
+def test_schedule_compatibility_rejects_failed_replay() -> None:
+    """Reject a schedule that cannot be replayed against the architecture."""
+    architecture = Architecture(num_sites=3, processing_zones={"pz": [1, 2]})
+    terminal = ActionSchedule.from_actions(
+        [Rx(ion=0, theta=pi)],
+        create_initial_state(1, architecture, initial_positions=[0]),
+    )
+
+    with pytest.raises(ValueError, match="not valid for the architecture"):
+        validate_schedule_compatibility(terminal, architecture)
 
 
 def test_transform_rejects_invalid_time_and_action() -> None:

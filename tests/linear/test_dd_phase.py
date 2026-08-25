@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
-def _timeline(path: Sequence[Action], _num_timesteps: int) -> CompiledTimeline:
+def _timeline(path: Sequence[Action]) -> CompiledTimeline:
     architecture = Architecture(num_sites=3)
     return build_timeline(
         ActionSchedule.from_actions(
@@ -38,17 +38,14 @@ def _timeline(path: Sequence[Action], _num_timesteps: int) -> CompiledTimeline:
 
 def test_accumulated_phase_matches_static_and_moving_exposure() -> None:
     """Integrate the field at each source-compatible trajectory boundary."""
-    static = _timeline([AdvanceTime(), AdvanceTime(), AdvanceTime()], 3)
-    moving = _timeline(
-        [
-            AdvanceTime(),
-            Shuttle(ion=0, src=0, dst=1),
-            AdvanceTime(),
-            Shuttle(ion=0, src=1, dst=2),
-            AdvanceTime(),
-        ],
-        3,
-    )
+    static = _timeline([AdvanceTime(), AdvanceTime(), AdvanceTime()])
+    moving = _timeline([
+        AdvanceTime(),
+        Shuttle(ion=0, src=0, dst=1),
+        AdvanceTime(),
+        Shuttle(ion=0, src=1, dst=2),
+        AdvanceTime(),
+    ])
     profile = FieldProfile(num_sites=3, site_field=((0, 0.2), (1, 0.7), (2, -0.1)))
 
     assert accumulated_phase(static, 0, 0, 3, profile) == pytest.approx(0.6)
@@ -58,7 +55,7 @@ def test_accumulated_phase_matches_static_and_moving_exposure() -> None:
 
 def test_accumulated_phase_handles_absent_profile_and_invalid_interval() -> None:
     """Treat an absent field as zero and reject invalid half-open intervals."""
-    timeline = _timeline([AdvanceTime(), AdvanceTime()], 2)
+    timeline = _timeline([AdvanceTime(), AdvanceTime()])
 
     assert accumulated_phase(timeline, 0, 0, 2, None) == pytest.approx(0.0)
     with pytest.raises(ValueError, match="expected"):

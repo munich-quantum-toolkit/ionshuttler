@@ -114,12 +114,18 @@ class FrameHistory:
     local_frame_overrides: Mapping[int, tuple[PauliFrame, ...]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Copy nested frame sequences into an immutable mapping."""
-        object.__setattr__(
-            self,
-            "local_frame_overrides",
-            MappingProxyType({ion: tuple(frames) for ion, frames in self.local_frame_overrides.items()}),
-        )
+        """Copy nested frame sequences into an immutable mapping.
+
+        Raises:
+            ValueError: If a local override does not cover every schedule boundary.
+        """
+        expected_length = len(self.global_frames_by_time)
+        normalized = {ion: tuple(frames) for ion, frames in self.local_frame_overrides.items()}
+        for ion, frames in normalized.items():
+            if len(frames) != expected_length:
+                msg = f"local_frame_overrides for ion {ion} must have length {expected_length}, got {len(frames)}"
+                raise ValueError(msg)
+        object.__setattr__(self, "local_frame_overrides", MappingProxyType(normalized))
 
     def frame_for_ion(self, ion: int, timestep: int) -> PauliFrame:
         """Return the combined global and local frame for an ion.
@@ -357,12 +363,11 @@ def _build_local_frame_overrides(
     operations_by_ion: dict[int, dict[int, list[PauliFrameOperation]]] = {}
     for timestep in range(timeline.makespan + 1):
         for item in timeline.scheduled_action_at(timestep) or ():
-            action = item.action
-            if item.action_id not in local_pulse_action_ids or not isinstance(action, (Rx, Ry, Rz)):
+            if item.action_id not in local_pulse_action_ids:
                 continue
-            operations_by_ion.setdefault(action.ion, {}).setdefault(timestep, []).append(
-                _frame_operation_for_local_action(action)
-            )
+            operation = _frame_operation_for_local_action(item.action)
+            ion = cast("Rx | Ry | Rz", item.action).ion
+            operations_by_ion.setdefault(ion, {}).setdefault(timestep, []).append(operation)
 
     overrides: dict[int, tuple[PauliFrame, ...]] = {}
     for ion, operations_by_time in operations_by_ion.items():
@@ -377,9 +382,14 @@ def _build_local_frame_overrides(
 
 
 def _frame_operation_for_local_action(action: Action) -> PauliFrameOperation:
+    """Return the frame operation induced by a recorded local DD pulse.
+
+    Raises:
+        ValueError: If the action is not a supported local pulse gate (Rx, Ry, Rz).
+    """
     if isinstance(action, (Rx, Ry, Rz)):
         return frame_operation_for_gate_spec(GateSpec(type(action).__name__, theta=action.theta))
-    msg = f"unsupported local DD gate action for frame tracking: {action!r}"
+    msg = f"unsupported local DD pulse action for frame tracking: {action!r}"
     raise ValueError(msg)
 
 

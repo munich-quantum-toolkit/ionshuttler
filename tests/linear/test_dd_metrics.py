@@ -21,6 +21,7 @@ from mqt.ionshuttler.linear.dd.metrics import (
     gate_residual_events_by_ion,
     phase_reduction_per_gate,
     rank_ions_by_residual_phase,
+    relative_phase_reduction,
     residual_phase_at_timestep,
     residual_phase_at_window_end,
     residual_phase_at_window_end_reduction,
@@ -72,6 +73,27 @@ def test_decoupling_ratio_merges_overlapping_windows_and_counts_ion_time() -> No
 
     assert decoupling_ratio(result, records) == pytest.approx(0.7)
     assert phase_reduction_per_gate(result, records) == pytest.approx(0.0)
+
+
+def test_decoupling_ratio_clamps_windows_to_schedule_horizon() -> None:
+    """Keep recorded coverage within the schedule's ion-time volume."""
+    result, _architecture = _result([AdvanceTime() for _ in range(4)], 4)
+    records = (LocalDDSequence(0, (0, 10), "hahn", (2,), (5,)),)
+
+    assert decoupling_ratio(result, records) == pytest.approx(1.0)
+
+
+def test_relative_phase_reduction_empty_sequences_and_zero_and_normal_cases() -> None:
+    """Cover the empty-sequences shortcut, the zero-total-phase guard, and a normal ratio."""
+    result, architecture = _result([AdvanceTime() for _ in range(4)], 4)
+    records = (LocalDDSequence(0, (0, 4), "hahn", (2,), (5,), phase_reduction=2.0),)
+
+    assert relative_phase_reduction(result, architecture, ()) == pytest.approx(0.0)
+
+    zero_field_result, zero_field_architecture = _result([AdvanceTime() for _ in range(4)], 4, fields=(0.0,))
+    assert relative_phase_reduction(zero_field_result, zero_field_architecture, records) == pytest.approx(0.0)
+
+    assert relative_phase_reduction(result, architecture, records) == pytest.approx(0.5)
 
 
 def test_global_pulses_refocus_schedule_end_metrics() -> None:
