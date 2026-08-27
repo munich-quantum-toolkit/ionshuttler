@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from mqt.ionshuttler.linear.actions import (
@@ -44,7 +44,7 @@ ActionCandidate = tuple[Action, int | None]
 ExpandedState = tuple[Action, int | None, State]
 
 
-class GenerationMode(str, Enum):
+class GenerationMode(StrEnum):
     """Choose how broadly the compiler looks for its next action."""
 
     FULL = "full"

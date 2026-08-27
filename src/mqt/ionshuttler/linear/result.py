@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import cast
 
@@ -28,7 +28,7 @@ ActionDecoder = Callable[[Mapping[str, object]], Action]
 ActionDecoders = Mapping[str, ActionDecoder]
 
 
-class CompilationStatus(str, Enum):
+class CompilationStatus(StrEnum):
     """Describe how compilation ended."""
 
     SUCCESS = "SUCCESS"

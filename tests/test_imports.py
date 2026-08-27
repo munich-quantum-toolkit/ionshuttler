@@ -36,7 +36,6 @@ def test_all_submodules_importable():
     skip = {
         "mqt.ionshuttler.multi_shuttler.inside.run",  # DeprecationWarning on hashing seed
         "mqt.ionshuttler.single_shuttler.run",  # references legacy 'SAT' module
-        "mqt.ionshuttler.single_shuttler.types",  # uses subscripted builtins unsupported in 3.10
     }
 
     failed = []
