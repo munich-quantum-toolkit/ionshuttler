@@ -53,7 +53,6 @@ extensions = [
     "sphinx.ext.intersphinx",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
-    "sphinxcontrib.inkscapeconverter",
     "sphinxcontrib.bibtex",
     "sphinxext.opengraph",
 ]
@@ -106,7 +105,7 @@ nb_execution_raise_on_error = True
 class CDAStyle(UnsrtStyle):
     """Custom style for including PDF links."""
 
-    def format_url(self, _e: Entry) -> HRef:
+    def format_url(self, _e: Entry) -> HRef:  # ruff: ignore[no-self-use]
         """Format URL field as a link to the PDF.
 
         Returns:

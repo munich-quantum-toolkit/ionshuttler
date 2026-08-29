@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from math import isfinite
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from mqt.ionshuttler.linear.schedule import MachineState
 
 
-class CompilationStatus(str, Enum):
+class CompilationStatus(StrEnum):
     """Describe how compilation ended."""
 
     SUCCESS = "SUCCESS"

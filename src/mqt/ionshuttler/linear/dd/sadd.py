@@ -14,7 +14,7 @@ import operator
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
@@ -33,7 +33,7 @@ IonFloatMapping = Mapping[int, float]
 IonTimestepsMapping = Mapping[int, tuple[int, ...]]
 
 
-class SADDMethod(str, Enum):
+class SADDMethod(StrEnum):
     """Select a shuttling-aware dynamical decoupling (SADD) method."""
 
     PULSE_ONLY = "pulse_only_sadd"
