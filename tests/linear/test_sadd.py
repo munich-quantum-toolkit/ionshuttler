@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from math import pi
 
 import pytest
@@ -191,6 +192,7 @@ def test_participant_selection_reports_busy_ions_without_disqualifying_them() ->
     assert selection.selected_ions == (0,)
 
 
+@pytest.mark.skipif(importlib.util.find_spec("ortools") is None, reason="OR-Tools not installed")
 def test_sadd_optimizes_a_window_in_which_every_ion_is_partly_busy() -> None:
     """Keep SADD effective on schedules whose ions all carry gates or transport."""
     architecture = Architecture(
