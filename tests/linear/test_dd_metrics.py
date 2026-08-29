@@ -143,6 +143,7 @@ def test_gate_events_ignore_local_dd_and_preserve_order_and_duration() -> None:
         (0, 2, "Ry"),
         (2, 1, "Ry"),
     ]
+    assert [event.residual_phase_at_gate for event in events] == pytest.approx([0.0, -2.0])
 
 
 def test_window_and_prefix_metrics_distinguish_inherited_phase() -> None:

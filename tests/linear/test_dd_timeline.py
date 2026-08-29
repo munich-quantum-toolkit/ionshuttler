@@ -131,6 +131,27 @@ def test_timeline_distinguishes_virtual_and_physical_rz_resources() -> None:
     assert build_timeline(physical, architecture).pz_busy("pz", 0)
 
 
+def test_timeline_seeds_relative_occupancy_from_initial_availability() -> None:
+    """Carry unfinished entry-state resource reservations into replay time."""
+    architecture = Architecture(num_sites=2, processing_zones={"active": [0], "free": [1]})
+    initial_state = State(
+        positions=((0, 0), (1, 1)),
+        completed_gates=frozenset(),
+        in_progress_gates=(),
+        ions_busy_until=((0, 7), (1, 5)),
+        pzs_busy_until=(("active", 8), ("free", 5)),
+        time=5,
+    )
+    program = ActionSchedule.from_actions([AdvanceTime() for _ in range(4)], initial_state)
+
+    timeline = build_timeline(program, architecture)
+
+    assert {timestep for timestep in range(5) if timeline.ion_busy(0, timestep)} == {0, 1}
+    assert not any(timeline.ion_busy(1, timestep) for timestep in range(5))
+    assert {timestep for timestep in range(5) if timeline.pz_busy("active", timestep)} == {0, 1, 2}
+    assert not any(timeline.pz_busy("free", timestep) for timestep in range(5))
+
+
 @pytest.mark.parametrize(
     ("num_timesteps", "path", "message"),
     [

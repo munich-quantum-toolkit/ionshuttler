@@ -402,12 +402,13 @@ def _search_with_budget(
     )
 
     try:
-        return _run_search(progress, context, budget)
+        return _run_search(progress, context, budget, initial_state)
     except KeyboardInterrupt:
         return _partial_result(
             progress.best_solution,
             progress.best_path,
             progress.best_state,
+            initial_state,
             CompilationStatus.INTERRUPTED,
             context.architecture,
             progress.explored_nodes,
@@ -418,6 +419,7 @@ def _run_search(
     progress: _SearchProgress,
     context: _SearchContext,
     budget: _TimeBudget,
+    initial_state: State,
 ) -> CompilationResult:
     goal = frozenset(context.gate_order)
     while progress.current_node is not None or progress.frontier:
@@ -426,6 +428,7 @@ def _run_search(
                 progress.best_solution,
                 progress.best_path,
                 progress.best_state,
+                initial_state,
                 CompilationStatus.TIMEOUT,
                 context.architecture,
                 progress.explored_nodes,
@@ -450,6 +453,7 @@ def _run_search(
                 return _result(
                     solution.path,
                     CompilationStatus.SUCCESS,
+                    initial_state,
                     solution.final_state,
                     context.architecture,
                     progress.explored_nodes,
@@ -479,6 +483,7 @@ def _run_search(
         return _result(
             progress.best_solution.path,
             CompilationStatus.SUCCESS,
+            initial_state,
             progress.best_solution.final_state,
             context.architecture,
             progress.explored_nodes,
@@ -486,6 +491,7 @@ def _run_search(
     return _result(
         progress.best_path,
         CompilationStatus.FAILED,
+        initial_state,
         progress.best_state,
         context.architecture,
         progress.explored_nodes,
@@ -741,6 +747,7 @@ def _partial_result(
     solution: _FoundSolution | None,
     best_path: tuple[Action, ...],
     best_state: State,
+    initial_state: State,
     status: CompilationStatus,
     architecture: Architecture,
     explored_nodes: int,
@@ -749,16 +756,18 @@ def _partial_result(
         return _result(
             solution.path,
             status,
+            initial_state,
             solution.final_state,
             architecture,
             explored_nodes,
         )
-    return _result(best_path, status, best_state, architecture, explored_nodes)
+    return _result(best_path, status, initial_state, best_state, architecture, explored_nodes)
 
 
 def _result(
     path: Sequence[Action],
     status: CompilationStatus,
+    initial_state: State,
     final_state: State,
     architecture: Architecture,
     explored_nodes: int,
@@ -766,7 +775,7 @@ def _result(
     public_path = tuple(path)
     return CompilationResult(
         status=status,
-        schedule=ActionSchedule.from_actions(public_path, final_state),
+        schedule=ActionSchedule.from_actions(public_path, initial_state),
         architecture=architecture,
         score=cost(final_state),
         final_state=final_state,
@@ -801,7 +810,7 @@ def _rolling_result(
     explored_nodes: int,
     budget: _TimeBudget,
 ) -> CompilationResult:
-    result = _result(path, status, final_state, architecture, explored_nodes)
+    result = _result(path, status, initial_state, final_state, architecture, explored_nodes)
     return _with_public_metadata(
         result,
         budget=budget,

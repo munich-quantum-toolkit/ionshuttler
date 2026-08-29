@@ -21,7 +21,7 @@ from mqt.ionshuttler.linear.dd import schedule_transform as schedule_transform_m
 from mqt.ionshuttler.linear.dd.frame_replay import PauliFrame, build_frame_history
 from mqt.ionshuttler.linear.dd.result import DDPassResult
 from mqt.ionshuttler.linear.dd.schedule_transform import validate_rebuilt_schedule
-from mqt.ionshuttler.linear.dd.timeline import build_timeline
+from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
 from mqt.ionshuttler.linear.schedule import ActionSchedule
 from mqt.ionshuttler.linear.state import create_initial_state
 
@@ -33,7 +33,9 @@ def _schedule(architecture: Architecture, path: list[Action], positions: list[in
     )
 
 
-def _pulse_frame(output: DDPassResult[NearestHahnReport], architecture: Architecture, ion: int, timestep: int):
+def _pulse_frame(
+    output: DDPassResult[NearestHahnReport], architecture: Architecture, ion: int, timestep: int
+) -> PauliFrame:
     action_ids = frozenset(action_id for sequence in output.report.sequences for action_id in sequence.action_ids)
     history = build_frame_history(build_timeline(output.schedule, architecture), action_ids)
     return history.frame_for_ion(ion, timestep)
@@ -255,7 +257,7 @@ def test_nearest_hahn_reuses_one_timeline_and_validates_the_batch_once(
     timeline_builds = 0
     validations = 0
 
-    def counted_build_timeline(schedule: ActionSchedule, model: Architecture):
+    def counted_build_timeline(schedule: ActionSchedule, model: Architecture) -> CompiledTimeline:
         nonlocal timeline_builds
         timeline_builds += 1
         return real_build_timeline(schedule, model)

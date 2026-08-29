@@ -150,7 +150,7 @@ class SADDOpportunityRecord:
     runtime_s: float
     message: str | None = None
     eligible_ions: tuple[int, ...] = ()
-    rejected_busy_ions: tuple[int, ...] = ()
+    busy_ions: tuple[int, ...] = ()
     rejected_no_active_segment_ions: tuple[int, ...] = ()
     rejected_unreachable_ions: tuple[int, ...] = ()
     selection_scores: tuple[tuple[int, float, int], ...] = ()
@@ -177,7 +177,7 @@ class SADDOpportunityRecord:
         for name in (
             "participating_ions",
             "eligible_ions",
-            "rejected_busy_ions",
+            "busy_ions",
             "rejected_no_active_segment_ions",
             "rejected_unreachable_ions",
         ):
@@ -431,7 +431,7 @@ def run_sadd(
                 runtime_s=solution.runtime_s,
                 message=solution.validation_error,
                 eligible_ions=selection.eligible_ions,
-                rejected_busy_ions=selection.busy_ions,
+                busy_ions=selection.busy_ions,
                 rejected_no_active_segment_ions=selection.rejected_no_active_segment_ions,
                 rejected_unreachable_ions=selection.rejected_unreachable_ions,
                 selection_scores=selection.selection_scores,
@@ -650,7 +650,7 @@ def _opportunity_to_dict(opportunity: SADDOpportunityRecord) -> dict[str, object
         "runtime_s": opportunity.runtime_s,
         "message": opportunity.message,
         "eligible_ions": list(opportunity.eligible_ions),
-        "rejected_busy_ions": list(opportunity.rejected_busy_ions),
+        "busy_ions": list(opportunity.busy_ions),
         "rejected_no_active_segment_ions": list(opportunity.rejected_no_active_segment_ions),
         "rejected_unreachable_ions": list(opportunity.rejected_unreachable_ions),
         "selection_scores": [list(score) for score in opportunity.selection_scores],
@@ -685,7 +685,7 @@ def _opportunity_from_dict(data: object) -> SADDOpportunityRecord:
             runtime_s=_json_float(data, "runtime_s"),
             message=_json_optional_str(data, "message"),
             eligible_ions=tuple(_json_int_list(data, "eligible_ions")),
-            rejected_busy_ions=tuple(_json_int_list(data, "rejected_busy_ions")),
+            busy_ions=tuple(_json_int_list(data, "busy_ions")),
             rejected_no_active_segment_ions=tuple(_json_int_list(data, "rejected_no_active_segment_ions")),
             rejected_unreachable_ions=tuple(_json_int_list(data, "rejected_unreachable_ions")),
             selection_scores=tuple(_json_selection_scores(data, "selection_scores")),

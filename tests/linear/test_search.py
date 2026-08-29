@@ -122,6 +122,32 @@ def test_exhaustive_search_schedules_and_completes_a_gate() -> None:
     assert initial_state.completed_gates == frozenset()
 
 
+def test_exhaustive_search_serializes_actions_from_the_entry_time() -> None:
+    """Derive schedule timestamps from the search entry rather than its final state."""
+    architecture = Architecture(num_sites=1)
+    initial_state = State(
+        positions=((0, 0),),
+        completed_gates=frozenset(),
+        in_progress_gates=(),
+        ions_busy_until=((0, 5),),
+        pzs_busy_until=(("all_sites", 5),),
+        time=5,
+    )
+
+    result = search_module.exhaustive_search(
+        initial_state,
+        architecture,
+        [0],
+        {0: Rx(ion=0, theta=0.5)},
+        config=exhaustive_config(),
+    )
+
+    serialized_actions = result.schedule.to_dict()["actions"]
+    assert isinstance(serialized_actions, list)
+    assert isinstance(serialized_actions[0], dict)
+    assert serialized_actions[0]["start_time"] == 5
+
+
 def test_exhaustive_search_attaches_the_public_scheduled_program(monkeypatch: pytest.MonkeyPatch) -> None:
     """Attach initial hardware metadata at the public search boundary."""
     architecture = Architecture(num_sites=1)

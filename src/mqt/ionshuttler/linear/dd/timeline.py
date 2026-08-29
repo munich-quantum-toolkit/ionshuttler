@@ -179,10 +179,18 @@ def build_timeline(
     """
     initial_positions = to_dict(schedule.initial_state.to_replay_state())
     makespan = schedule.num_timesteps
+    initial_time = schedule.initial_state.time
     position_checkpoints: list[tuple[int, dict[int, int]]] = []
-    ion_busy_by_time: dict[int, set[int]] = {ion_id: set() for ion_id in initial_positions}
+    ion_busy_by_time: dict[int, set[int]] = {
+        ion_id: set(range(max(0, free_time - initial_time)))
+        for ion_id, free_time in schedule.initial_state.ions_busy_until
+    }
     ion_gate_busy_by_time: dict[int, set[int]] = {ion_id: set() for ion_id in initial_positions}
-    pz_busy_by_time: dict[str, set[int]] = {zone_name: set() for zone_name in (architecture.processing_zones or {})}
+    initial_pz_availability = dict(schedule.initial_state.pzs_busy_until)
+    pz_busy_by_time: dict[str, set[int]] = {
+        zone_name: set(range(max(0, initial_pz_availability.get(zone_name, initial_time) - initial_time)))
+        for zone_name in (architecture.processing_zones or {})
+    }
     actions_by_time: dict[int, list[Action]] = {}
     scheduled_actions_by_time: dict[int, list[ScheduledAction]] = {}
     current_positions = dict(initial_positions)

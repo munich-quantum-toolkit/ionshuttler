@@ -233,6 +233,7 @@ def gate_residual_events(
     """Return ordered residual-phase observations at algorithmic gates."""
     resolved_timeline = timeline or build_timeline(schedule, architecture)
     history = frame_history or build_frame_history(resolved_timeline, local_pulse_action_ids)
+    residual_phase_prefixes = _residual_phase_prefixes(schedule, architecture, resolved_timeline, history)
     events: list[GateResidualEvent] = []
     for timestep in range(resolved_timeline.makespan):
         for item in resolved_timeline.scheduled_action_at(timestep) or ():
@@ -242,13 +243,10 @@ def gate_residual_events(
             if isinstance(action, SingleQubitGate):
                 if item.action_id in local_pulse_action_ids:
                     continue
-                events.append(
-                    _gate_event(schedule, architecture, resolved_timeline, history, action.ion, timestep, action)
-                )
+                events.append(_gate_event(residual_phase_prefixes, action.ion, timestep, action))
             elif isinstance(action, TwoQubitGate):
                 events.extend(
-                    _gate_event(schedule, architecture, resolved_timeline, history, ion, timestep, action)
-                    for ion in (action.ion_a, action.ion_b)
+                    _gate_event(residual_phase_prefixes, ion, timestep, action) for ion in (action.ion_a, action.ion_b)
                 )
     return tuple(events)
 
@@ -405,10 +403,7 @@ def residual_phase_at_window_end_reduction(
 
 
 def _gate_event(
-    program: ActionSchedule,
-    architecture: Architecture,
-    timeline: CompiledTimeline,
-    frame_history: FrameHistory,
+    residual_phase_prefixes: Mapping[int, tuple[float, ...]],
     ion: int,
     timestep: int,
     action: SingleQubitGate | TwoQubitGate,
@@ -418,15 +413,29 @@ def _gate_event(
         timestep=timestep,
         duration=cast("_TimedGate", action).duration,
         gate_name=type(action).__name__,
-        residual_phase_at_gate=residual_phase_at_timestep(
-            program,
-            architecture,
-            ion,
-            timestep,
-            timeline,
-            frame_history,
-        ),
+        residual_phase_at_gate=residual_phase_prefixes[ion][timestep],
     )
+
+
+def _residual_phase_prefixes(
+    program: ActionSchedule,
+    architecture: Architecture,
+    timeline: CompiledTimeline,
+    frame_history: FrameHistory,
+) -> dict[int, tuple[float, ...]]:
+    field_profile = architecture.field_profile
+    prefixes: dict[int, tuple[float, ...]] = {}
+    for ion in _infer_ion_ids(program):
+        residual_phase = 0.0
+        values = [residual_phase]
+        for timestep in range(timeline.makespan):
+            if field_profile is not None:
+                residual_phase += frame_history.phase_sign_for_ion(ion, timestep, axis="Z") * field_profile.field_at(
+                    timeline.ion_position(ion, timestep)
+                )
+            values.append(residual_phase)
+        prefixes[ion] = tuple(values)
+    return prefixes
 
 
 def _sum_absolute_residual_phases_at_gates(

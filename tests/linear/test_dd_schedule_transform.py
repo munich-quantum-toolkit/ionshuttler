@@ -159,3 +159,17 @@ def test_transform_rejects_invalid_time_and_action() -> None:
         insert_action_at_time(base, architecture, 3, Rz(ion=0, theta=0.2))
     with pytest.raises(ValueError, match="not valid"):
         insert_action_at_time(base, architecture, 0, Rx(ion=0, theta=pi))
+
+
+def test_transform_rejects_an_action_that_conflicts_with_the_existing_layer() -> None:
+    """Validate interactions that an action-local precheck cannot detect."""
+    architecture = Architecture(num_sites=3, processing_zones={"pz": [0, 1, 2]})
+    with pytest.warns(UserWarning, match="zero duration"):
+        existing_gate = Rx(ion=0, theta=0.2, duration=0, virtual=False)
+    program = ActionSchedule.from_actions(
+        [existing_gate, AdvanceTime()],
+        create_initial_state(2, architecture, initial_positions=[0, 2]),
+    )
+
+    with pytest.raises(ValueError, match="conflicts with the rebuilt schedule"):
+        insert_action_at_time(program, architecture, 0, Shuttle(ion=0, src=0, dst=1))

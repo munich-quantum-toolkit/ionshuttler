@@ -57,6 +57,7 @@ def _opportunity(**overrides: object) -> SADDOpportunityRecord:
         "transport_delta": {},
         "runtime_s": 0.1,
         "eligible_ions": (0,),
+        "busy_ions": (0,),
         "selection_scores": ((0, 2.0, 0),),
         "phase_before_by_ion": {0: 2.0},
         "phase_after_by_ion": {0: 0.5},
@@ -242,6 +243,10 @@ def test_sadd_report_round_trips_through_dict_and_json() -> None:
 
     assert restored == report
     assert restored.opportunities[0].pulse_action_ids == {0: (7,)}
+    serialized_opportunities = report.to_dict()["opportunities"]
+    assert isinstance(serialized_opportunities, list)
+    assert isinstance(serialized_opportunities[0], dict)
+    assert serialized_opportunities[0]["busy_ions"] == [0]
 
     json_text = json.dumps(report.to_dict())
     restored_from_json = SADDReport.from_dict(json.loads(json_text))

@@ -213,7 +213,7 @@ def test_sadd_optimizes_a_window_in_which_every_ion_is_partly_busy() -> None:
 
     assert output.report.opportunities
     opportunity = output.report.opportunities[0]
-    assert 0 in opportunity.rejected_busy_ions
+    assert 0 in opportunity.busy_ions
     assert 0 in opportunity.participating_ions
     assert opportunity.accepted
     assert opportunity.pulse_timesteps is not None

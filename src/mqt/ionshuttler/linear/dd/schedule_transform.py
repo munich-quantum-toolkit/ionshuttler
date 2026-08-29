@@ -96,10 +96,14 @@ def insert_action_at_time(
         raise ValueError(msg)
     insert_index = _path_insert_index(schedule.scheduled_actions, timestep)
     inserted = ScheduledAction(schedule.next_action_id, action)
-    return rebuild_schedule(
+    rebuilt = rebuild_schedule(
         schedule,
         (*schedule.scheduled_actions[:insert_index], inserted, *schedule.scheduled_actions[insert_index:]),
     )
+    if not validate_rebuilt_schedule(rebuilt, architecture):
+        msg = "inserted action conflicts with the rebuilt schedule"
+        raise ValueError(msg)
+    return rebuilt
 
 
 def rebuild_schedule(

@@ -148,8 +148,8 @@ def compute_critical_segments(
     Raises:
         ValueError: If the analysis parameters or architecture metadata are invalid.
     """
-    if dt <= 0.0:
-        msg = "dt must be positive"
+    if isinstance(dt, bool) or not isinstance(dt, int | float) or not isfinite(dt) or dt <= 0.0:
+        msg = "dt must be a finite positive number"
         raise ValueError(msg)
     if segmentation not in {"critical", "whole_schedule"}:
         msg = "segmentation must be 'critical' or 'whole_schedule'"

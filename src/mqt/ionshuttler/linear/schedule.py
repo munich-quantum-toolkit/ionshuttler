@@ -369,6 +369,19 @@ def decode_action(
     action_types: Mapping[str, type[Action]],
     action_decoders: ActionDecoders | None,
 ) -> Action:
+    """Restore one action using built-in types or a downstream decoder.
+
+    Args:
+        data: Serialized action mapping.
+        action_types: Registered action classes keyed by serialized name.
+        action_decoders: Optional downstream decoders keyed by serialized name.
+
+    Returns:
+        The restored action.
+
+    Raises:
+        ValueError: If the action mapping or type is malformed or unknown.
+    """
     mapping = require_mapping(data, "action")
     action_type = mapping.get("type")
     if not isinstance(action_type, str):
