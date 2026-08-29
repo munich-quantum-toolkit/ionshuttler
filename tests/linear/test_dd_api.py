@@ -100,7 +100,6 @@ def test_dd_package_exports_only_the_supported_public_surface() -> None:
         "run_nearest_hahn",
         "run_sadd",
         "sum_absolute_residual_phase",
-        "sum_absolute_residual_phases_at_gates",
         "sum_squared_residual_phase",
     ]
 

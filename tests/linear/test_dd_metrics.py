@@ -14,11 +14,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from mqt.ionshuttler.linear.actions import Action, AdvanceTime, GateSpec, GlobalPulse, Rx, Ry, Rzz
+from mqt.ionshuttler.linear.actions import Action, AdvanceTime, GateSpec, GlobalPulse, Ry
 from mqt.ionshuttler.linear.architecture import Architecture
 from mqt.ionshuttler.linear.dd.metrics import (
     decoupling_ratio,
-    gate_residual_events_by_ion,
     phase_reduction_per_gate,
     rank_ions_by_residual_phase,
     relative_phase_reduction,
@@ -27,7 +26,6 @@ from mqt.ionshuttler.linear.dd.metrics import (
     residual_phase_at_window_end_reduction,
     residual_phase_by_ion,
     sum_absolute_residual_phase,
-    sum_absolute_residual_phases_at_gates,
     sum_squared_residual_phase,
     summarize_residual_phases,
     window_residual_phase,
@@ -120,32 +118,6 @@ def test_global_pulses_refocus_schedule_end_metrics() -> None:
     )
 
 
-def test_gate_events_ignore_local_dd_and_preserve_order_and_duration() -> None:
-    """Observe algorithmic gates without counting recorded DD pulses."""
-    result, architecture = _result(
-        [
-            Rx(ion=0, theta=pi),
-            Ry(ion=0, theta=0.25, duration=2),
-            AdvanceTime(),
-            AdvanceTime(),
-            Ry(ion=0, theta=0.5),
-            AdvanceTime(),
-        ],
-        3,
-    )
-    events = gate_residual_events_by_ion(
-        result,
-        architecture,
-        local_pulse_action_ids=frozenset({result.scheduled_actions[0].action_id}),
-    )[0]
-
-    assert [(event.timestep, event.duration, event.gate_name) for event in events] == [
-        (0, 2, "Ry"),
-        (2, 1, "Ry"),
-    ]
-    assert [event.residual_phase_at_gate for event in events] == pytest.approx([0.0, -2.0])
-
-
 def test_window_and_prefix_metrics_distinguish_inherited_phase() -> None:
     """Keep window-only exposure separate from its closing prefix value."""
     result, architecture = _result(
@@ -177,14 +149,3 @@ def test_window_end_reduction_and_ranking_are_deterministic() -> None:
     )
     assert residual_phase_at_window_end_reduction(before, after, architecture, 1, (0, 2)) == pytest.approx(4.0)
     assert rank_ions_by_residual_phase(before, architecture) == ((1, 4.0), (0, 2.0))
-
-
-def test_gate_summed_metric_counts_each_two_qubit_operand() -> None:
-    """Sum prefix phase separately for both participants of a two-ion gate."""
-    result, architecture = _result(
-        [AdvanceTime(), Ry(ion=0, theta=0.5), AdvanceTime(), Rzz(0, 1, 1.0), AdvanceTime()],
-        3,
-        num_ions=2,
-        fields=(1.0, 2.0),
-    )
-    assert sum_absolute_residual_phases_at_gates(result, architecture) == pytest.approx(7.0)

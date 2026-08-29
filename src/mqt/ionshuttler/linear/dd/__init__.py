@@ -29,7 +29,6 @@ from mqt.ionshuttler.linear.dd.metrics import (
     max_absolute_residual_phase,
     residual_phase_by_ion,
     sum_absolute_residual_phase,
-    sum_absolute_residual_phases_at_gates,
     sum_squared_residual_phase,
 )
 from mqt.ionshuttler.linear.dd.nearest_hahn import (
@@ -76,6 +75,5 @@ __all__ = [
     "run_nearest_hahn",
     "run_sadd",
     "sum_absolute_residual_phase",
-    "sum_absolute_residual_phases_at_gates",
     "sum_squared_residual_phase",
 ]
