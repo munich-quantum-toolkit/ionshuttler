@@ -15,8 +15,9 @@ import pytest
 
 from mqt.ionshuttler.linear.actions import Action, AdvanceTime, GateSpec, GlobalPulse, PhysicalSwap, Rz, Rzz, Shuttle
 from mqt.ionshuttler.linear.architecture import Architecture
+from mqt.ionshuttler.linear.dd.schedule_transform import insert_action_at_time
 from mqt.ionshuttler.linear.dd.timeline import build_timeline
-from mqt.ionshuttler.linear.schedule import ActionSchedule
+from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
 from mqt.ionshuttler.linear.state import State, create_initial_state
 
 
@@ -62,6 +63,54 @@ def test_timeline_preserves_same_boundary_and_terminal_action_order() -> None:
     assert timeline.action_at(1) == (terminal,)
     assert timeline.ion_position(0, 0) == 1
     assert timeline.ion_position(0, 1) == 1
+
+
+def test_timeline_materializes_the_last_position_checkpoint_at_each_boundary() -> None:
+    """Retain all simultaneous transport updates when materializing positions."""
+    architecture = Architecture(num_sites=4)
+    program = ActionSchedule.from_actions(
+        [
+            Shuttle(ion=0, src=0, dst=1),
+            Shuttle(ion=1, src=2, dst=3),
+            AdvanceTime(),
+            AdvanceTime(),
+        ],
+        create_initial_state(2, architecture, initial_positions=[0, 2]),
+    )
+
+    timeline = build_timeline(program, architecture)
+
+    assert [timeline.ion_position(0, timestep) for timestep in range(3)] == [1, 1, 1]
+    assert [timeline.ion_position(1, timestep) for timestep in range(3)] == [3, 3, 3]
+
+
+def test_incremental_gate_timeline_matches_a_full_rebuild() -> None:
+    """Keep resources, ordering, and stable identities coherent after a local patch."""
+    architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
+    program = ActionSchedule.from_actions(
+        [Rz(ion=0, theta=0.25), AdvanceTime(), AdvanceTime()],
+        create_initial_state(1, architecture),
+    )
+    original_timeline = build_timeline(program, architecture)
+    gate = Rz(ion=0, theta=pi, duration=1, virtual=False)
+    inserted = ScheduledAction(program.next_action_id, gate)
+
+    incremental = original_timeline.with_inserted_single_qubit_gate(
+        inserted,
+        "pz",
+        0,
+    )
+    rebuilt_schedule = insert_action_at_time(program, architecture, 0, gate)
+    rebuilt = build_timeline(rebuilt_schedule, architecture)
+
+    for timestep in range(program.num_timesteps + 1):
+        assert incremental.action_at(timestep) == rebuilt.action_at(timestep)
+        assert incremental.scheduled_action_at(timestep) == rebuilt.scheduled_action_at(timestep)
+        assert incremental.ion_position(0, timestep) == rebuilt.ion_position(0, timestep)
+        assert incremental.ion_busy(0, timestep) == rebuilt.ion_busy(0, timestep)
+        assert incremental.ion_gate_busy(0, timestep) == rebuilt.ion_gate_busy(0, timestep)
+        assert incremental.pz_busy("pz", timestep) == rebuilt.pz_busy("pz", timestep)
+    assert not original_timeline.ion_busy(0, 0)
 
 
 def test_timeline_distinguishes_virtual_and_physical_rz_resources() -> None:

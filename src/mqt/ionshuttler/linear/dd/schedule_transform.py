@@ -14,11 +14,15 @@ from typing import TYPE_CHECKING, Protocol, cast
 from mqt.ionshuttler.linear.actions import (
     Action,
     AdvanceTime,
+    GateSpec,
     GlobalPulse,
+    Rx,
+    Ry,
+    Rz,
     SingleQubitGate,
     TransportAction,
 )
-from mqt.ionshuttler.linear.dd.timeline import build_timeline
+from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
 from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
 from mqt.ionshuttler.linear.validation import is_action_valid, is_transport_layer_valid
 
@@ -35,11 +39,38 @@ class _TimedGate(Protocol):
     duration: int
 
 
+def local_gate_for_spec(spec: GateSpec, ion: int) -> Action:
+    """Build the ion-local rotation described by a pulse specification.
+
+    Args:
+        spec: Gate name and rotation angle to realize.
+        ion: Ion the rotation acts on.
+
+    Returns:
+        The concrete single-qubit gate action.
+
+    Raises:
+        ValueError: If the specification lacks an angle or names an unsupported gate.
+    """
+    if spec.theta is None:
+        msg = f"gate specification for {spec.gate_name} requires theta"
+        raise ValueError(msg)
+    gate_types: dict[str, type[Rx | Ry | Rz]] = {"Rx": Rx, "Ry": Ry, "Rz": Rz}
+    try:
+        gate_type = gate_types[spec.gate_name]
+    except KeyError as error:
+        msg = f"unsupported local DD gate: {spec.gate_name!r}"
+        raise ValueError(msg) from error
+    return gate_type(ion=ion, theta=spec.theta)
+
+
 def insert_action_at_time(
     schedule: ActionSchedule,
     architecture: Architecture,
     timestep: int,
     action: Action,
+    *,
+    timeline: CompiledTimeline | None = None,
 ) -> ActionSchedule:
     """Insert an action immediately before a boundary's time advance.
 
@@ -48,6 +79,7 @@ def insert_action_at_time(
         architecture: Hardware model used to validate the insertion.
         timestep: Boundary at which the action starts.
         action: Action to insert.
+        timeline: Existing timeline of ``schedule``, if already available.
 
     Returns:
         A rebuilt schedule containing the inserted action.
@@ -58,8 +90,8 @@ def insert_action_at_time(
     if not 0 <= timestep <= schedule.num_timesteps:
         msg = f"timestep must be within [0, {schedule.num_timesteps}]"
         raise ValueError(msg)
-    timeline = build_timeline(schedule, architecture)
-    if not is_action_valid(timeline.state_at(timestep), action, architecture):
+    resolved_timeline = build_timeline(schedule, architecture) if timeline is None else timeline
+    if not is_action_valid(resolved_timeline.state_at(timestep), action, architecture):
         msg = "action is not valid at the requested timestep"
         raise ValueError(msg)
     insert_index = _path_insert_index(schedule.scheduled_actions, timestep)
@@ -187,6 +219,7 @@ def _path_insert_index(path: Sequence[ScheduledAction], target_time: int) -> int
 
 __all__ = [
     "insert_action_at_time",
+    "local_gate_for_spec",
     "rebuild_schedule",
     "validate_rebuilt_schedule",
     "validate_schedule_compatibility",

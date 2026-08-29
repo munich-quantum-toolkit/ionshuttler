@@ -9,13 +9,14 @@ mystnb:
 # Dynamical decoupling for Linear schedules
 
 Dynamical decoupling (DD) adds control pulses to a compiled schedule to reduce
-the phase accumulated by idle ions. The Linear backend provides three methods:
+the phase accumulated by idle ions. The Linear backend provides four methods:
 
-| Method                    | Intended use                                      | Hardware constraints                                   |
-| ------------------------- | ------------------------------------------------- | ------------------------------------------------------ |
-| Shuttling-aware DD (SADD) | Producing a schedule intended for execution       | Respects control locations and existing operations     |
-| Idealized Hahn reference  | Estimating the benefit of unrestricted control    | Deliberately ignores where local pulses can be applied |
-| Periodic global DD        | Applying one pulse to all ions at regular spacing | Uses schedule-wide global pulses                       |
+| Method                    | Intended use                                       | Hardware constraints                                   |
+| ------------------------- | -------------------------------------------------- | ------------------------------------------------------ |
+| Shuttling-aware DD (SADD) | Producing a schedule intended for execution        | Respects control locations and may add transport       |
+| Nearest Hahn reference    | Measuring what unmodified transport already allows | Respects control locations and adds no transport       |
+| Idealized Hahn reference  | Estimating the benefit of unrestricted control     | Deliberately ignores where local pulses can be applied |
+| Periodic global DD        | Applying one pulse to all ions at regular spacing  | Uses schedule-wide global pulses                       |
 
 Each method leaves the input {py:class}`~mqt.ionshuttler.linear.ActionSchedule`
 unchanged and returns a {py:class}`~mqt.ionshuttler.linear.dd.DDPassResult`. The
@@ -23,8 +24,8 @@ result contains the transformed `schedule` and a method-specific `report`.
 
 ## Installation
 
-The idealized Hahn and global methods use the standard installation. SADD also
-requires OR-Tools:
+The Hahn references and the global method use the standard installation. SADD
+also requires OR-Tools:
 
 ```console
 pip install "mqt.ionshuttler[dd]"
@@ -152,6 +153,12 @@ The idealized Hahn pass inserts local refocusing sequences without enforcing
 where or alongside which operations the pulses can be applied. It provides a
 comparison point rather than an executable hardware schedule.
 
+By default it places a single pulse at each idle window's midpoint. The Pauli
+frame that pulse introduces is not undone by a second physical pulse; it
+persists and is discharged virtually by a consumer that corrects the terminal
+frame. Set `include_terminating_pulse=True` for the closing-pulse variant, which
+returns the frame to the identity at the cost of a second pulse per window.
+
 ```{code-cell} ipython3
 from mqt.ionshuttler.linear.dd import IdealizedHahnConfig, apply_idealized_hahn
 
@@ -174,6 +181,50 @@ hahn_pulse_ids = frozenset(
 The minimum idle-window length restricts this short example to its two longest
 idle intervals. The default processes every idle interval long enough to hold
 the selected pulse sequence.
+
+## Nearest Hahn reference
+
+Nearest Hahn places one X pulse as close to each idle window's midpoint as the
+compiled trajectory already permits. It uses only processing-zone access the ion
+already has, inserts no transport, and never extends the makespan, so unlike the
+idealized reference every schedule it returns is executable on the given
+architecture. Its frame also persists and is corrected virtually.
+
+```{code-cell} ipython3
+from mqt.ionshuttler.linear.dd import NearestHahnConfig, run_nearest_hahn
+
+nearest = run_nearest_hahn(schedule, dd_architecture, NearestHahnConfig())
+nearest_pulse_ids = frozenset(
+    action_id
+    for sequence in nearest.report.sequences
+    for action_id in sequence.action_ids
+)
+{
+    "placed": nearest.report.placed,
+    "eligible_windows": len(nearest.report.opportunities),
+    "statuses": sorted({record.status for record in nearest.report.opportunities}),
+}
+```
+
+Every eligible window appears in `opportunities`, including the ones that
+received no pulse. A skipped window records why: the ion never reached a
+processing zone, the ion was busy, or the zone was occupied. A placed pulse
+records its displacement from the ideal midpoint, so a comparison can separate
+windows the hardware served exactly from windows it served only approximately.
+
+```{code-cell} ipython3
+[
+    {
+        "ion": record.ion,
+        "window": record.window,
+        "status": record.status,
+        "selected_timestep": record.selected_timestep,
+        "signed_displacement": record.signed_displacement,
+        "skip_reason": record.skip_reason,
+    }
+    for record in nearest.report.opportunities
+]
+```
 
 ## Periodic global DD
 
@@ -221,6 +272,14 @@ sadd_pulse_ids = frozenset(
         ).phase_cost,
         3,
     ),
+    "nearest_hahn": round(
+        compute_critical_segments(
+            nearest.schedule,
+            dd_architecture,
+            local_pulse_action_ids=nearest_pulse_ids,
+        ).phase_cost,
+        3,
+    ),
     "idealized_hahn": round(
         compute_critical_segments(
             hahn.schedule,
@@ -234,15 +293,19 @@ sadd_pulse_ids = frozenset(
 ```
 
 Use the same field profile and metric settings for all schedules in a
-comparison. These values do not compare methods under equal control constraints:
-idealized Hahn assumes unconstrained local pulses, while global DD assumes
-schedule-wide pulses, which reflects substantially relaxed control constraints.
+comparison. These values do not compare methods under equal control constraints.
+SADD and Nearest Hahn respect the hardware's control access, so their numbers
+are achievable. Idealized Hahn assumes unconstrained local pulses and global DD
+assumes schedule-wide pulses; both reflect substantially relaxed control
+assumptions and are reference points, not competing implementations.
 
 ## Limitations
 
 - Equal-quality SADD solutions may place pulses differently; compare their
   validity and objective values rather than one exact placement.
 - The idealized Hahn result is intentionally not hardware constrained.
+- Both Hahn references leave a persistent Pauli frame by default. A consumer
+  that does not correct the terminal frame will misread their results.
 - These phase metrics are comparison proxies. Full noisy-circuit simulation is
   provided by a separate simulation layer.
 

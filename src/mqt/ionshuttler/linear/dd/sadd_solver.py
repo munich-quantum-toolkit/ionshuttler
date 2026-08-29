@@ -76,6 +76,7 @@ class SADDProblem:
     start_positions: dict[int, int]
     fixed_positions: dict[tuple[int, int], int]
     fixed_transport_timesteps: frozenset[tuple[int, int]]
+    fixed_transport_starts: frozenset[tuple[int, int]]
     phase_segments: tuple[CriticalSegment, ...]
     sensitivity_profile: tuple[float, ...]
     objective_before: float
@@ -157,7 +158,7 @@ def build_sadd_problem(
     durations = operation_durations or _infer_operation_durations(schedule)
     timeline = build_timeline(schedule, architecture)
     positions_before = _positions_before_timesteps(schedule)
-    fixed_positions, fixed_transport_timesteps = _fixed_positions_for_interval(
+    fixed_positions, fixed_transport_timesteps, fixed_transport_starts = _fixed_positions_for_interval(
         timeline,
         positions_before,
         participating_ions,
@@ -184,6 +185,7 @@ def build_sadd_problem(
         start_positions={ion: positions_before[t_start][ion] for ion in participating_ions},
         fixed_positions=fixed_positions,
         fixed_transport_timesteps=fixed_transport_timesteps,
+        fixed_transport_starts=fixed_transport_starts,
         phase_segments=phase_segments,
         sensitivity_profile=trace.sensitivity_profile,
         objective_before=sum(segment.squared_phase for segment in phase_segments),
@@ -239,6 +241,7 @@ def solve_sadd_problem(
     )
     objective = sum(square_terms) * _PHASE_OBJECTIVE_WEIGHT + sum(control.values()) * 1_000 + sum(move.values())
     model.Minimize(objective)
+    _add_unchanged_schedule_hint(model, problem, timeline, x, move, shuttle, swap, control, parity)
     model_proto = model.Proto()
     model_num_variables = len(model_proto.variables)
     model_num_constraints = len(model_proto.constraints)
@@ -285,7 +288,9 @@ def solve_sadd_problem(
     return SADDSolution(
         status=status,
         objective_before=problem.objective_before,
-        objective_after=_objective_for_result(materialized, problem) if materialized is not None else None,
+        objective_after=(
+            _objective_for_result(materialized, problem, pulse_action_ids) if materialized is not None else None
+        ),
         trajectories=trajectories,
         pulse_timesteps=pulse_timesteps,
         pulse_action_ids=pulse_action_ids,
@@ -331,15 +336,64 @@ def _single_duration_or_default(durations: set[int]) -> int:
     return next(iter(durations)) if len(durations) == 1 else 1
 
 
+def _add_unchanged_schedule_hint(
+    model: SolverObject,
+    problem: SADDProblem,
+    timeline: CompiledTimeline,
+    x: dict[tuple[int, int, int], SolverObject],
+    move: dict[tuple[int, int], SolverObject],
+    shuttle: dict[tuple[int, int], SolverObject],
+    swap: dict[tuple[int, int, int], SolverObject],
+    control: dict[tuple[int, int], SolverObject],
+    parity: dict[tuple[int, int], SolverObject],
+) -> None:
+    """Seed the search with the unchanged input schedule.
+
+    The hint describes a solution the model already admits, so it changes search
+    order and incumbent quality without altering the feasible set or objective.
+    """
+    previous = dict(problem.start_positions)
+    for rel_t in range(problem.duration):
+        t_abs = problem.t_start + rel_t
+        target = {ion: timeline.ion_position(ion, t_abs) for ion in problem.participating_ions}
+        for ion, site in target.items():
+            for candidate_site in range(problem.architecture.num_sites):
+                model.AddHint(x[ion, rel_t, candidate_site], int(candidate_site == site))
+            model.AddHint(move[ion, rel_t], int(previous[ion] != site))
+            model.AddHint(control[ion, rel_t], 0)
+            model.AddHint(parity[ion, rel_t], 0)
+
+        hinted_swap_ions: set[int] = set()
+        for (ion_a, ion_b, start), variable in swap.items():
+            if start != rel_t:
+                continue
+            retained = all((ion, t_abs) in problem.fixed_transport_starts for ion in (ion_a, ion_b))
+            is_swap = not retained and previous[ion_a] == target[ion_b] and previous[ion_b] == target[ion_a]
+            model.AddHint(variable, int(is_swap))
+            if is_swap:
+                hinted_swap_ions.update((ion_a, ion_b))
+        for (ion, start), variable in shuttle.items():
+            if start != rel_t:
+                continue
+            is_shuttle = (
+                previous[ion] != target[ion]
+                and ion not in hinted_swap_ions
+                and (ion, t_abs) not in problem.fixed_transport_starts
+            )
+            model.AddHint(variable, int(is_shuttle))
+        previous = target
+
+
 def _fixed_positions_for_interval(
     timeline: CompiledTimeline,
     positions_before: dict[int, dict[int, int]],
     participating_ions: tuple[int, ...],
     t_start: int,
     t_end: int,
-) -> tuple[dict[tuple[int, int], int], frozenset[tuple[int, int]]]:
+) -> tuple[dict[tuple[int, int], int], frozenset[tuple[int, int]], frozenset[tuple[int, int]]]:
     fixed: dict[tuple[int, int], int] = {}
     fixed_transport: set[tuple[int, int]] = set()
+    fixed_transport_starts: set[tuple[int, int]] = set()
     participant_set = set(participating_ions)
     for ion in participating_ions:
         fixed[ion, t_end - 1] = positions_before[t_end][ion]
@@ -360,10 +414,11 @@ def _fixed_positions_for_interval(
                     fixed[ion, timestep - 1] = positions_before[timestep][ion]
                 if t_start <= timestep < t_end:
                     fixed[ion, timestep] = timeline.ion_position(ion, timestep)
+                    fixed_transport_starts.add((ion, timestep))
                 fixed_transport.update(
                     (ion, busy_t) for busy_t in range(max(timestep, t_start), min(timestep + duration, t_end))
                 )
-    return fixed, frozenset(fixed_transport)
+    return fixed, frozenset(fixed_transport), frozenset(fixed_transport_starts)
 
 
 def _positions_before_timesteps(program: ActionSchedule) -> dict[int, dict[int, int]]:
@@ -413,6 +468,11 @@ def _add_position_and_movement_constraints(
     for rel_t in range(problem.duration):
         t_abs = problem.t_start + rel_t
         fixed_obstacles = {site for ion, site in timeline.state_at(t_abs).positions if ion not in participant_set}
+        retained_shuttle_edges = tuple(
+            (action.src, action.dst)
+            for action in timeline.action_at(t_abs) or ()
+            if isinstance(action, Shuttle) and action.ion not in participant_set
+        )
         for site in range(problem.architecture.num_sites):
             capacity = 0 if site in fixed_obstacles else 1
             model.Add(sum(x[ion, rel_t, site] for ion in problem.participating_ions) <= capacity)
@@ -420,6 +480,14 @@ def _add_position_and_movement_constraints(
             fixed = problem.fixed_positions.get((ion, t_abs))
             if fixed is not None:
                 model.Add(x[ion, rel_t, fixed] == 1)
+            # A participating ion may not traverse a retained shuttle's edge in reverse: that
+            # exchanges two ions without a physical swap, which transport-layer replay rejects.
+            for retained_src, retained_dst in retained_shuttle_edges:
+                if rel_t == 0:
+                    if problem.start_positions[ion] == retained_dst:
+                        model.Add(x[ion, rel_t, retained_src] == 0)
+                else:
+                    model.Add(x[ion, rel_t - 1, retained_dst] + x[ion, rel_t, retained_src] <= 1)
             if not allow_transport:
                 model.Add(x[ion, rel_t, timeline.ion_position(ion, t_abs)] == 1)
 
@@ -498,10 +566,16 @@ def _add_transport_kind_constraints(
     shuttle = {}
     swap = {}
     for rel_t in range(problem.duration):
+        t_abs = problem.t_start + rel_t
         for index, ion_a in enumerate(ions):
             for ion_b in ions[index + 1 :]:
                 variable = model.NewBoolVar(f"swap_i{ion_a}_i{ion_b}_t{rel_t}")
                 swap[ion_a, ion_b, rel_t] = variable
+                if all((ion, t_abs) in problem.fixed_transport_starts for ion in (ion_a, ion_b)):
+                    # Both ions are already carried by a retained transport action here, so this
+                    # displacement must not be attributed to a newly synthesized swap.
+                    model.Add(variable == 0)
+                    continue
                 patterns = []
                 if rel_t == 0:
                     src_a = problem.start_positions[ion_a]
@@ -540,7 +614,10 @@ def _add_transport_kind_constraints(
             ]
             variable = model.NewBoolVar(f"shuttle_i{ion}_t{rel_t}")
             shuttle[ion, rel_t] = variable
-            model.Add(variable + sum(ion_swaps) == move[ion, rel_t])
+            # A retained transport action already accounts for its own displacement, so the
+            # unchanged schedule stays representable without synthesizing a second one.
+            retained_move = int((ion, t_abs) in problem.fixed_transport_starts)
+            model.Add(variable + sum(ion_swaps) + retained_move == move[ion, rel_t])
     return shuttle, swap
 
 
@@ -937,14 +1014,18 @@ def _rewrite_control_window(
     }
 
 
-def _objective_for_result(program: ActionSchedule, problem: SADDProblem) -> float:
-    inserted_action_ids = frozenset(item.action_id for item in program.scheduled_actions).difference(
-        item.action_id for item in problem.schedule.scheduled_actions
-    )
+def _objective_for_result(
+    program: ActionSchedule,
+    problem: SADDProblem,
+    pulse_action_ids: dict[int, tuple[int, ...]],
+) -> float:
+    # Only inserted pulses carry a Pauli frame. Synthesized transport is also new,
+    # so the set of new action identifiers is not a usable pulse identity.
+    inserted_pulse_ids = frozenset(action_id for action_ids in pulse_action_ids.values() for action_id in action_ids)
     trace = compute_critical_segments(
         program,
         problem.architecture,
-        local_pulse_action_ids=problem.local_pulse_action_ids.union(inserted_action_ids),
+        local_pulse_action_ids=problem.local_pulse_action_ids.union(inserted_pulse_ids),
     )
     segment_keys = {(segment.ion, segment.index, segment.start, segment.end) for segment in problem.phase_segments}
     return sum(

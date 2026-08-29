@@ -75,12 +75,18 @@ class SADDConfig:
     """Configure the shared pulse-only and transport-enabled SADD backend.
 
     SADD denotes shuttling-aware dynamical decoupling.
+
+    ``timeout_s`` bounds each control window's solve. The unchanged schedule is
+    always an admissible solution and is supplied to the solver as a hint, so a
+    window that runs out of time yields a weaker improvement or none at all
+    rather than an invalid or missing result. Raise it for long windows or many
+    participating ions, where proving optimality takes longer.
     """
 
     min_window_length: int = 2
     max_window_length: int = 16
     max_participating_ions: int = 5
-    timeout_s: float = 10.0
+    timeout_s: float = 1.0
     ion_preselection: Literal["phase", "distance"] = "phase"
     opportunity_order: Literal["chronological", "reverse_chronological"] = "chronological"
     max_accepted_windows: int | None = None
@@ -514,8 +520,10 @@ def _select_participating_ions(
     rejected_unreachable: list[int] = []
     for ion, _site in timeline.state_at(0).positions:
         if any(timeline.ion_busy(ion, timestep) for timestep in range(window[0], window[1])):
+            # Being busy for part of the window is recorded but does not disqualify the ion:
+            # the solver's control and operation-duration constraints already forbid a pulse
+            # at each busy timestep, leaving the window's remaining boundaries usable.
             busy_ions.append(ion)
-            continue
         active_segments = [
             segment
             for segment in trace.segments

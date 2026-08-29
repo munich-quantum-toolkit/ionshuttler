@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -115,6 +115,54 @@ class CompiledTimeline:
             time=current_time,
         )
 
+    def with_inserted_single_qubit_gate(
+        self,
+        scheduled_action: ScheduledAction,
+        zone: str,
+        timestep: int,
+    ) -> CompiledTimeline:
+        """Return a coherent timeline containing one additional physical gate.
+
+        Returns:
+            A timeline with updated resource and ordered-action indices.
+
+        Raises:
+            ValueError: If the action is not a physical single-qubit gate or
+                would finish beyond the timeline.
+        """
+        action = scheduled_action.action
+        if not isinstance(action, SingleQubitGate) or action.virtual:
+            msg = "incremental timeline insertion requires a physical single-qubit gate"
+            raise ValueError(msg)
+        start = _validate_time(timestep, self.makespan)
+        duration = _action_duration(action)
+        if start + duration > self.makespan:
+            msg = "inserted gate must finish within the timeline"
+            raise ValueError(msg)
+
+        occupied = frozenset(range(start, start + duration))
+        ion_busy = dict(self._ion_busy_by_time)
+        ion_busy[action.ion] = ion_busy.get(action.ion, frozenset()) | occupied
+        ion_gate_busy = dict(self._ion_gate_busy_by_time)
+        ion_gate_busy[action.ion] = ion_gate_busy.get(action.ion, frozenset()) | occupied
+        pz_busy = dict(self._pz_busy_by_time)
+        pz_busy[zone] = pz_busy.get(zone, frozenset()) | occupied
+
+        actions = dict(self._actions_by_time)
+        actions[start] = _insert_action_before_time_advance(actions.get(start, ()), action)
+        scheduled_actions = dict(self._scheduled_actions_by_time)
+        scheduled_actions[start] = _insert_scheduled_action_before_time_advance(
+            scheduled_actions.get(start, ()), scheduled_action
+        )
+        return replace(
+            self,
+            _ion_busy_by_time=MappingProxyType(ion_busy),
+            _ion_gate_busy_by_time=MappingProxyType(ion_gate_busy),
+            _pz_busy_by_time=MappingProxyType(pz_busy),
+            _actions_by_time=MappingProxyType(actions),
+            _scheduled_actions_by_time=MappingProxyType(scheduled_actions),
+        )
+
 
 def build_timeline(
     schedule: ActionSchedule,
@@ -131,7 +179,7 @@ def build_timeline(
     """
     initial_positions = to_dict(schedule.initial_state.to_replay_state())
     makespan = schedule.num_timesteps
-    positions_by_time: list[dict[int, int]] = [dict(initial_positions) for _ in range(makespan + 1)]
+    position_checkpoints: list[tuple[int, dict[int, int]]] = []
     ion_busy_by_time: dict[int, set[int]] = {ion_id: set() for ion_id in initial_positions}
     ion_gate_busy_by_time: dict[int, set[int]] = {ion_id: set() for ion_id in initial_positions}
     pz_busy_by_time: dict[str, set[int]] = {zone_name: set() for zone_name in (architecture.processing_zones or {})}
@@ -148,7 +196,7 @@ def build_timeline(
         if isinstance(action, Shuttle):
             current_positions[action.ion] = action.dst
             _mark_busy_range(ion_busy_by_time.setdefault(action.ion, set()), current_time, action.duration)
-            _write_positions_from_time(positions_by_time, current_positions, current_time)
+            _record_positions(position_checkpoints, current_positions, current_time)
         elif isinstance(action, PhysicalSwap):
             current_positions[action.ion_a], current_positions[action.ion_b] = (
                 current_positions[action.ion_b],
@@ -156,7 +204,7 @@ def build_timeline(
             )
             _mark_busy_range(ion_busy_by_time.setdefault(action.ion_a, set()), current_time, action.duration)
             _mark_busy_range(ion_busy_by_time.setdefault(action.ion_b, set()), current_time, action.duration)
-            _write_positions_from_time(positions_by_time, current_positions, current_time)
+            _record_positions(position_checkpoints, current_positions, current_time)
         elif isinstance(action, SingleQubitGate):
             if not action.virtual:
                 _mark_gate_resources(
@@ -182,7 +230,7 @@ def build_timeline(
 
     return CompiledTimeline(
         makespan=makespan,
-        _positions_by_time=tuple(MappingProxyType(positions) for positions in positions_by_time),
+        _positions_by_time=_materialize_positions(position_checkpoints, initial_positions, makespan),
         _ion_busy_by_time=MappingProxyType({ion_id: frozenset(times) for ion_id, times in ion_busy_by_time.items()}),
         _ion_gate_busy_by_time=MappingProxyType({
             ion_id: frozenset(times) for ion_id, times in ion_gate_busy_by_time.items()
@@ -230,13 +278,51 @@ def _mark_busy_range(target: set[int], start: int, duration: int) -> None:
     target.update(range(start, start + duration))
 
 
-def _write_positions_from_time(
-    positions_by_time: list[dict[int, int]],
+def _record_positions(
+    checkpoints: list[tuple[int, dict[int, int]]],
     current_positions: dict[int, int],
     current_time: int,
 ) -> None:
-    for timestep in range(current_time, len(positions_by_time)):
-        positions_by_time[timestep] = dict(current_positions)
+    snapshot = dict(current_positions)
+    if checkpoints and checkpoints[-1][0] == current_time:
+        checkpoints[-1] = (current_time, snapshot)
+    else:
+        checkpoints.append((current_time, snapshot))
+
+
+def _materialize_positions(
+    checkpoints: list[tuple[int, dict[int, int]]],
+    initial_positions: dict[int, int],
+    makespan: int,
+) -> tuple[Mapping[int, int], ...]:
+    positions_by_time: list[Mapping[int, int]] = []
+    current_positions: Mapping[int, int] = MappingProxyType(dict(initial_positions))
+    checkpoint_index = 0
+    for timestep in range(makespan + 1):
+        while checkpoint_index < len(checkpoints) and checkpoints[checkpoint_index][0] <= timestep:
+            current_positions = MappingProxyType(checkpoints[checkpoint_index][1])
+            checkpoint_index += 1
+        positions_by_time.append(current_positions)
+    return tuple(positions_by_time)
+
+
+def _insert_action_before_time_advance(items: tuple[Action, ...], action: Action) -> tuple[Action, ...]:
+    insert_index = next(
+        (index for index, existing in enumerate(items) if isinstance(existing, AdvanceTime)),
+        len(items),
+    )
+    return (*items[:insert_index], action, *items[insert_index:])
+
+
+def _insert_scheduled_action_before_time_advance(
+    items: tuple[ScheduledAction, ...],
+    scheduled_action: ScheduledAction,
+) -> tuple[ScheduledAction, ...]:
+    insert_index = next(
+        (index for index, existing in enumerate(items) if isinstance(existing.action, AdvanceTime)),
+        len(items),
+    )
+    return (*items[:insert_index], scheduled_action, *items[insert_index:])
 
 
 __all__ = ["CompiledTimeline", "build_timeline"]

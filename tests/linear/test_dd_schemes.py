@@ -113,3 +113,31 @@ def test_scheme_validation_and_registry_copy() -> None:
     assert get_dd_scheme("hahn") is HAHN_ECHO
     with pytest.raises(ValueError, match="unknown DD scheme"):
         get_dd_scheme("missing")
+
+
+def _toggling_frame_residual(scheme: DDScheme, length: int) -> int:
+    """Return the residual toggling-frame phase of a scheme over a uniform idle window.
+
+    Returns:
+        The absolute sum of per-timestep signs over ``[0, length)``.
+    """
+    boundaries = [timestep for timestep, _spec in scheme.clamped_pulses((0, length))]
+    sign, total = 1, 0
+    for timestep in range(length):
+        sign *= (-1) ** boundaries.count(timestep)
+        total += sign
+    return abs(total)
+
+
+@pytest.mark.parametrize("scheme", available_dd_schemes().values(), ids=lambda scheme: scheme.name)
+def test_boundary_quantization_attains_the_residual_parity_bound(scheme: DDScheme) -> None:
+    """Keep evenly spaced sequences symmetric about the window centre.
+
+    A residual over ``L`` timesteps sums ``L`` terms of ``+-1``, so its parity is
+    fixed by ``L``: even windows can cancel exactly and odd windows cannot do
+    better than one. Ties-to-even rounding preserves
+    ``offset(i) + offset(n - i) == L``, which attains that bound; rounding every
+    tie in one direction breaks the symmetry and does not.
+    """
+    for length in range(2, 41):
+        assert _toggling_frame_residual(scheme, length) == length % 2

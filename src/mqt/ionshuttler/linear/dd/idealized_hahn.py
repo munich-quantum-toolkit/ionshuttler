@@ -13,10 +13,10 @@ from dataclasses import dataclass
 from itertools import count
 from typing import TYPE_CHECKING, ClassVar
 
-from mqt.ionshuttler.linear.actions import Action, AdvanceTime, GateSpec, Rx, Ry, Rz
+from mqt.ionshuttler.linear.actions import Action, AdvanceTime
 from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
-from mqt.ionshuttler.linear.dd.schedule_transform import rebuild_schedule
-from mqt.ionshuttler.linear.dd.schemes import DDScheme, get_dd_scheme
+from mqt.ionshuttler.linear.dd.schedule_transform import local_gate_for_spec, rebuild_schedule
+from mqt.ionshuttler.linear.dd.schemes import HAHN_ECHO, MIDPOINT_ONLY_HAHN, DDScheme, get_dd_scheme
 from mqt.ionshuttler.linear.dd.timeline import build_timeline
 from mqt.ionshuttler.linear.dd.windows import find_idle_windows
 from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
@@ -32,11 +32,17 @@ class IdealizedHahnConfig:
     The comparator permits local pulses at every ion position and concurrently
     with transport or other operations. Its output is therefore a reference
     schedule, not necessarily an executable schedule for the given hardware.
+
+    By default the sequence is a single midpoint pulse and the resulting Pauli
+    frame persists past its window, to be discharged virtually by a consumer that
+    corrects the terminal frame. Set ``include_terminating_pulse`` to insert the
+    physical closing pulse that returns the frame to the identity instead.
     """
 
     scheme: str | DDScheme = "hahn"
     min_idle_timesteps: int | None = None
     label: str = "IdealizedHahn"
+    include_terminating_pulse: bool = False
 
     def __post_init__(self) -> None:
         """Validate the reference sequence configuration.
@@ -61,6 +67,9 @@ class IdealizedHahnConfig:
         if not self.label:
             msg = "label must be non-empty"
             raise ValueError(msg)
+        if not isinstance(self.include_terminating_pulse, bool):
+            msg = "include_terminating_pulse must be a boolean"
+            raise TypeError(msg)
 
 
 @dataclass(frozen=True)
@@ -111,15 +120,17 @@ def apply_idealized_hahn(
     """Insert constraint-relaxed Hahn pulses into every eligible idle window.
 
     Pulse positions are rounded to schedule boundaries, clamped to their idle
-    window, and deduplicated by boundary while retaining sequence order.
+    window, and deduplicated by boundary while retaining sequence order. The
+    default single-pulse sequence leaves a persistent Pauli frame; see
+    :class:`IdealizedHahnConfig` for the closing-pulse alternative.
 
     Returns:
         The idealized schedule and its inserted local-pulse records.
 
     """
     resolved_config = config or IdealizedHahnConfig()
-    scheme = _resolve_scheme(resolved_config.scheme)
-    min_idle_timesteps = resolved_config.min_idle_timesteps or scheme.num_pulses
+    scheme = _resolve_scheme(_effective_scheme(resolved_config))
+    min_idle_timesteps = resolved_config.min_idle_timesteps or _default_min_idle_timesteps(scheme)
     timeline = build_timeline(schedule, architecture)
     pulses_by_time: dict[int, list[tuple[int, Action]]] = {}
     pending_sequences: list[tuple[int, tuple[int, int], tuple[int, ...]]] = []
@@ -134,7 +145,7 @@ def apply_idealized_hahn(
             sequence_index = len(pending_sequences)
             gate_timesteps = tuple(timestep for timestep, _spec in pulses)
             for timestep, spec in pulses:
-                pulses_by_time.setdefault(timestep, []).append((sequence_index, _make_local_gate(spec, ion)))
+                pulses_by_time.setdefault(timestep, []).append((sequence_index, local_gate_for_spec(spec, ion)))
             pending_sequences.append((ion, window, gate_timesteps))
 
     if not pending_sequences:
@@ -163,17 +174,29 @@ def _resolve_scheme(scheme: str | DDScheme) -> DDScheme:
     return scheme if isinstance(scheme, DDScheme) else get_dd_scheme(scheme)
 
 
-def _make_local_gate(spec: GateSpec, ion: int) -> Action:
-    if spec.theta is None:
-        msg = f"gate specification for {spec.gate_name} requires theta"
-        raise ValueError(msg)
-    gate_types = {"Rx": Rx, "Ry": Ry, "Rz": Rz}
-    try:
-        gate_type = gate_types[spec.gate_name]
-    except KeyError as error:
-        msg = f"unsupported local DD gate: {spec.gate_name!r}"
-        raise ValueError(msg) from error
-    return gate_type(ion=ion, theta=spec.theta)
+def _effective_scheme(config: IdealizedHahnConfig) -> str | DDScheme:
+    """Substitute the midpoint-only sequence for the default two-pulse Hahn echo.
+
+    An explicitly chosen scheme is always honored, as is the request for a
+    physical closing pulse.
+
+    Returns:
+        The scheme this configuration should insert.
+    """
+    scheme_name = config.scheme if isinstance(config.scheme, str) else config.scheme.name
+    if scheme_name != HAHN_ECHO.name or config.include_terminating_pulse:
+        return config.scheme
+    return MIDPOINT_ONLY_HAHN
+
+
+def _default_min_idle_timesteps(scheme: DDScheme) -> int:
+    """Return the shortest window this scheme can usefully decouple.
+
+    Returns:
+        The minimum idle length, at least two for a single-pulse sequence whose
+        pulse would otherwise quantize onto the window's own start boundary.
+    """
+    return max(scheme.num_pulses, 2)
 
 
 def _path_with_inserted_pulses(

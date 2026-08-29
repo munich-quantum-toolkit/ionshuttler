@@ -24,6 +24,7 @@ from mqt.ionshuttler.linear.dd.sadd_solver import (
     build_sadd_problem,
 )
 from mqt.ionshuttler.linear.dd.schedule_transform import insert_action_at_time
+from mqt.ionshuttler.linear.field_profile import FieldProfile
 from mqt.ionshuttler.linear.schedule import ActionSchedule
 from mqt.ionshuttler.linear.state import create_initial_state
 
@@ -163,11 +164,16 @@ def test_sadd_method_is_the_only_transport_switch(monkeypatch: pytest.MonkeyPatc
     assert observed == [False, True]
 
 
-def test_participant_selection_excludes_ions_busy_during_window() -> None:
-    """Report a busy ion without allowing it to reach candidate scoring."""
+def test_participant_selection_reports_busy_ions_without_disqualifying_them() -> None:
+    """Keep an ion that is busy for part of its window available to the solver.
+
+    Occupancy is a per-timestep property. The control and operation-duration
+    constraints already forbid a pulse while the ion is busy, so excluding the
+    ion outright would discard the window's remaining usable boundaries.
+    """
     architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
     schedule = ActionSchedule.from_actions(
-        [Rx(ion=0, theta=pi, duration=2), AdvanceTime(), AdvanceTime()],
+        [Rx(ion=0, theta=pi, duration=2), AdvanceTime(), AdvanceTime(), AdvanceTime(), AdvanceTime()],
         create_initial_state(1, architecture),
     )
 
@@ -175,14 +181,41 @@ def test_participant_selection_excludes_ions_busy_during_window() -> None:
         schedule,
         architecture,
         "pz",
-        (0, 2),
+        (0, 4),
         SADDConfig(),
         frozenset(),
     )
 
     assert selection.busy_ions == (0,)
-    assert selection.eligible_ions == ()
-    assert selection.selected_ions == ()
+    assert selection.eligible_ions == (0,)
+    assert selection.selected_ions == (0,)
+
+
+def test_sadd_optimizes_a_window_in_which_every_ion_is_partly_busy() -> None:
+    """Keep SADD effective on schedules whose ions all carry gates or transport."""
+    architecture = Architecture(
+        num_sites=3,
+        processing_zones={"pz": [1]},
+        field_profile=FieldProfile(num_sites=3, site_field=((0, 4.0), (1, 1.0), (2, 4.0))),
+    )
+    schedule = ActionSchedule.from_actions(
+        [
+            AdvanceTime(),
+            Shuttle(ion=0, src=0, dst=1, duration=2),
+            *(AdvanceTime() for _ in range(5)),
+        ],
+        create_initial_state(1, architecture, initial_positions=[0]),
+    )
+
+    output = run_sadd(schedule, architecture, SADDMethod.FULL, SADDConfig(max_accepted_windows=1))
+
+    assert output.report.opportunities
+    opportunity = output.report.opportunities[0]
+    assert 0 in opportunity.rejected_busy_ions
+    assert 0 in opportunity.participating_ions
+    assert opportunity.accepted
+    assert opportunity.pulse_timesteps is not None
+    assert opportunity.pulse_timesteps[0]
 
 
 def test_sadd_reports_transport_changes_by_action_type(monkeypatch: pytest.MonkeyPatch) -> None:

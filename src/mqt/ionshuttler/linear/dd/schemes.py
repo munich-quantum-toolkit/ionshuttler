@@ -268,6 +268,12 @@ HAHN_ECHO = DDScheme(
     (0.5, 1.0),
     (GateSpec("Rx", theta=pi), GateSpec("Rx", theta=pi)),
 )
+MIDPOINT_ONLY_HAHN = DDScheme(
+    "midpoint_only_hahn",
+    (0.5,),
+    (GateSpec("Rx", theta=pi),),
+    allow_rounding=True,
+)
 CPMG_2 = make_cpmg_scheme(2)
 CPMG_4 = make_cpmg_scheme(4)
 CPMG_6 = make_cpmg_scheme(6)
@@ -280,7 +286,21 @@ CDD_2 = make_cdd_scheme(2)
 CDD_3 = make_cdd_scheme(3)
 
 _DD_SCHEME_REGISTRY = {
-    scheme.name: scheme for scheme in (HAHN_ECHO, CPMG_2, CPMG_4, CPMG_6, CPMG_8, XY4, XY8, XY16, CDD_1, CDD_2, CDD_3)
+    scheme.name: scheme
+    for scheme in (
+        HAHN_ECHO,
+        MIDPOINT_ONLY_HAHN,
+        CPMG_2,
+        CPMG_4,
+        CPMG_6,
+        CPMG_8,
+        XY4,
+        XY8,
+        XY16,
+        CDD_1,
+        CDD_2,
+        CDD_3,
+    )
 }
 
 
@@ -316,6 +336,7 @@ __all__ = [
     "CPMG_6",
     "CPMG_8",
     "HAHN_ECHO",
+    "MIDPOINT_ONLY_HAHN",
     "XY4",
     "XY8",
     "XY16",

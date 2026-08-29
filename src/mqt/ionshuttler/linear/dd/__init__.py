@@ -32,6 +32,12 @@ from mqt.ionshuttler.linear.dd.metrics import (
     sum_absolute_residual_phases_at_gates,
     sum_squared_residual_phase,
 )
+from mqt.ionshuttler.linear.dd.nearest_hahn import (
+    NearestHahnConfig,
+    NearestHahnOpportunityRecord,
+    NearestHahnReport,
+    run_nearest_hahn,
+)
 from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
 from mqt.ionshuttler.linear.dd.sadd import (
     OperationDurations,
@@ -51,6 +57,9 @@ __all__ = [
     "IdealizedHahnConfig",
     "IdealizedHahnReport",
     "LocalDDSequence",
+    "NearestHahnConfig",
+    "NearestHahnOpportunityRecord",
+    "NearestHahnReport",
     "OperationDurations",
     "SADDConfig",
     "SADDMethod",
@@ -64,6 +73,7 @@ __all__ = [
     "max_absolute_residual_phase",
     "normalized_sensitivity_values",
     "residual_phase_by_ion",
+    "run_nearest_hahn",
     "run_sadd",
     "sum_absolute_residual_phase",
     "sum_absolute_residual_phases_at_gates",
