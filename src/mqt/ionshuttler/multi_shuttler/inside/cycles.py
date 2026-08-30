@@ -57,13 +57,13 @@ def get_ion_chains(graph: Graph) -> dict[int, Edge]:
         try:
             chains = data["ions"]
             # make indices of edge consistent
-            edge_idc = tuple(sorted((u, v), key=sum))
+            node1, node2 = tuple(sorted((u, v), key=sum))
 
             if len(data["ions"]) > 2:
                 msg = f"Edge ({u}, {v}) has more than two ions: {data['ions']}"
                 raise ValueError(msg)
             for chain in chains:
-                ion_chains[chain] = edge_idc
+                ion_chains[chain] = (node1, node2)
 
         except (KeyError, IndexError):
             pass
@@ -83,8 +83,8 @@ def get_edge_state(graph: Graph) -> dict[Edge, list[int]]:
             #         f"Edge ({u}, {v}) has more than one ion entry: {data['ions']}"
             #     )
             # make indices of edge consistent
-            edge_idc = tuple(sorted((u, v), key=sum))
-            state_dict[edge_idc] = chains
+            node1, node2 = tuple(sorted((u, v), key=sum))
+            state_dict[node1, node2] = chains
             # assert chains is list type
             assert isinstance(chains, list)
 
