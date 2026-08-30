@@ -165,6 +165,26 @@ def test_sadd_method_is_the_only_transport_switch(monkeypatch: pytest.MonkeyPatc
     assert observed == [False, True]
 
 
+def test_sadd_infers_nondefault_transport_durations_from_schedule(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use existing schedule timing for transport synthesized by the default pass."""
+    architecture = Architecture(num_sites=3, processing_zones={"pz": [1]})
+    schedule = ActionSchedule.from_actions(
+        [Shuttle(ion=0, src=0, dst=1, duration=2), *(AdvanceTime() for _ in range(4))],
+        create_initial_state(1, architecture, initial_positions=[0]),
+    )
+    observed: list[tuple[int, int]] = []
+
+    def capture(problem: SADDProblem, **_kwargs: object) -> SADDSolution:
+        observed.append((problem.shuttle_duration, problem.swap_duration))
+        return _unsolved("UNKNOWN")
+
+    monkeypatch.setattr(sadd_module, "solve_sadd_problem", capture)
+
+    run_sadd(schedule, architecture, SADDMethod.FULL)
+
+    assert observed == [(2, 3)]
+
+
 def test_participant_selection_reports_busy_ions_without_disqualifying_them() -> None:
     """Keep an ion that is busy for part of its window available to the solver.
 

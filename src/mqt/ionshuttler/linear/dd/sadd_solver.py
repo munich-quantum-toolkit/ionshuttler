@@ -327,13 +327,13 @@ def _infer_operation_durations(program: ActionSchedule) -> _InferredDurations:
     shuttle_durations = {action.duration for action in program.path if isinstance(action, Shuttle)}
     swap_durations = {action.duration for action in program.path if isinstance(action, PhysicalSwap)}
     return _InferredDurations(
-        shuttle=_single_duration_or_default(shuttle_durations),
-        swap=_single_duration_or_default(swap_durations),
+        shuttle=_single_duration_or_default(shuttle_durations, default=1),
+        swap=_single_duration_or_default(swap_durations, default=3),
     )
 
 
-def _single_duration_or_default(durations: set[int]) -> int:
-    return next(iter(durations)) if len(durations) == 1 else 1
+def _single_duration_or_default(durations: set[int], *, default: int) -> int:
+    return next(iter(durations)) if len(durations) == 1 else default
 
 
 def _add_unchanged_schedule_hint(

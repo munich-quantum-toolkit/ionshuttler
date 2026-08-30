@@ -45,11 +45,14 @@ class ResidualPhaseSummary:
 
 def decoupling_ratio(schedule: ActionSchedule, sequences: Sequence[LocalDDSequence] = ()) -> float:
     """Return the fraction of ion-time volume covered by recorded DD windows."""
-    num_ions = _infer_num_ions(schedule)
+    ion_ids = frozenset(_infer_ion_ids(schedule))
+    num_ions = len(ion_ids)
     if schedule.num_timesteps <= 0 or num_ions <= 0 or not sequences:
         return 0.0
     windows_by_ion: dict[int, list[tuple[int, int]]] = {}
     for record in sequences:
+        if record.ion not in ion_ids:
+            continue
         start, end = record.window
         clamped = (max(0, min(start, schedule.num_timesteps)), max(0, min(end, schedule.num_timesteps)))
         if clamped[1] > clamped[0]:
@@ -99,7 +102,7 @@ def summarize_residual_phases(
     timeline: CompiledTimeline | None = None,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> ResidualPhaseSummary:
-    """Compute schedule-end and algorithmic-gate residual phase metrics.
+    """Compute schedule-end residual phase metrics.
 
     Returns:
         The aggregate and per-ion residual-phase values.
@@ -318,10 +321,6 @@ def _merge_windows(windows: list[tuple[int, int]]) -> list[tuple[int, int]]:
 
 def _infer_ion_ids(program: ActionSchedule) -> tuple[int, ...]:
     return tuple(ion for ion, _site in program.initial_state.positions)
-
-
-def _infer_num_ions(program: ActionSchedule) -> int:
-    return len(_infer_ion_ids(program))
 
 
 __all__ = [

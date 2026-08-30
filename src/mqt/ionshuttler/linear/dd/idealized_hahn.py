@@ -183,8 +183,7 @@ def _effective_scheme(config: IdealizedHahnConfig) -> str | DDScheme:
     Returns:
         The scheme this configuration should insert.
     """
-    scheme_name = config.scheme if isinstance(config.scheme, str) else config.scheme.name
-    if scheme_name != HAHN_ECHO.name or config.include_terminating_pulse:
+    if not isinstance(config.scheme, str) or config.scheme != HAHN_ECHO.name or config.include_terminating_pulse:
         return config.scheme
     return MIDPOINT_ONLY_HAHN
 

@@ -26,7 +26,6 @@ from mqt.ionshuttler.linear.dd import (
     IdealizedHahnConfig,
     IdealizedHahnReport,
     LocalDDSequence,
-    OperationDurations,
     SADDConfig,
     SADDMethod,
     SADDOpportunityRecord,
@@ -145,7 +144,7 @@ def test_sadd_defaults_freeze_the_paper_configuration() -> None:
         allow_pulses=True,
         scale=1000,
         num_search_workers=8,
-        operation_durations=OperationDurations(shuttle=1, swap=3, one_qubit_gate=1),
+        operation_durations=None,
     )
     assert SADDMethod.PULSE_ONLY.allow_transport is False
     assert SADDMethod.FULL.allow_transport is True

@@ -12,7 +12,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -44,13 +44,13 @@ class _FakeSession:
         self.posargs = posargs or []
         self.interactive = interactive
         self.virtualenv = _FakeVirtualenv()
-        self.run_calls: list[tuple[Any, ...]] = []
+        self.run_calls: list[tuple[str, ...]] = []
         self.installed: list[tuple[str, ...]] = []
 
     def install(self, *args: str) -> None:
         self.installed.append(args)
 
-    def run(self, *args: Any, **_kwargs: Any) -> None:
+    def run(self, *args: str, **_kwargs: object) -> None:
         self.run_calls.append(args)
 
 

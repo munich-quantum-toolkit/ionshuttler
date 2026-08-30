@@ -132,6 +132,27 @@ def test_idealized_hahn_rounds_clamps_and_deduplicates_in_sequence_order() -> No
     assert build_timeline(output.schedule, architecture).action_at(4) == (Rx(ion=0, theta=pi),)
 
 
+def test_idealized_hahn_honors_explicit_scheme_named_hahn() -> None:
+    """Do not replace an explicitly supplied scheme based only on its name."""
+    architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
+    original = _result(
+        architecture,
+        [AdvanceTime() for _ in range(4)],
+        num_timesteps=4,
+        positions=[0],
+    )
+    scheme = DDScheme(
+        "hahn",
+        relative_gate_times=(0.25, 0.75),
+        gate_specs=(GateSpec("Rx", pi), GateSpec("Ry", pi)),
+    )
+
+    output = apply_idealized_hahn(original, architecture, config=IdealizedHahnConfig(scheme=scheme))
+
+    assert output.report.sequences[0].pulse_timesteps == (1, 3)
+    assert [type(action) for action in output.schedule.path if isinstance(action, (Rx, Ry))] == [Rx, Ry]
+
+
 def test_idealized_hahn_replays_frames_and_round_trips_result_json() -> None:
     """Leave one midpoint pulse and a persistent frame, and serialize losslessly."""
     architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})

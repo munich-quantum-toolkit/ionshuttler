@@ -282,11 +282,11 @@ def rolling_horizon_search(
     return _rolling_result(
         progress.schedule,
         status,
-        progress.state,
-        initial_state,
         architecture,
         progress.explored_nodes,
         budget,
+        final_state=progress.state,
+        initial_state=initial_state,
     )
 
 
@@ -407,11 +407,11 @@ def _search_with_budget(
         return _partial_result(
             progress.best_solution,
             progress.best_path,
-            progress.best_state,
-            initial_state,
             CompilationStatus.INTERRUPTED,
             context.architecture,
             progress.explored_nodes,
+            best_state=progress.best_state,
+            initial_state=initial_state,
         )
 
 
@@ -427,11 +427,11 @@ def _run_search(
             return _partial_result(
                 progress.best_solution,
                 progress.best_path,
-                progress.best_state,
-                initial_state,
                 CompilationStatus.TIMEOUT,
                 context.architecture,
                 progress.explored_nodes,
+                best_state=progress.best_state,
+                initial_state=initial_state,
             )
 
         node, progress.current_node = _take_node(
@@ -453,10 +453,10 @@ def _run_search(
                 return _result(
                     solution.path,
                     CompilationStatus.SUCCESS,
-                    initial_state,
-                    solution.final_state,
                     context.architecture,
                     progress.explored_nodes,
+                    initial_state=initial_state,
+                    final_state=solution.final_state,
                 )
             continue
 
@@ -483,18 +483,18 @@ def _run_search(
         return _result(
             progress.best_solution.path,
             CompilationStatus.SUCCESS,
-            initial_state,
-            progress.best_solution.final_state,
             context.architecture,
             progress.explored_nodes,
+            initial_state=initial_state,
+            final_state=progress.best_solution.final_state,
         )
     return _result(
         progress.best_path,
         CompilationStatus.FAILED,
-        initial_state,
-        progress.best_state,
         context.architecture,
         progress.explored_nodes,
+        initial_state=initial_state,
+        final_state=progress.best_state,
     )
 
 
@@ -746,31 +746,40 @@ def _better_solution(
 def _partial_result(
     solution: _FoundSolution | None,
     best_path: tuple[Action, ...],
-    best_state: State,
-    initial_state: State,
     status: CompilationStatus,
     architecture: Architecture,
     explored_nodes: int,
+    *,
+    best_state: State,
+    initial_state: State,
 ) -> CompilationResult:
     if solution is not None:
         return _result(
             solution.path,
             status,
-            initial_state,
-            solution.final_state,
             architecture,
             explored_nodes,
+            initial_state=initial_state,
+            final_state=solution.final_state,
         )
-    return _result(best_path, status, initial_state, best_state, architecture, explored_nodes)
+    return _result(
+        best_path,
+        status,
+        architecture,
+        explored_nodes,
+        initial_state=initial_state,
+        final_state=best_state,
+    )
 
 
 def _result(
     path: Sequence[Action],
     status: CompilationStatus,
-    initial_state: State,
-    final_state: State,
     architecture: Architecture,
     explored_nodes: int,
+    *,
+    initial_state: State,
+    final_state: State,
 ) -> CompilationResult:
     public_path = tuple(path)
     return CompilationResult(
@@ -804,13 +813,21 @@ def _with_public_metadata(
 def _rolling_result(
     path: Sequence[Action],
     status: CompilationStatus,
-    final_state: State,
-    initial_state: State,
     architecture: Architecture,
     explored_nodes: int,
     budget: _TimeBudget,
+    *,
+    final_state: State,
+    initial_state: State,
 ) -> CompilationResult:
-    result = _result(path, status, initial_state, final_state, architecture, explored_nodes)
+    result = _result(
+        path,
+        status,
+        architecture,
+        explored_nodes,
+        initial_state=initial_state,
+        final_state=final_state,
+    )
     return _with_public_metadata(
         result,
         budget=budget,

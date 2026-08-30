@@ -13,7 +13,7 @@ import math
 import operator
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Literal, cast
@@ -81,6 +81,10 @@ class SADDConfig:
     window that runs out of time yields a weaker improvement or none at all
     rather than an invalid or missing result. Raise it for long windows or many
     participating ions, where proving optimality takes longer.
+
+    When ``operation_durations`` is ``None``, SADD infers uniform transport
+    durations already present in the schedule and uses the standard operation
+    defaults for transport kinds that are absent.
     """
 
     min_window_length: int = 2
@@ -94,7 +98,7 @@ class SADDConfig:
     allow_pulses: bool = True
     scale: int = 1000
     num_search_workers: int = 8
-    operation_durations: OperationDurations = field(default_factory=OperationDurations)
+    operation_durations: OperationDurations | None = None
 
     def __post_init__(self) -> None:
         """Validate optimization and problem parameters.
@@ -124,8 +128,8 @@ class SADDConfig:
             raise TypeError(msg)
         _require_positive_int(self.scale, "scale")
         _require_positive_int(self.num_search_workers, "num_search_workers")
-        if not isinstance(self.operation_durations, OperationDurations):
-            msg = "operation_durations must be an OperationDurations instance"
+        if self.operation_durations is not None and not isinstance(self.operation_durations, OperationDurations):
+            msg = "operation_durations must be an OperationDurations instance or None"
             raise TypeError(msg)
 
 

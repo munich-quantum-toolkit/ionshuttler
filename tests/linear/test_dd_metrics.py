@@ -81,6 +81,20 @@ def test_decoupling_ratio_clamps_windows_to_schedule_horizon() -> None:
     assert decoupling_ratio(result, records) == pytest.approx(1.0)
 
 
+def test_decoupling_ratio_ignores_records_for_unknown_ions() -> None:
+    """Exclude stale or foreign records from the schedule's covered volume."""
+    result, _architecture = _result([AdvanceTime() for _ in range(4)], 4)
+    records = (
+        LocalDDSequence(0, (0, 2), "hahn", (1,), (5,)),
+        LocalDDSequence(99, (0, 4), "hahn", (2,), (6,)),
+    )
+
+    ratio = decoupling_ratio(result, records)
+
+    assert ratio == pytest.approx(0.5)
+    assert ratio <= 1.0
+
+
 def test_relative_phase_reduction_empty_sequences_and_zero_and_normal_cases() -> None:
     """Cover the empty-sequences shortcut, the zero-total-phase guard, and a normal ratio."""
     result, architecture = _result([AdvanceTime() for _ in range(4)], 4)
