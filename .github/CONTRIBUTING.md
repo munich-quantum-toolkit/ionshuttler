@@ -5,4 +5,4 @@
 
 Thank you for your interest in contributing to MQT IonShuttler! An extensive
 contribution guide is available in our
-[documentation](https://mqt.readthedocs.io/projects/ionshuttler/en/latest/contributing.html).
+[documentation](https://mqt.readthedocs.io/projects/ionshuttler/en/stable/contributing.html).
