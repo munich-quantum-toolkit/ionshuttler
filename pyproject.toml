@@ -58,7 +58,8 @@ requires-python = ">=3.11"
 
 [project.optional-dependencies]
 dd = [
-    "ortools>=9.15.6755",
+    "ortools>=9.14.6206,<9.15; python_version < '3.13'",
+    "ortools>=9.15.6755; python_version >= '3.13'",
 ]
 
 [project.scripts]
