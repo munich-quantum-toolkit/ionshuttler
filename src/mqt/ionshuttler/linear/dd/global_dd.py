@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from itertools import count
-from math import isfinite, pi
+from math import isclose, isfinite, pi
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from mqt.ionshuttler.linear.actions import AdvanceTime, GateSpec, GlobalPulse
@@ -234,7 +234,12 @@ def _optimize_global_pulse_timesteps(
                 config.pulse,
             )
             candidate_score = candidate_summary.phase_cost
-            if candidate_score < pulse_best_score:
+            if candidate_score < pulse_best_score and not isclose(
+                candidate_score,
+                pulse_best_score,
+                rel_tol=1e-12,
+                abs_tol=1e-12,
+            ):
                 pulse_best_timesteps = candidate_timesteps
                 pulse_best_result = candidate_result
                 pulse_best_summary = candidate_summary
