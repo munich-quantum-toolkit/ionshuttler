@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES, AdvanceTime, GlobalPulse
 from mqt.ionshuttler.linear.architecture import IMPLICIT_PROCESSING_ZONE, Architecture
 from mqt.ionshuttler.linear.field_profile import FieldProfile
 
@@ -97,9 +98,15 @@ def test_architecture_round_trips_through_json() -> None:
             site_field=((1, 0.25), (3, -0.5)),
             default_field=0.9,
         ),
+        supported_action_types=(*DEFAULT_ACTION_TYPES, GlobalPulse),
     )
 
     assert Architecture.from_json(architecture.to_json()) == architecture
+    assert architecture.supports(GlobalPulse)
+    assert architecture.to_dict()["supported_action_types"] == [
+        *(action_type.__name__ for action_type in DEFAULT_ACTION_TYPES),
+        "GlobalPulse",
+    ]
 
 
 def test_architecture_load_reads_utf8_json(tmp_path: Path) -> None:
@@ -151,3 +158,9 @@ def test_architecture_and_field_profile_reject_invalid_shapes() -> None:
         Architecture.from_dict({"num_sites": "4"})
     with pytest.raises(TypeError, match=r"architecture\.num_sites"):
         Architecture.from_dict({"num_sites": True})
+    with pytest.raises(TypeError, match="Action subclasses"):
+        Architecture(num_sites=1, supported_action_types=(1,))  # ty: ignore[invalid-argument-type] - Intentionally invalid entry to test runtime validation.
+    with pytest.raises(TypeError, match="list of strings"):
+        Architecture.from_dict({"num_sites": 1, "supported_action_types": "GlobalPulse"})
+    with pytest.raises(ValueError, match="scheduler operation"):
+        Architecture(num_sites=1, supported_action_types=(*DEFAULT_ACTION_TYPES, AdvanceTime))

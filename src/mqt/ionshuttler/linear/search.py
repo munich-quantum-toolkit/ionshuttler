@@ -21,6 +21,7 @@ from mqt.ionshuttler.linear.config import LinearCompilerConfig, TransportTiming
 from mqt.ionshuttler.linear.cost import cost, heuristic
 from mqt.ionshuttler.linear.expand import ExpansionOptions, GenerationMode, expand, replay_path
 from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
+from mqt.ionshuttler.linear.schedule import ActionSchedule
 from mqt.ionshuttler.linear.state import State, normalize_initial_state
 
 if TYPE_CHECKING:
@@ -237,7 +238,6 @@ def exhaustive_search(
         budget=budget,
         architecture=architecture,
         initial_state=initial_state,
-        action_types=action_types,
     )
 
 
@@ -282,12 +282,11 @@ def rolling_horizon_search(
     return _rolling_result(
         progress.schedule,
         status,
-        progress.state,
-        initial_state,
         architecture,
         progress.explored_nodes,
         budget,
-        action_types,
+        final_state=progress.state,
+        initial_state=initial_state,
     )
 
 
@@ -324,7 +323,7 @@ def _run_rolling_search(
         progress.explored_nodes += local_result.explored_nodes or 0
         if local_result.status is not CompilationStatus.SUCCESS:
             return local_result.status
-        _commit_window(progress, local_result.path, local_context, committed_gates)
+        _commit_window(progress, local_result.schedule.path, local_context, committed_gates)
     return CompilationStatus.SUCCESS
 
 
@@ -403,15 +402,16 @@ def _search_with_budget(
     )
 
     try:
-        return _run_search(progress, context, budget)
+        return _run_search(progress, context, budget, initial_state)
     except KeyboardInterrupt:
         return _partial_result(
             progress.best_solution,
             progress.best_path,
-            progress.best_state,
             CompilationStatus.INTERRUPTED,
             context.architecture,
             progress.explored_nodes,
+            best_state=progress.best_state,
+            initial_state=initial_state,
         )
 
 
@@ -419,6 +419,7 @@ def _run_search(
     progress: _SearchProgress,
     context: _SearchContext,
     budget: _TimeBudget,
+    initial_state: State,
 ) -> CompilationResult:
     goal = frozenset(context.gate_order)
     while progress.current_node is not None or progress.frontier:
@@ -426,10 +427,11 @@ def _run_search(
             return _partial_result(
                 progress.best_solution,
                 progress.best_path,
-                progress.best_state,
                 CompilationStatus.TIMEOUT,
                 context.architecture,
                 progress.explored_nodes,
+                best_state=progress.best_state,
+                initial_state=initial_state,
             )
 
         node, progress.current_node = _take_node(
@@ -451,9 +453,10 @@ def _run_search(
                 return _result(
                     solution.path,
                     CompilationStatus.SUCCESS,
-                    solution.final_state,
                     context.architecture,
                     progress.explored_nodes,
+                    initial_state=initial_state,
+                    final_state=solution.final_state,
                 )
             continue
 
@@ -480,16 +483,18 @@ def _run_search(
         return _result(
             progress.best_solution.path,
             CompilationStatus.SUCCESS,
-            progress.best_solution.final_state,
             context.architecture,
             progress.explored_nodes,
+            initial_state=initial_state,
+            final_state=progress.best_solution.final_state,
         )
     return _result(
         progress.best_path,
         CompilationStatus.FAILED,
-        progress.best_state,
         context.architecture,
         progress.explored_nodes,
+        initial_state=initial_state,
+        final_state=progress.best_state,
     )
 
 
@@ -741,37 +746,48 @@ def _better_solution(
 def _partial_result(
     solution: _FoundSolution | None,
     best_path: tuple[Action, ...],
-    best_state: State,
     status: CompilationStatus,
     architecture: Architecture,
     explored_nodes: int,
+    *,
+    best_state: State,
+    initial_state: State,
 ) -> CompilationResult:
     if solution is not None:
         return _result(
             solution.path,
             status,
-            solution.final_state,
             architecture,
             explored_nodes,
+            initial_state=initial_state,
+            final_state=solution.final_state,
         )
-    return _result(best_path, status, best_state, architecture, explored_nodes)
+    return _result(
+        best_path,
+        status,
+        architecture,
+        explored_nodes,
+        initial_state=initial_state,
+        final_state=best_state,
+    )
 
 
 def _result(
     path: Sequence[Action],
     status: CompilationStatus,
-    final_state: State,
     architecture: Architecture,
     explored_nodes: int,
+    *,
+    initial_state: State,
+    final_state: State,
 ) -> CompilationResult:
-    public_path = list(path)
+    public_path = tuple(path)
     return CompilationResult(
         status=status,
-        path=public_path,
-        num_timesteps=sum(isinstance(action, AdvanceTime) for action in public_path),
+        schedule=ActionSchedule.from_actions(public_path, initial_state),
+        architecture=architecture,
         score=cost(final_state),
         final_state=final_state,
-        architecture=architecture,
         explored_nodes=explored_nodes,
     )
 
@@ -782,34 +798,41 @@ def _with_public_metadata(
     budget: _TimeBudget,
     architecture: Architecture,
     initial_state: State,
-    action_types: Sequence[type[Action]],
 ) -> CompilationResult:
     return replace(
         result,
         wall_clock_s=budget.elapsed(),
+        schedule=ActionSchedule.from_actions(
+            result.schedule.path,
+            initial_state,
+        ),
         architecture=architecture,
-        initial_state=initial_state,
-        action_types=tuple(action_type.__name__ for action_type in action_types),
     )
 
 
 def _rolling_result(
     path: Sequence[Action],
     status: CompilationStatus,
-    final_state: State,
-    initial_state: State,
     architecture: Architecture,
     explored_nodes: int,
     budget: _TimeBudget,
-    action_types: Sequence[type[Action]],
+    *,
+    final_state: State,
+    initial_state: State,
 ) -> CompilationResult:
-    result = _result(path, status, final_state, architecture, explored_nodes)
+    result = _result(
+        path,
+        status,
+        architecture,
+        explored_nodes,
+        initial_state=initial_state,
+        final_state=final_state,
+    )
     return _with_public_metadata(
         result,
         budget=budget,
         architecture=architecture,
         initial_state=initial_state,
-        action_types=action_types,
     )
 
 

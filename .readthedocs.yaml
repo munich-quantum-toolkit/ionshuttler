@@ -17,3 +17,5 @@ python:
       command: sync
       groups:
         - docs
+      extras:
+        - dd
