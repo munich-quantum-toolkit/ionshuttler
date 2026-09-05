@@ -1,47 +1,78 @@
-venv/
-.venv/
-.idea/
-.vscode/
-.ruff_cache/
+# This file has been generated from an external template. Please do not modify it directly.
+# Changes should be contributed to https://github.com/munich-quantum-toolkit/templates.
 
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
 
-build/
-dist/
+# Packaging
+/build/
+/dist/
+.eggs/
+*.egg
 *.egg-info/
+/_skbuild/
+/wheelhouse/
 
-# ruff
-.ruff_cache/
+# Testing
+.coverage
+.coverage.*
+.hypothesis/
+.nox/
+.pytest_cache/
+.tox/
+*.cover
+*.profraw
+coverage.xml
+htmlcov/
 
-# Claude
-CLAUDE.md
-.claude/
-
-# OS specific stuff
-.DS_Store
-.DS_Store?
-.Spotlight-V100
-.Trashes
-._*
-Thumbs.db
-editor.swp
-editor~
-ehthumbs.db
-
-# Sphinx documentation
+# Documentation
 docs/_build/
+docs/**/build/
 docs/api/
 
-# development QASM files
-QASM_files/development
-benchmarks/
-runs/
-paper_run_files/
+# Environments
+.env
+.env.*
+!.env.example
+!.env.*.example
+.venv/
+env/
+venv/
 
-*.pyc
+# Tool caches
+.cache/
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+.rumdl_cache/
 
-run.py
-adapted_run_benchmarks.py
-timeline.json
+# Jupyter
+.ipynb_checkpoints/
+
+# Versioning
+python/**/_version.py
+src/**/_version.py
+
+# Editors
+.idea/
+.vs/
+.vscode/
+*.swp
+*~
+
+# Claude
+.claude/
+CLAUDE.md
+
+# Operating systems
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
