@@ -1580,7 +1580,7 @@ requires-dist = [
     { name = "numpy", marker = "python_full_version >= '3.14'", specifier = ">=2.3.2" },
     { name = "ortools", marker = "python_full_version >= '3.13' and extra == 'dd'", specifier = ">=9.15.6755" },
     { name = "ortools", marker = "python_full_version < '3.13' and extra == 'dd'", specifier = ">=9.14.6206" },
-    { name = "qiskit", specifier = ">=1" },
+    { name = "qiskit", specifier = ">=2.1" },
     { name = "z3-solver", specifier = ">=4.15.3" },
 ]
 provides-extras = ["dd"]
