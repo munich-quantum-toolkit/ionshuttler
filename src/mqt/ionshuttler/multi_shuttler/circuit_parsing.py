@@ -14,7 +14,9 @@ from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 from qiskit.qasm2 import QASM2ParseError, dumps
 from qiskit.qasm3 import loads as load_qasm3
 
-from .circuit_types import GateInfo, ParsedCircuit
+from mqt.ionshuttler.partitioning import GateInfo
+
+from .circuit_types import ParsedCircuit
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

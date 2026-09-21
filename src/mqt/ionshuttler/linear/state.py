@@ -10,10 +10,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 if TYPE_CHECKING:
     from mqt.ionshuttler.linear.architecture import Architecture
+
+_K = TypeVar("_K", int, str)
 
 
 @dataclass(frozen=True)
@@ -35,10 +37,26 @@ class State:
 
     def __post_init__(self) -> None:
         """Normalize tuple fields so equality and hashing are order-independent."""
-        object.__setattr__(self, "positions", tuple(sorted(self.positions)))
-        object.__setattr__(self, "in_progress_gates", tuple(sorted(self.in_progress_gates)))
-        object.__setattr__(self, "ions_busy_until", tuple(sorted(self.ions_busy_until)))
-        object.__setattr__(self, "pzs_busy_until", tuple(sorted(self.pzs_busy_until)))
+        object.__setattr__(self, "positions", _ordered(self.positions))
+        object.__setattr__(self, "in_progress_gates", _ordered(self.in_progress_gates))
+        object.__setattr__(self, "ions_busy_until", _ordered(self.ions_busy_until))
+        object.__setattr__(self, "pzs_busy_until", _ordered(self.pzs_busy_until))
+
+
+def _ordered(entries: tuple[tuple[_K, int], ...]) -> tuple[tuple[_K, int], ...]:
+    """Return the entries in ascending key order, reusing already-sorted input.
+
+    Search builds most states from an ordered predecessor, so the common case is
+    already sorted and only needs a single comparison pass to confirm.
+    """
+    as_tuple = entries if type(entries) is tuple else tuple(entries)
+    previous = None
+    for entry in as_tuple:
+        key = entry[0]
+        if previous is not None and key < previous:
+            return tuple(sorted(as_tuple))
+        previous = key
+    return as_tuple
 
 
 def to_dict(state: State) -> dict[int, int]:

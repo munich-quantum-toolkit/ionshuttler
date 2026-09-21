@@ -131,6 +131,30 @@ preview = true
 docstring-code-format = true
 
 [tool.ruff.lint.per-file-ignores]
+"src/mqt/ionshuttler/partitioning/tabu.py" = [
+  "ANN",
+  "ARG001",
+  "BLE001",
+  "D",
+  "DOC",
+  "DTZ005",
+  "E501",
+  "ERA001",
+  "FBT",
+  "FIX002",
+  "FURB",
+  "NPY002",
+  "PERF",
+  "PLC0415",
+  "PLR6301",
+  "PLW0717",
+  "S110",
+  "S112",
+  "S311",
+  "SLF001",
+  "T20",
+  "TD",
+]
 "src/mqt/ionshuttler/multi_shuttler/**" = [
   "ANN",
   "ARG001",

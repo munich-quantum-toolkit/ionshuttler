@@ -36,12 +36,14 @@ def test_package_exports_only_the_supported_facade() -> None:
         "CompilationStatus",
         "GateTiming",
         "HardwareTiming",
+        "HeuristicFn",
         "LinearCompiler",
         "LinearCompilerConfig",
         "MachineState",
         "ScheduledAction",
         "SearchConfig",
         "TransportTiming",
+        "zero_heuristic",
     ]
 
 

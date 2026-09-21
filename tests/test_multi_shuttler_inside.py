@@ -13,8 +13,8 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
-from mqt.ionshuttler.multi_shuttler.circuit_types import GateInfo
 from mqt.ionshuttler.multi_shuttler.inside.scheduling import create_priority_queue
+from mqt.ionshuttler.partitioning import GateInfo
 
 if TYPE_CHECKING:
     from mqt.ionshuttler.multi_shuttler.inside.graph import Graph

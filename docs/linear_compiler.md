@@ -62,6 +62,32 @@ number of circuit qubits. See also the
 {doc}`trapped-ion hardware model <linear_hardware_model>` for further details on
 the hardware abstraction.
 
+| Compile option      | User-visible effect                                                                                                                                                                                             |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `initial_positions` | Selects one distinct starting site per circuit qubit. When omitted, the compiler distributes the ions across the available sites.                                                                               |
+| `pre_partition`     | On layouts with multiple processing zones, computes a fine-grained gate-to-zone preference once and uses it to guide search. It defaults to `False` and has no effect on layouts with only one processing zone. |
+
+For example, enable the partition-guided heuristic for a multi-zone layout at
+the compilation call:
+
+```{code-cell} ipython3
+multi_zone_architecture = Architecture(
+    num_sites=7,
+    processing_zones={"left": [1, 2], "right": [4, 5]},
+)
+partitioned_result = LinearCompiler(multi_zone_architecture).compile(
+    circuit,
+    pre_partition=True,
+)
+```
+
+Pre-partitioning can substantially reduce compilation time when a circuit lacks
+spatial locality matching the zone layout. It is not a strict improvement:
+circuits whose interactions already match the layout may see little benefit or
+an occasional small slowdown. Advanced users can tune the partitioner through
+`SearchConfig.pre_partition_config` using a
+{py:class}`~mqt.ionshuttler.partitioning.FineGrainedTabuConfig`.
+
 ### Circuit inputs
 
 {py:meth}`~mqt.ionshuttler.linear.compiler.LinearCompiler.compile` accepts:
@@ -178,7 +204,6 @@ config = LinearCompilerConfig(
         max_frontier_size=1000,
         max_compile_time=1800.0,
         use_dependencies=True,
-        heuristic_mode="quality",
     )
 )
 ```
@@ -193,7 +218,8 @@ config = LinearCompilerConfig(
 | `max_frontier_size`              | Limits stored alternatives. Smaller bounds reduce memory, but discarded candidates can contain the best or only solution. Use `None` to retain an unbounded frontier.                                                                                                  |
 | `max_compile_time`               | Shared wall-clock budget in seconds. A finite value prevents unexpectedly long runs; `None` removes the time limit.                                                                                                                                                    |
 | `use_dependencies`               | `True` respects circuit dependencies while allowing independent gates to overlap. `False` conservatively schedules gates in their input order and may increase the makespan.                                                                                           |
-| `heuristic_mode`                 | `"quality"` uses the faster default estimate, which is not guaranteed to be admissible. `"zero"` uses no remaining-cost estimate; it is admissible, but usually explores many more states.                                                                             |
+| `heuristic`                      | Remaining-cost estimate guiding the search. `None` uses the faster default, which is not guaranteed to be admissible. `zero_heuristic` uses no estimate; it is admissible, but usually explores many more states. Any other `HeuristicFn` may be supplied.             |
+| `pre_partition_config`           | Optional fine-grained tabu settings used when `compile(..., pre_partition=True)` is selected. `None` uses the partitioner's defaults.                                                                                                                                  |
 
 A useful, more thorough profile for small circuits is:
 
@@ -205,7 +231,6 @@ search = SearchConfig(
     num_solutions=10,
     max_frontier_size=None,
     max_compile_time=None,
-    heuristic_mode="quality",
 )
 ```
 
@@ -219,6 +244,8 @@ For small instances where a minimum-makespan result matters more than search
 speed, all quality-oriented shortcuts can be disabled:
 
 ```{code-cell} ipython3
+from mqt.ionshuttler.linear import zero_heuristic
+
 exact_search = SearchConfig(
     horizon=None,
     committed_gates=1,
@@ -228,7 +255,7 @@ exact_search = SearchConfig(
     max_frontier_size=None,
     max_compile_time=None,
     use_dependencies=True,
-    heuristic_mode="zero",
+    heuristic=zero_heuristic,
 )
 ```
 
@@ -239,6 +266,44 @@ memory can grow very quickly, so this profile is mainly useful for small
 circuits, reference results, and comparisons. A timeout, frontier bound, rolling
 horizon, iterative dive, or narrowed action generation removes that optimality
 guarantee.
+
+## Supplying a custom heuristic
+
+`SearchConfig.heuristic` selects the remaining-cost estimate. Besides the
+default (`None`) and :func:`~mqt.ionshuttler.linear.cost.zero_heuristic`, any
+callable matching :class:`~mqt.ionshuttler.linear.cost.HeuristicFn` may be
+supplied. It receives the current state, the architecture, the gates to
+schedule, and the dependency map, and returns a nonnegative estimate of the
+remaining schedule time. `gate_order` and `gates` also include gates that are
+already completed or running, so you might want to filter them with
+`state.completed_gates` and `state.in_progress_gates`.
+
+Because a larger estimate marks a state as further from the goal, adding a
+penalty steers the search away from the states it describes. This heuristic adds
+one unit of estimated work for every pair of ions sitting on neighboring sites,
+biasing the search toward schedules that keep ions spread out:
+
+```{code-cell} ipython3
+from itertools import combinations
+
+from mqt.ionshuttler.linear import SearchConfig
+from mqt.ionshuttler.linear.cost import heuristic as default_heuristic
+
+
+def prefer_spread_out_ions(state, architecture, gate_order, gates, predecessors=None):
+    """Penalize neighboring ions on top of the default estimate."""
+    base = default_heuristic(state, architecture, gate_order, gates, predecessors)
+    sites = [site for _, site in state.positions]
+    crowding = sum(1 for left, right in combinations(sites, 2) if abs(left - right) <= 1)
+    return base + crowding
+
+
+custom_search = SearchConfig(heuristic=prefer_spread_out_ions)
+```
+
+The estimate steers the search only; it never changes which schedules are legal.
+An estimate that overshoots the true remaining time gives up admissibility,
+exactly as the default already does.
 
 ## Understand the result
 

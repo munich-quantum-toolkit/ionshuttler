@@ -159,7 +159,7 @@ def apply(
         return replace(updated, completed_gates=updated.completed_gates | {gate_id})
     in_progress = in_progress_dict(updated)
     in_progress[gate_id] = updated.time + duration
-    return replace(updated, in_progress_gates=tuple(sorted(in_progress.items())))
+    return replace(updated, in_progress_gates=tuple(in_progress.items()))
 
 
 def expand(

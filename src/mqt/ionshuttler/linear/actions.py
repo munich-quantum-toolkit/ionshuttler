@@ -222,8 +222,8 @@ class Shuttle(TransportAction):
         ions_busy[self.ion] = state.time + self.duration
         return replace(
             state,
-            positions=tuple(sorted(positions.items())),
-            ions_busy_until=tuple(sorted(ions_busy.items())),
+            positions=tuple(positions.items()),
+            ions_busy_until=tuple(ions_busy.items()),
         )
 
 
@@ -308,8 +308,8 @@ class PhysicalSwap(TransportAction):
         ions_busy[self.ion_b] = free_time
         return replace(
             state,
-            positions=tuple(sorted(positions.items())),
-            ions_busy_until=tuple(sorted(ions_busy.items())),
+            positions=tuple(positions.items()),
+            ions_busy_until=tuple(ions_busy.items()),
         )
 
 
@@ -458,8 +458,8 @@ class SingleQubitGate(GateAction):
             pzs_busy[zone] = free_time
         return replace(
             state,
-            ions_busy_until=tuple(sorted(ions_busy.items())),
-            pzs_busy_until=tuple(sorted(pzs_busy.items())),
+            ions_busy_until=tuple(ions_busy.items()),
+            pzs_busy_until=tuple(pzs_busy.items()),
         )
 
 
@@ -550,8 +550,8 @@ class TwoQubitGate(GateAction):
             pzs_busy[zone] = free_time
         return replace(
             state,
-            ions_busy_until=tuple(sorted(ions_busy.items())),
-            pzs_busy_until=tuple(sorted(pzs_busy.items())),
+            ions_busy_until=tuple(ions_busy.items()),
+            pzs_busy_until=tuple(pzs_busy.items()),
         )
 
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
+from itertools import count
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,8 +21,9 @@ import pytest
 import mqt.ionshuttler.linear.search as search_module
 from mqt.ionshuttler.linear.actions import AdvanceTime, Rx, Ry, Rzz, Shuttle
 from mqt.ionshuttler.linear.architecture import Architecture
-from mqt.ionshuttler.linear.config import GateTiming, HeuristicMode, LinearCompilerConfig, SearchConfig
-from mqt.ionshuttler.linear.expand import replay_path
+from mqt.ionshuttler.linear.config import GateTiming, LinearCompilerConfig, SearchConfig
+from mqt.ionshuttler.linear.cost import zero_heuristic
+from mqt.ionshuttler.linear.expand import GenerationMode, replay_path
 from mqt.ionshuttler.linear.parser import parse_qasm_file
 from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.linear.schedule import ActionSchedule
@@ -29,9 +31,9 @@ from mqt.ionshuttler.linear.state import State, create_initial_state, has_pendin
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from itertools import count
 
     from mqt.ionshuttler.linear.actions import Action, GateAction
+    from mqt.ionshuttler.linear.cost import HeuristicFn
 
 
 def exhaustive_config(
@@ -41,7 +43,7 @@ def exhaustive_config(
     num_solutions: int = 1,
     max_frontier_size: int | None = None,
     max_compile_time: float | None = None,
-    heuristic_mode: HeuristicMode = "quality",
+    heuristic: HeuristicFn | None = None,
 ) -> LinearCompilerConfig:
     """Build an exhaustive-search configuration for focused tests."""
     return LinearCompilerConfig(
@@ -53,7 +55,7 @@ def exhaustive_config(
             num_solutions=num_solutions,
             max_frontier_size=max_frontier_size,
             max_compile_time=max_compile_time,
-            heuristic_mode=heuristic_mode,
+            heuristic=heuristic,
         )
     )
 
@@ -92,7 +94,7 @@ def test_zero_heuristic_compiles_with_exact_search_profile() -> None:
         [0],
         {0: gate},
         architecture,
-        config=exhaustive_config(heuristic_mode="zero"),
+        config=exhaustive_config(heuristic=zero_heuristic),
     )
 
     assert result.status is CompilationStatus.SUCCESS
@@ -732,7 +734,12 @@ def test_larger_schedule_remains_deterministic_and_replayable() -> None:
 
 
 def test_six_qubit_qft_matches_frozen_schedule() -> None:
-    """Keep a substantial production schedule exactly reproducible."""
+    """Keep a substantial production schedule exactly reproducible.
+
+    The frozen values changed once when bounded-frontier eviction stopped
+    corrupting heap order: the search reaches the same makespan using eleven
+    fewer shuttles.
+    """
     qasm_path = Path(__file__).parent / "fixtures" / "qft_6.qasm"
     num_qubits, gate_list, predecessors, _ = parse_qasm_file(
         qasm_path,
@@ -761,7 +768,7 @@ def test_six_qubit_qft_matches_frozen_schedule() -> None:
     ).encode()
     assert result.status is CompilationStatus.SUCCESS
     assert len(gates) == 143
-    assert len(result.path) == 426
+    assert len(result.path) == 415
     assert result.num_timesteps == 219
     assert Counter(type(action).__name__ for action in result.path) == {
         "AdvanceTime": 219,
@@ -770,10 +777,10 @@ def test_six_qubit_qft_matches_frozen_schedule() -> None:
         "Ry": 54,
         "Rz": 45,
         "Rzz": 39,
-        "Shuttle": 28,
+        "Shuttle": 17,
     }
     assert hashlib.sha256(encoded_actions, usedforsecurity=False).hexdigest() == (
-        "1557943f721c4019943a4a768cf1598e0f58f986d910b59a068a79c5e03d93b8"
+        "9f0eb19da96b5b34cc86be1afb2617e1873f0fc3365bf36f3835347d7ca69d3c"
     )
     assert result.final_state is not None
     assert result.final_state.completed_gates == frozenset(gates)
@@ -791,3 +798,192 @@ def test_six_qubit_qft_matches_frozen_schedule() -> None:
         )
     assert replayed_state == result.final_state
     assert initial_state.completed_gates == frozenset()
+
+
+@pytest.mark.parametrize("max_frontier_size", [None, 1, 2, 5, 64])
+def test_frontier_returns_nodes_in_best_first_order(max_frontier_size: int | None) -> None:
+    """Take frontier nodes cheapest-first, whether or not the frontier is bounded."""
+    architecture = Architecture(num_sites=5, processing_zones={"pz": [2, 3]})
+    state = create_initial_state(2, architecture, initial_positions=[0, 4])
+    tie_breaker = count()
+    frontier: search_module.Frontier = []
+
+    priorities = [7, 2, 9, 2, 0, 5, 3, 8, 1, 6, 4, 9, 1]
+    for priority in priorities:
+        node = search_module._SearchNode(
+            state=state,
+            path=(),
+            cost_value=priority,
+            heuristic_value=0,
+            generation_mode=GenerationMode.FULL,
+        )
+        search_module._push_frontier(frontier, node, tie_breaker, max_frontier_size)
+        if max_frontier_size is not None:
+            assert len(frontier) <= max_frontier_size
+
+    taken = []
+    while frontier:
+        node, _ = search_module._take_node(None, frontier, max_frontier_size)
+        taken.append(node.cost_value)
+
+    assert taken == sorted(taken)
+    if max_frontier_size is None:
+        assert sorted(taken) == sorted(priorities)
+    else:
+        # A bounded frontier keeps the cheapest entries it was offered.
+        assert taken == sorted(priorities)[: len(taken)]
+
+
+def test_custom_heuristic_replaces_the_built_in_estimate() -> None:
+    """Route a two-qubit gate using a supplied heuristic instead of the default."""
+    architecture = Architecture(num_sites=5, processing_zones={"pz": [2, 3]})
+    initial_state = create_initial_state(2, architecture, initial_positions=[0, 4])
+    gates: dict[int, GateAction] = {0: Rzz(ion_a=0, ion_b=1, theta=1.0)}
+    calls: list[int] = []
+
+    def custom_heuristic(
+        state: State,
+        architecture_: Architecture,
+        gate_order: Sequence[int],
+        gates_: Mapping[int, GateAction],
+        predecessors: Mapping[int, frozenset[int]] | None = None,
+    ) -> int:
+        del architecture_, gates_, predecessors
+        calls.append(state.time)
+        return len([gate_id for gate_id in gate_order if gate_id not in state.completed_gates])
+
+    config = LinearCompilerConfig(
+        search=SearchConfig(
+            horizon=None,
+            committed_gates=1,
+            iterative_diving_search=False,
+            max_frontier_size=None,
+            max_compile_time=None,
+            heuristic=custom_heuristic,
+        )
+    )
+
+    result = search_module.search(initial_state, [0], gates, architecture, config=config)
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert calls, "the supplied heuristic was never consulted"
+    assert_replays(result, initial_state, architecture, [0], gates)
+
+
+def test_custom_heuristic_is_used_by_rolling_horizon_windows() -> None:
+    """Carry the supplied heuristic into every rolling planning window."""
+    architecture = Architecture(num_sites=1)
+    initial_state = create_initial_state(1, architecture)
+    gates: dict[int, GateAction] = {0: Rx(ion=0, theta=1.0), 1: Ry(ion=0, theta=0.5)}
+    predecessors = {0: frozenset[int](), 1: frozenset({0})}
+    windows: list[tuple[int, ...]] = []
+
+    def custom_heuristic(
+        state: State,
+        architecture_: Architecture,
+        gate_order: Sequence[int],
+        gates_: Mapping[int, GateAction],
+        predecessors_: Mapping[int, frozenset[int]] | None = None,
+    ) -> int:
+        del state, architecture_, gates_, predecessors_
+        windows.append(tuple(gate_order))
+        return 0
+
+    config = LinearCompilerConfig(
+        search=SearchConfig(
+            horizon=1,
+            committed_gates=1,
+            iterative_diving_search=False,
+            max_frontier_size=None,
+            max_compile_time=None,
+            heuristic=custom_heuristic,
+        )
+    )
+
+    result = search_module.search(initial_state, [0, 1], gates, architecture, predecessors, config)
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.final_state is not None
+    assert result.final_state.completed_gates == frozenset({0, 1})
+    assert set(windows) == {(0,), (1,)}
+
+
+def test_zero_heuristic_yields_an_admissible_estimate() -> None:
+    """Skip estimation entirely when the zero heuristic is selected."""
+    architecture = Architecture(num_sites=1)
+    initial_state = create_initial_state(1, architecture)
+    gates: dict[int, GateAction] = {0: Rx(ion=0, theta=0.5)}
+
+    config = LinearCompilerConfig(
+        search=SearchConfig(
+            horizon=None,
+            committed_gates=1,
+            iterative_diving_search=False,
+            max_frontier_size=None,
+            max_compile_time=None,
+            heuristic=zero_heuristic,
+        )
+    )
+
+    result = search_module.search(initial_state, [0], gates, architecture, config=config)
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.path == [gates[0], AdvanceTime()]
+
+
+def test_omitting_a_custom_heuristic_keeps_the_built_in_schedule() -> None:
+    """Produce the same schedule with an explicit ``None`` as with the default."""
+    architecture = Architecture(num_sites=5, processing_zones={"pz": [2, 3]})
+    initial_state = create_initial_state(2, architecture, initial_positions=[0, 4])
+    gates: dict[int, GateAction] = {0: Rzz(ion_a=0, ion_b=1, theta=1.0)}
+
+    default_result = search_module.search(initial_state, [0], gates, architecture, config=exhaustive_config())
+    explicit_result = search_module.search(
+        initial_state,
+        [0],
+        gates,
+        architecture,
+        config=LinearCompilerConfig(
+            search=SearchConfig(
+                horizon=None,
+                committed_gates=1,
+                iterative_diving_search=False,
+                max_frontier_size=None,
+                max_compile_time=None,
+                heuristic=None,
+            )
+        ),
+    )
+
+    assert explicit_result.status is default_result.status
+    assert explicit_result.score == default_result.score
+    assert explicit_result.path == default_result.path
+
+
+@pytest.mark.parametrize("horizon", [None, 1])
+@pytest.mark.parametrize("custom", [False, True])
+@pytest.mark.parametrize("assigned", [False, True])
+def test_partition_bias_warning_and_unknown_zone_fallback(
+    caplog: pytest.LogCaptureFixture, horizon: int | None, *, custom: bool, assigned: bool
+) -> None:
+    """Warn once for custom estimates and tolerate unmatched zone names."""
+    architecture = Architecture(num_sites=2)
+    initial_state = create_initial_state(2, architecture)
+    gates = {0: Rzz(ion_a=0, ion_b=1, theta=0.3), 1: Rzz(ion_a=0, ion_b=1, theta=0.5)}
+    config = LinearCompilerConfig(
+        search=SearchConfig(horizon=horizon, committed_gates=1, heuristic=zero_heuristic if custom else None)
+    )
+
+    result = search_module.search(
+        initial_state,
+        [0, 1],
+        gates,
+        architecture,
+        config=config,
+        gate_zone={0: "missing", 1: "missing"} if assigned else {},
+        zone_site_pairs={"other": ((0, 1),)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    warnings = [record for record in caplog.records if "pre-partition bias is ignored" in record.message]
+    assert len(warnings) == int(custom and assigned)

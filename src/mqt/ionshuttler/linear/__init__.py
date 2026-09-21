@@ -18,6 +18,7 @@ from mqt.ionshuttler.linear.config import (
     SearchConfig,
     TransportTiming,
 )
+from mqt.ionshuttler.linear.cost import HeuristicFn, zero_heuristic
 from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.linear.schedule import ActionSchedule, MachineState, ScheduledAction
 
@@ -52,10 +53,12 @@ __all__ = [
     "CompilationStatus",
     "GateTiming",
     "HardwareTiming",
+    "HeuristicFn",
     "LinearCompiler",
     "LinearCompilerConfig",
     "MachineState",
     "ScheduledAction",
     "SearchConfig",
     "TransportTiming",
+    "zero_heuristic",
 ]

@@ -13,10 +13,10 @@ from unittest.mock import patch
 
 import pytest
 
-from mqt.ionshuttler.multi_shuttler.circuit_types import GateInfo
 from mqt.ionshuttler.multi_shuttler.outside import scheduling
 from mqt.ionshuttler.multi_shuttler.outside.graph import Graph
 from mqt.ionshuttler.multi_shuttler.outside.ion_types import Edge
+from mqt.ionshuttler.partitioning import GateInfo
 
 if TYPE_CHECKING:
     from mqt.ionshuttler.multi_shuttler.outside.processing_zone import ProcessingZone

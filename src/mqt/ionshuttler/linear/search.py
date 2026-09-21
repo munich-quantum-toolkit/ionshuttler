@@ -10,7 +10,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from bisect import insort
+from dataclasses import dataclass, field, replace
 from heapq import heappop, heappush
 from itertools import count
 from time import perf_counter
@@ -18,7 +19,7 @@ from typing import TYPE_CHECKING
 
 from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES, Action, AdvanceTime, GateAction
 from mqt.ionshuttler.linear.config import LinearCompilerConfig, TransportTiming
-from mqt.ionshuttler.linear.cost import cost, heuristic
+from mqt.ionshuttler.linear.cost import cost, heuristic, zero_heuristic
 from mqt.ionshuttler.linear.expand import ExpansionOptions, GenerationMode, expand, replay_path
 from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.linear.schedule import ActionSchedule
@@ -28,7 +29,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from mqt.ionshuttler.linear.architecture import Architecture
-    from mqt.ionshuttler.linear.config import HeuristicMode, SearchConfig
+    from mqt.ionshuttler.linear.config import SearchConfig
+    from mqt.ionshuttler.linear.cost import HeuristicFn
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +72,7 @@ class _SearchPolicy:
     iterative_diving: bool
     num_solutions: int
     max_frontier_size: int | None
-    heuristic_mode: HeuristicMode
+    heuristic: HeuristicFn | None = None
 
     @classmethod
     def from_config(cls, config: SearchConfig) -> _SearchPolicy:
@@ -89,7 +91,7 @@ class _SearchPolicy:
             iterative_diving=config.iterative_diving_search,
             num_solutions=config.num_solutions,
             max_frontier_size=config.max_frontier_size,
-            heuristic_mode=config.heuristic_mode,
+            heuristic=config.heuristic,
         )
 
     @property
@@ -137,10 +139,20 @@ class _SearchContext:
     policy: _SearchPolicy
     transport_timing: TransportTiming
     action_types: tuple[type[Action], ...]
+    critical_path_cache: dict[tuple[int, ...], int] = field(default_factory=dict)
+    gate_zone: Mapping[int, str] = field(default_factory=dict)
+    zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] = field(default_factory=dict)
 
 
-FrontierEntry = tuple[int, int, _SearchNode]
+FrontierEntry = tuple[int, _SearchNode]
 Frontier = list[FrontierEntry]
+
+# Frontier entries sort by estimated total cost, then by insertion order. Packing
+# both into one integer reduces every ordering comparison to a single integer
+# compare, and makes keys unique so that comparisons never fall through to the
+# node itself, which defines no ordering. The width bounds how many entries one
+# search may enqueue and is far above any reachable count.
+_INSERTION_ORDER_BITS = 44
 
 
 @dataclass
@@ -178,6 +190,8 @@ def search(
     config: LinearCompilerConfig | None = None,
     *,
     action_types: tuple[type[Action], ...] = DEFAULT_ACTION_TYPES,
+    gate_zone: Mapping[int, str] | None = None,
+    zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
 ) -> CompilationResult:
     """Compile a circuit using the configured global or rolling search.
 
@@ -195,6 +209,8 @@ def search(
             predecessors=predecessors,
             config=compiler_config,
             action_types=action_types,
+            gate_zone=gate_zone,
+            zone_site_pairs=zone_site_pairs,
         )
     return rolling_horizon_search(
         normalized_state,
@@ -204,6 +220,8 @@ def search(
         predecessors=predecessors,
         config=compiler_config,
         action_types=action_types,
+        gate_zone=gate_zone,
+        zone_site_pairs=zone_site_pairs,
     )
 
 
@@ -216,6 +234,8 @@ def exhaustive_search(
     predecessors: Mapping[int, frozenset[int]] | None = None,
     config: LinearCompilerConfig | None = None,
     action_types: tuple[type[Action], ...] = DEFAULT_ACTION_TYPES,
+    gate_zone: Mapping[int, str] | None = None,
+    zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
 ) -> CompilationResult:
     """Search the complete circuit at once.
 
@@ -231,6 +251,8 @@ def exhaustive_search(
         predecessors,
         compiler_config,
         action_types,
+        gate_zone,
+        zone_site_pairs,
     )
     result = _search_with_budget(initial_state, context, budget)
     return _with_public_metadata(
@@ -250,6 +272,8 @@ def rolling_horizon_search(
     predecessors: Mapping[int, frozenset[int]] | None,
     config: LinearCompilerConfig,
     action_types: tuple[type[Action], ...] = DEFAULT_ACTION_TYPES,
+    gate_zone: Mapping[int, str] | None = None,
+    zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
 ) -> CompilationResult:
     """Plan a limited number of upcoming gates at a time.
 
@@ -265,7 +289,16 @@ def rolling_horizon_search(
         raise ValueError(msg)
 
     budget = _TimeBudget.start(config.search.max_compile_time)
-    context = _context(architecture, gate_order, gates, predecessors, config, action_types)
+    context = _context(
+        architecture,
+        gate_order,
+        gates,
+        predecessors,
+        config,
+        action_types,
+        gate_zone,
+        zone_site_pairs,
+    )
     progress = _RollingProgress(state=initial_state, schedule=[])
 
     try:
@@ -318,6 +351,8 @@ def _run_rolling_search(
             policy=context.policy,
             transport_timing=context.transport_timing,
             action_types=context.action_types,
+            gate_zone=context.gate_zone,
+            zone_site_pairs=context.zone_site_pairs,
         )
         local_result = _search_with_budget(progress.state, local_context, budget)
         progress.explored_nodes += local_result.explored_nodes or 0
@@ -356,7 +391,11 @@ def _context(
     predecessors: Mapping[int, frozenset[int]] | None,
     config: LinearCompilerConfig,
     action_types: tuple[type[Action], ...],
+    gate_zone: Mapping[int, str] | None = None,
+    zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
 ) -> _SearchContext:
+    if config.search.heuristic is not None and gate_zone:
+        logger.warning("The built-in pre-partition bias is ignored when a custom heuristic is supplied.")
     return _SearchContext(
         architecture=architecture,
         gate_order=gate_order,
@@ -365,6 +404,8 @@ def _context(
         policy=_SearchPolicy.from_config(config.search),
         transport_timing=config.hardware_timing.transport,
         action_types=action_types,
+        gate_zone={} if gate_zone is None else gate_zone,
+        zone_site_pairs={} if zone_site_pairs is None else zone_site_pairs,
     )
 
 
@@ -437,6 +478,7 @@ def _run_search(
         node, progress.current_node = _take_node(
             progress.current_node,
             progress.frontier,
+            context.policy.max_frontier_size,
         )
         if _is_dominated(node, progress.best_by_state, progress.best_by_mode):
             continue
@@ -640,10 +682,13 @@ def _queue_next_mode(
 def _take_node(
     current_node: _SearchNode | None,
     frontier: Frontier,
+    max_size: int | None,
 ) -> tuple[_SearchNode, None]:
     if current_node is not None:
         return current_node, None
-    return heappop(frontier)[2], None
+    if max_size is None:
+        return heappop(frontier)[1], None
+    return frontier.pop(0)[1], None
 
 
 def _is_dominated(
@@ -664,61 +709,51 @@ def _push_frontier(
     tie_breaker: count,
     max_size: int | None,
 ) -> None:
-    heappush(frontier, (_priority(node), next(tie_breaker), node))
-    if max_size is None or len(frontier) <= max_size:
+    """Add a node to the frontier, discarding the worst entry once it is full.
+
+    An unbounded frontier grows to tens of thousands of entries, where heap
+    ordering is the cheaper structure. A bounded frontier instead has to find
+    and drop its worst entry on nearly every push, which a heap can only do by
+    scanning; keeping it fully sorted puts both ends within reach and costs a
+    binary search plus a block move per insertion.
+    """
+    entry = (_frontier_key(node, next(tie_breaker)), node)
+    if max_size is None:
+        heappush(frontier, entry)
         return
-    worst_index = max(
-        range(len(frontier)),
-        key=lambda index: (frontier[index][0], frontier[index][1]),
-    )
-    last_entry = frontier.pop()
-    if worst_index < len(frontier):
-        frontier[worst_index] = last_entry
-        _sift_up(frontier, worst_index)
+    insort(frontier, entry)
+    if len(frontier) > max_size:
+        del frontier[-1]
 
 
-def _sift_up(frontier: Frontier, position: int) -> None:
-    """Repair a heap after replacing one entry with its previous last entry."""
-    end = len(frontier)
-    start = position
-    new_entry = frontier[position]
-    child = 2 * position + 1
-    while child < end:
-        right = child + 1
-        if right < end and not _frontier_entry_precedes(frontier[child], frontier[right]):
-            child = right
-        frontier[position] = frontier[child]
-        position = child
-        child = 2 * position + 1
-    frontier[position] = new_entry
-    _sift_down(frontier, start, position)
-
-
-def _sift_down(frontier: Frontier, start: int, position: int) -> None:
-    new_entry = frontier[position]
-    while position > start:
-        parent = (position - 1) >> 1
-        parent_entry = frontier[parent]
-        if not _frontier_entry_precedes(new_entry, parent_entry):
-            break
-        frontier[position] = parent_entry
-        position = parent
-    frontier[position] = new_entry
-
-
-def _frontier_entry_precedes(left: FrontierEntry, right: FrontierEntry) -> bool:
-    return (left[0], left[1]) < (right[0], right[1])
+def _frontier_key(node: _SearchNode, insertion_order: int) -> int:
+    """Return the packed heap key ordering a node by cost estimate, then arrival."""
+    return (_priority(node) << _INSERTION_ORDER_BITS) | insertion_order
 
 
 def _heuristic(state: State, context: _SearchContext) -> int:
-    if context.policy.heuristic_mode == "zero":
-        return 0
+    custom = context.policy.heuristic
+    if custom is not None:
+        # The zero estimate is evaluated for every expanded node, so the
+        # built-in one short-circuits instead of paying for a call.
+        if custom is zero_heuristic:
+            return 0
+        return custom(
+            state,
+            context.architecture,
+            context.gate_order,
+            context.gates,
+            context.predecessors,
+        )
     return heuristic(
         state,
         context.architecture,
         context.gate_order,
         context.gates,
         context.predecessors,
+        critical_path_cache=context.critical_path_cache,
+        gate_zone=context.gate_zone,
+        zone_site_pairs=context.zone_site_pairs,
     )
 
 

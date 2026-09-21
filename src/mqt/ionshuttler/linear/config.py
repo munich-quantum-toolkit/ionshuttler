@@ -10,12 +10,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mqt.ionshuttler.linear.cost import HeuristicFn
+    from mqt.ionshuttler.partitioning import FineGrainedTabuConfig
 
 SINGLE_QUBIT_GATE_NAMES = frozenset({"rx", "ry", "rz"})
 TWO_QUBIT_GATE_NAMES = frozenset({"rxx", "ryy", "rzz"})
 GATE_NAMES = SINGLE_QUBIT_GATE_NAMES | TWO_QUBIT_GATE_NAMES
-HeuristicMode = Literal["quality", "zero"]
 
 
 @dataclass(frozen=True)
@@ -118,10 +121,14 @@ class SearchConfig:
 
     A finite ``horizon`` plans a few gates at a time and commits
     ``committed_gates`` before planning again. Set ``horizon`` to ``None`` to
-    search the complete circuit at once. The default ``quality`` heuristic
-    finds useful schedules faster but may overestimate their remaining time.
-    The ``zero`` heuristic is admissible and supports exact search when all
-    other limits and shortcuts are also disabled.
+    search the complete circuit at once. ``heuristic`` selects the
+    remaining-cost estimate that guides the search: the default ``None`` uses
+    a quality-oriented estimate that finds useful schedules faster but may
+    overestimate the remaining time, while
+    :func:`~mqt.ionshuttler.linear.cost.zero_heuristic` is admissible and
+    supports exact search when all other limits and shortcuts are also
+    disabled. Any other callable matching
+    :class:`~mqt.ionshuttler.linear.cost.HeuristicFn` may be supplied instead.
     """
 
     horizon: int | None = 3
@@ -132,7 +139,8 @@ class SearchConfig:
     max_frontier_size: int | None = 1000
     max_compile_time: float | None = 1800.0
     use_dependencies: bool = True
-    heuristic_mode: HeuristicMode = "quality"
+    heuristic: HeuristicFn | None = None
+    pre_partition_config: FineGrainedTabuConfig | None = None
 
     def __post_init__(self) -> None:
         """Ensure all search limits are meaningful and mutually consistent.
@@ -165,12 +173,9 @@ class SearchConfig:
             if not isinstance(getattr(self, name), bool):
                 msg = f"{name} must be a boolean"
                 raise TypeError(msg)
-        if not isinstance(self.heuristic_mode, str):
-            msg = "heuristic_mode must be a string"
+        if self.heuristic is not None and not callable(self.heuristic):
+            msg = "heuristic must be callable or None"
             raise TypeError(msg)
-        if self.heuristic_mode not in {"quality", "zero"}:
-            msg = "heuristic_mode must be 'quality' or 'zero'"
-            raise ValueError(msg)
 
 
 @dataclass(frozen=True)
@@ -216,7 +221,6 @@ __all__ = [
     "TWO_QUBIT_GATE_NAMES",
     "GateTiming",
     "HardwareTiming",
-    "HeuristicMode",
     "LinearCompilerConfig",
     "SearchConfig",
     "TransportTiming",

@@ -27,7 +27,7 @@ from mqt.ionshuttler.multi_shuttler.circuit_parsing import (
     is_qasm_file,
     parse_qasm_circuit,
 )
-from mqt.ionshuttler.multi_shuttler.circuit_types import GateInfo, ParsedCircuit
+from mqt.ionshuttler.multi_shuttler.circuit_types import ParsedCircuit
 from mqt.ionshuttler.multi_shuttler.inside.graph import Graph as InsideGraph
 from mqt.ionshuttler.multi_shuttler.main import main
 from mqt.ionshuttler.multi_shuttler.outside import compilation as outside_compilation
@@ -60,6 +60,7 @@ from mqt.ionshuttler.multi_shuttler.outside.partition import (
     read_qasm_file,
 )
 from mqt.ionshuttler.multi_shuttler.outside.processing_zone import ProcessingZone
+from mqt.ionshuttler.partitioning import GateInfo
 
 if TYPE_CHECKING:
     from qiskit.dagcircuit import DAGDepNode

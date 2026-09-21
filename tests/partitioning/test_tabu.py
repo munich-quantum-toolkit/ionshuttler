@@ -13,11 +13,11 @@ from typing import Any
 
 import pytest
 
-from mqt.ionshuttler.multi_shuttler import gate_partitioning_tabu as tabu
-from mqt.ionshuttler.multi_shuttler.circuit_types import GateInfo
-from mqt.ionshuttler.multi_shuttler.gate_partitioning_tabu import (
+from mqt.ionshuttler.partitioning import (
     FineGrainedTabuConfig,
+    GateInfo,
     compute_fine_grained_gate_partition,
+    tabu,
 )
 
 

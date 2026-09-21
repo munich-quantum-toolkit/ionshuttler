@@ -8,16 +8,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mqt.ionshuttler.partitioning import GateInfo
 
 GateRef = int | tuple[int, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class GateInfo:
-    """Immutable metadata for a parsed gate."""
-
-    qubits: tuple[int, ...]
-    qasm: str
 
 
 @dataclass(slots=True)

@@ -16,7 +16,8 @@ from typing import Any
 
 import networkx as nx
 
-from .gate_partitioning_tabu import compute_fine_grained_gate_partition
+from mqt.ionshuttler.partitioning import compute_fine_grained_gate_partition
+
 from .outside.compilation import create_dag, create_initial_circuit, create_updated_sequence_destructive
 from .outside.cycles import create_starting_config, get_ions
 from .outside.graph_creator import GraphCreator, PZCreator

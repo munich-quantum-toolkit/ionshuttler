@@ -68,6 +68,11 @@ mqt-ionshuttler-heuristic inputs/algorithms_heuristic/qft_60_4pzs.json
 Architectures and algorithms are specified in JSON files. For examples, see
 [`inputs/algorithms_heuristic`](https://github.com/munich-quantum-toolkit/ionshuttler/blob/main/inputs/algorithms_heuristic/).
 
+The fine-grained tabu partitioner used by this backend is available from the
+shared {py:mod}`mqt.ionshuttler.partitioning` package. Code that previously
+imported `mqt.ionshuttler.multi_shuttler.gate_partitioning_tabu` should use the
+shared package instead.
+
 ```{toctree}
 :hidden:
 

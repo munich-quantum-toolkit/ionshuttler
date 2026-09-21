@@ -21,6 +21,7 @@ from mqt.ionshuttler.linear import DEFAULT_ACTION_TYPES, Architecture, LinearCom
 from mqt.ionshuttler.linear.actions import (
     Action,
     AdvanceTime,
+    GateAction,
     PhysicalSwap,
     Rx,
     Rxx,
@@ -32,6 +33,8 @@ from mqt.ionshuttler.linear.actions import (
     TwoQubitGate,
 )
 from mqt.ionshuttler.linear.config import LinearCompilerConfig, SearchConfig, TransportTiming
+from mqt.ionshuttler.linear.expand import replay_path
+from mqt.ionshuttler.linear.parser import parse_circuit
 from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.linear.schedule import ActionSchedule
 from mqt.ionshuttler.linear.state import create_initial_state
@@ -126,6 +129,58 @@ def test_compiler_produces_a_compact_replayable_schedule() -> None:
     assert result.final_state is not None
     assert result.final_state.time == 5
     assert result.final_state.completed_gates == frozenset({0, 1, 2})
+
+
+def test_pre_partition_is_a_strict_single_zone_no_op() -> None:
+    """Produce identical deterministic output when one zone makes partitioning irrelevant."""
+    architecture = Architecture(num_sites=5, processing_zones={"pz": [2, 3]})
+    compiler = LinearCompiler(architecture)
+    qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nrzz(0.3) q[0],q[1];\n'
+
+    baseline = compiler.compile(qasm)
+    partitioned = compiler.compile(qasm, pre_partition=True)
+
+    assert replace(partitioned, wall_clock_s=baseline.wall_clock_s) == baseline
+
+
+def test_pre_partitioned_multi_zone_schedule_is_complete_and_replayable() -> None:
+    """Compile every gate and replay the resulting two-zone schedule in full."""
+    architecture = Architecture(
+        num_sites=9,
+        processing_zones={"left": [1, 2], "right": [6, 7]},
+    )
+    qasm = """OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[3];
+rzz(0.1) q[0],q[1];
+rx(0.2) q[2];
+rzz(0.3) q[1],q[2];
+"""
+    compiler = LinearCompiler(architecture)
+
+    result = compiler.compile(qasm, pre_partition=True)
+    _, gate_list, predecessors, _ = parse_circuit(
+        qasm,
+        use_dependencies=compiler.config.search.use_dependencies,
+        gate_timing=compiler.config.hardware_timing.gates,
+        gate_types=tuple(
+            action_type for action_type in compiler.action_types or () if issubclass(action_type, GateAction)
+        ),
+    )
+    gate_order = list(range(len(gate_list)))
+    gates = dict(zip(gate_order, gate_list, strict=True))
+    replayed = replay_path(
+        result.initial_state.to_replay_state(),
+        architecture,
+        result.path,
+        gate_order,
+        gates,
+        predecessors=predecessors,
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.final_state == replayed
+    assert replayed.completed_gates == frozenset(gate_order)
 
 
 def test_compiler_uses_the_hardware_action_catalog() -> None:
@@ -394,3 +449,33 @@ def test_compilation_does_not_write_files(tmp_path: Path, monkeypatch: pytest.Mo
 
     assert result.status is CompilationStatus.SUCCESS
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("horizon", [None, 1])
+@pytest.mark.parametrize("limit", [1.0, 3.0, None])
+def test_partition_time_counts_toward_compile_budget(
+    monkeypatch: pytest.MonkeyPatch, horizon: int | None, limit: float | None
+) -> None:
+    """Charge partition time to both search modes and elapsed-time metadata."""
+    now = [0.0]
+
+    def partition(*_args: object, **_kwargs: object) -> dict[int, str]:
+        now[0] += 2.0
+        return {0: "left"}
+
+    monkeypatch.setattr(compiler_module, "perf_counter", lambda: now[0])
+    monkeypatch.setattr(search_module, "perf_counter", lambda: now[0])
+    monkeypatch.setattr(compiler_module, "compute_gate_zone_assignment", partition)
+    config = LinearCompilerConfig(search=SearchConfig(horizon=horizon, committed_gates=1, max_compile_time=limit))
+    compiler = LinearCompiler(Architecture(num_sites=4, processing_zones={"left": [0, 1], "right": [2, 3]}), config)
+    circuit = QuantumCircuit(2)
+    circuit.rzz(0.3, 0, 1)
+
+    result = compiler.compile(circuit, pre_partition=True)
+
+    expired = limit is not None and limit < 2.0
+    assert result.status is (CompilationStatus.TIMEOUT if expired else CompilationStatus.SUCCESS)
+    assert result.wall_clock_s == pytest.approx(2.0)
+    assert compiler.config.search.max_compile_time == limit
+    if expired:
+        assert result.path == []

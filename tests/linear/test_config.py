@@ -16,14 +16,16 @@ import pytest
 from mqt.ionshuttler.linear.config import (
     GateTiming,
     HardwareTiming,
-    HeuristicMode,
     LinearCompilerConfig,
     SearchConfig,
     TransportTiming,
 )
+from mqt.ionshuttler.linear.cost import zero_heuristic
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from mqt.ionshuttler.linear.cost import HeuristicFn
 
 
 def test_compiler_config_uses_ready_to_run_defaults() -> None:
@@ -43,7 +45,7 @@ def test_compiler_config_uses_ready_to_run_defaults() -> None:
         max_frontier_size=1000,
         max_compile_time=1800.0,
         use_dependencies=True,
-        heuristic_mode="quality",
+        pre_partition_config=None,
     )
 
 
@@ -113,18 +115,26 @@ def test_search_config_rejects_invalid_bounds(
         factory()
 
 
-def test_search_config_accepts_zero_heuristic() -> None:
-    """Allow an admissible zero estimate for exact search profiles."""
-    assert SearchConfig(heuristic_mode="zero").heuristic_mode == "zero"
+def test_search_config_accepts_the_zero_heuristic() -> None:
+    """Allow the admissible zero estimate for exact search profiles."""
+    assert SearchConfig(heuristic=zero_heuristic).heuristic is zero_heuristic
 
 
-def test_search_config_rejects_unknown_heuristic() -> None:
-    """Reject heuristic selectors the compiler does not understand."""
-    with pytest.raises(ValueError, match="'quality' or 'zero'"):
-        SearchConfig(heuristic_mode=cast("HeuristicMode", "distance"))
+def test_search_config_defaults_to_the_built_in_heuristic() -> None:
+    """Leave the built-in estimate in place unless one is supplied."""
+    assert SearchConfig().heuristic is None
 
 
-def test_search_config_requires_a_string_heuristic_selector() -> None:
-    """Report a clear type error for malformed heuristic selectors."""
-    with pytest.raises(TypeError, match="must be a string"):
-        SearchConfig(heuristic_mode=cast("HeuristicMode", 0))
+def test_search_config_accepts_a_callable_heuristic() -> None:
+    """Store a supplied heuristic for the search to consult."""
+
+    def estimate(*_args: object, **_kwargs: object) -> int:
+        return 0
+
+    assert SearchConfig(heuristic=estimate).heuristic is estimate
+
+
+def test_search_config_rejects_a_non_callable_heuristic() -> None:
+    """Report a clear type error when the heuristic cannot be called."""
+    with pytest.raises(TypeError, match="heuristic must be callable or None"):
+        SearchConfig(heuristic=cast("HeuristicFn", 5))
