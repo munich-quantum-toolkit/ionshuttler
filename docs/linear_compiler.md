@@ -204,7 +204,7 @@ config = LinearCompilerConfig(
         max_frontier_size=1000,
         max_compile_time=1800.0,
         use_dependencies=True,
-        )
+    )
 )
 ```
 
