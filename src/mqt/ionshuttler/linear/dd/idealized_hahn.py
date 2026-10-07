@@ -13,16 +13,16 @@ from dataclasses import dataclass
 from itertools import count
 from typing import TYPE_CHECKING, ClassVar
 
-from mqt.ionshuttler.linear.actions import Action, AdvanceTime
 from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
 from mqt.ionshuttler.linear.dd.schedule_transform import local_gate_for_spec, rebuild_schedule
 from mqt.ionshuttler.linear.dd.schemes import HAHN_ECHO, MIDPOINT_ONLY_HAHN, DDScheme, get_dd_scheme
-from mqt.ionshuttler.linear.dd.timeline import build_timeline
 from mqt.ionshuttler.linear.dd.windows import find_idle_windows
-from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
+from mqt.ionshuttler.linear.schedule import Schedule, ScheduledAction
+from mqt.ionshuttler.linear.timeline import CompiledTimeline, build_timeline
 
 if TYPE_CHECKING:
-    from mqt.ionshuttler.linear.architecture import Architecture
+    from mqt.ionshuttler.linear.actions import Action
+    from mqt.ionshuttler.linear.architecture import LinearArchitecture
 
 
 @dataclass(frozen=True)
@@ -113,8 +113,8 @@ class IdealizedHahnReport:
 
 
 def apply_idealized_hahn(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
     config: IdealizedHahnConfig | None = None,
 ) -> DDPassResult[IdealizedHahnReport]:
     """Insert constraint-relaxed Hahn pulses into every eligible idle window.
@@ -151,7 +151,12 @@ def apply_idealized_hahn(
     if not pending_sequences:
         return DDPassResult(schedule=schedule, architecture=architecture, report=IdealizedHahnReport())
 
-    scheduled_actions, action_ids_by_sequence = _path_with_inserted_pulses(schedule, pulses_by_time)
+    scheduled_actions, action_ids_by_sequence = _path_with_inserted_pulses(
+        schedule,
+        pulses_by_time,
+        architecture,
+        timeline,
+    )
     sequences = tuple(
         LocalDDSequence(
             ion=ion,
@@ -199,33 +204,34 @@ def _default_min_idle_timesteps(scheme: DDScheme) -> int:
 
 
 def _path_with_inserted_pulses(
-    program: ActionSchedule,
+    program: Schedule,
     pulses_by_time: dict[int, list[tuple[int, Action]]],
+    architecture: LinearArchitecture,
+    timeline: CompiledTimeline,
 ) -> tuple[tuple[ScheduledAction, ...], dict[int, list[int]]]:
     if not pulses_by_time:
         return program.scheduled_actions, {}
 
+    existing_by_time: dict[int, list[ScheduledAction]] = {}
+    for item in program.scheduled_actions:
+        existing_by_time.setdefault(item.start_time, []).append(item)
     updated: list[ScheduledAction] = []
     action_ids_by_sequence: dict[int, list[int]] = {}
     action_ids = count(program.next_action_id)
-    current_time = 0
-    inserted_at_current_time = False
-    for item in program.scheduled_actions:
-        if not inserted_at_current_time and current_time in pulses_by_time:
-            for sequence_index, action in pulses_by_time[current_time]:
-                action_id = next(action_ids)
-                updated.append(ScheduledAction(action_id, action))
-                action_ids_by_sequence.setdefault(sequence_index, []).append(action_id)
-            inserted_at_current_time = True
-        updated.append(item)
-        if isinstance(item.action, AdvanceTime):
-            current_time += item.action.timestep_increment
-            inserted_at_current_time = False
-    if not inserted_at_current_time and current_time in pulses_by_time:
-        for sequence_index, action in pulses_by_time[current_time]:
+    for timestep in sorted(set(existing_by_time) | set(pulses_by_time)):
+        for sequence_index, action in pulses_by_time.get(timestep, ()):
             action_id = next(action_ids)
-            updated.append(ScheduledAction(action_id, action))
+            updated.append(
+                ScheduledAction(
+                    action_id,
+                    action,
+                    start_time=timestep,
+                    duration=architecture.action_duration(action),
+                    processing_zone_id=architecture.action_processing_zone(action, timeline.state_at(timestep)),
+                )
+            )
             action_ids_by_sequence.setdefault(sequence_index, []).append(action_id)
+        updated.extend(existing_by_time.get(timestep, ()))
     return tuple(updated), action_ids_by_sequence
 
 

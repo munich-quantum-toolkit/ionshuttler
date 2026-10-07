@@ -17,7 +17,7 @@ from typing import cast
 
 import pytest
 
-from mqt.ionshuttler.linear.architecture import Architecture
+from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.dd import (
     DDPassResult,
     GlobalDDConfig,
@@ -31,14 +31,14 @@ from mqt.ionshuttler.linear.dd import (
     SADDReport,
     sadd_solver,
 )
-from mqt.ionshuttler.linear.schedule import ActionSchedule
+from mqt.ionshuttler.linear.schedule import Schedule, schedule_from_path
 from mqt.ionshuttler.linear.state import create_initial_state
 
-_ARCHITECTURE = Architecture(num_sites=1)
+_ARCHITECTURE = LinearArchitecture(num_sites=1)
 
 
-def _program() -> ActionSchedule:
-    return ActionSchedule.from_actions([], create_initial_state(1, _ARCHITECTURE))
+def _program() -> Schedule:
+    return schedule_from_path([], create_initial_state(1, _ARCHITECTURE), _ARCHITECTURE)
 
 
 def _opportunity(**overrides: object) -> SADDOpportunityRecord:
@@ -109,7 +109,6 @@ def test_sadd_defaults_freeze_the_paper_configuration() -> None:
         allow_pulses=True,
         scale=1000,
         num_search_workers=8,
-        operation_durations=None,
     )
     assert SADDMethod.PULSE_ONLY.allow_transport is False
     assert SADDMethod.FULL.allow_transport is True
@@ -131,7 +130,6 @@ def test_sadd_defaults_freeze_the_paper_configuration() -> None:
         ({"allow_pulses": 1}, TypeError, "allow_pulses"),
         ({"scale": 0}, ValueError, "scale"),
         ({"num_search_workers": 0}, ValueError, "num_search_workers"),
-        ({"operation_durations": object()}, TypeError, "operation_durations"),
     ],
 )
 def test_sadd_config_rejects_invalid_values(
@@ -194,6 +192,11 @@ def test_sadd_values_are_immutable_and_copy_mutable_inputs() -> None:
         setattr(result, schedule_attribute, "mutated")
 
 
+def test_sadd_opportunity_equality_ignores_runtime() -> None:
+    """Treat two opportunity outcomes as equal when only their solver runtimes differ."""
+    assert _opportunity(runtime_s=0.1) == _opportunity(runtime_s=2.5)
+
+
 def test_sadd_report_round_trips_through_dict_and_json() -> None:
     """Restore a fully populated SADD report from its serialized form."""
     opportunity = _opportunity(
@@ -206,6 +209,7 @@ def test_sadd_report_round_trips_through_dict_and_json() -> None:
 
     assert restored == report
     assert restored.opportunities[0].pulse_action_ids == {0: (7,)}
+    assert restored.opportunities[0].runtime_s == opportunity.runtime_s
     serialized_opportunities = report.to_dict()["opportunities"]
     assert isinstance(serialized_opportunities, list)
     assert isinstance(serialized_opportunities[0], dict)

@@ -9,25 +9,28 @@
 
 from __future__ import annotations
 
+import json
 import math
 import operator
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
 from mqt.ionshuttler.linear.actions import PhysicalSwap, Rx, Shuttle, TransportAction
 from mqt.ionshuttler.linear.dd.critical_segments import CriticalSegment, compute_critical_segments
-from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
+from mqt.ionshuttler.linear.dd.result import LocalDDSequence
 from mqt.ionshuttler.linear.dd.sadd_solver import build_sadd_problem, solve_sadd_problem
-from mqt.ionshuttler.linear.dd.schedule_transform import validate_schedule_compatibility
-from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
+from mqt.ionshuttler.linear.replay import replay_schedule
+from mqt.ionshuttler.linear.result import CompilationResult, result_from_dict
+from mqt.ionshuttler.linear.timeline import CompiledTimeline, build_timeline
 
 if TYPE_CHECKING:
-    from mqt.ionshuttler.linear.architecture import Architecture
-    from mqt.ionshuttler.linear.schedule import ActionSchedule
+    from mqt.ionshuttler.linear.architecture import LinearArchitecture
+    from mqt.ionshuttler.linear.schedule import Schedule
 
 IonFloatMapping = Mapping[int, float]
 IonTimestepsMapping = Mapping[int, tuple[int, ...]]
@@ -46,31 +49,6 @@ class SADDMethod(StrEnum):
 
 
 @dataclass(frozen=True)
-class OperationDurations:
-    """Define durations of operations that SADD may synthesize."""
-
-    shuttle: int = 1
-    swap: int = 3
-    one_qubit_gate: int = 1
-
-    def __post_init__(self) -> None:
-        """Validate that every synthesized operation occupies positive time.
-
-        Raises:
-            TypeError: If a duration is not an integer.
-            ValueError: If a duration is not positive.
-        """
-        for name in ("shuttle", "swap", "one_qubit_gate"):
-            duration = getattr(self, name)
-            if isinstance(duration, bool) or not isinstance(duration, int):
-                msg = f"{name} must be an integer"
-                raise TypeError(msg)
-            if duration < 1:
-                msg = f"{name} must be >= 1"
-                raise ValueError(msg)
-
-
-@dataclass(frozen=True)
 class SADDConfig:
     """Configure the shared pulse-only and transport-enabled SADD backend.
 
@@ -82,9 +60,8 @@ class SADDConfig:
     rather than an invalid or missing result. Raise it for long windows or many
     participating ions, where proving optimality takes longer.
 
-    When ``operation_durations`` is ``None``, SADD infers uniform transport
-    durations already present in the schedule and uses the standard operation
-    defaults for transport kinds that are absent.
+    Synthesized shuttles, swaps, and local pulses take the durations defined
+    by the architecture.
     """
 
     min_window_length: int = 2
@@ -98,7 +75,6 @@ class SADDConfig:
     allow_pulses: bool = True
     scale: int = 1000
     num_search_workers: int = 8
-    operation_durations: OperationDurations | None = None
 
     def __post_init__(self) -> None:
         """Validate optimization and problem parameters.
@@ -128,9 +104,6 @@ class SADDConfig:
             raise TypeError(msg)
         _require_positive_int(self.scale, "scale")
         _require_positive_int(self.num_search_workers, "num_search_workers")
-        if self.operation_durations is not None and not isinstance(self.operation_durations, OperationDurations):
-            msg = "operation_durations must be an OperationDurations instance or None"
-            raise TypeError(msg)
 
 
 @dataclass(frozen=True)
@@ -139,6 +112,8 @@ class SADDOpportunityRecord:
 
     ``transport_delta`` records the signed change in scheduled transport actions
     by concrete action type between the opportunity input and proposed result.
+    Equality ignores ``runtime_s``, so two runs with the same outcome compare
+    equal.
     """
 
     target_pz: str
@@ -151,7 +126,7 @@ class SADDOpportunityRecord:
     accepted: bool
     pulse_count: int
     transport_delta: Mapping[str, int]
-    runtime_s: float
+    runtime_s: float = field(compare=False)
     message: str | None = None
     eligible_ions: tuple[int, ...] = ()
     busy_ions: tuple[int, ...] = ()
@@ -325,6 +300,93 @@ class SADDReport:
 
 
 @dataclass(frozen=True)
+class SADDResult:
+    """Contain a SADD-augmented compilation result and its pass report."""
+
+    result: CompilationResult
+    report: SADDReport
+    unavailable_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        """Validate the transformed result, report, and optional explanation.
+
+        Raises:
+            TypeError: If a field has the wrong type.
+            ValueError: If an unavailable reason is empty.
+        """
+        if not isinstance(self.result, CompilationResult):
+            msg = "result must be a CompilationResult"
+            raise TypeError(msg)
+        if not isinstance(self.report, SADDReport):
+            msg = "report must be a SADDReport"
+            raise TypeError(msg)
+        if self.unavailable_reason is not None and not self.unavailable_reason:
+            msg = "unavailable_reason must be non-empty or None"
+            raise ValueError(msg)
+
+    def to_dict(self) -> dict[str, object]:
+        """Return this SADD result using JSON-compatible values."""
+        return {
+            "result": self.result.to_dict(),
+            "report": self.report.to_dict(),
+            "unavailable_reason": self.unavailable_reason,
+        }
+
+    @classmethod
+    def from_dict(cls, data: object) -> SADDResult:
+        """Restore a serialized SADD result.
+
+        Returns:
+            The restored SADD result.
+
+        Raises:
+            ValueError: If the serialized value is malformed.
+        """
+        if not isinstance(data, dict):
+            msg = "SADD result must be a JSON object"
+            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Malformed JSON uses ValueError.
+        unavailable_reason = data.get("unavailable_reason")
+        if unavailable_reason is not None and not isinstance(unavailable_reason, str):
+            msg = "unavailable_reason must be a string or null"
+            raise ValueError(msg)
+        return cls(
+            result=result_from_dict(data.get("result")),
+            report=SADDReport.from_dict(data.get("report")),
+            unavailable_reason=unavailable_reason,
+        )
+
+    def to_json(self) -> str:
+        """Serialize this SADD result as JSON text.
+
+        Returns:
+            The JSON document.
+        """
+        return json.dumps(self.to_dict())
+
+    @classmethod
+    def from_json(cls, raw: str) -> SADDResult:
+        """Restore a SADD result from JSON text.
+
+        Returns:
+            The restored SADD result.
+        """
+        return cls.from_dict(json.loads(raw))
+
+    def save(self, filename: str | Path) -> Path:
+        """Write this SADD result to an explicit UTF-8 JSON file.
+
+        Returns:
+            The path written.
+        """
+        output_path = Path(filename)
+        if output_path.suffix != ".json":
+            output_path = output_path.with_suffix(".json")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(self.to_json(), encoding="utf-8")
+        return output_path
+
+
+@dataclass(frozen=True)
 class _ParticipantSelection:
     selected_ions: tuple[int, ...]
     eligible_ions: tuple[int, ...]
@@ -335,30 +397,44 @@ class _ParticipantSelection:
 
 
 def run_sadd(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    result: CompilationResult,
     method: SADDMethod,
     config: SADDConfig | None = None,
-) -> DDPassResult[SADDReport]:
+    *,
+    architecture: LinearArchitecture | None = None,
+) -> SADDResult:
     """Apply shuttling-aware dynamical decoupling to a compiled schedule.
 
     Pulse-only and transport-enabled SADD use the same optimization backend;
     ``method`` controls whether the solver may synthesize transport.
 
+    Args:
+        result: Compilation result to augment.
+        method: SADD method to apply.
+        config: Optional optimization settings.
+        architecture: Optional compatible architecture with added DD capabilities.
+
     Returns:
-        The transformed schedule and an ordered SADD report.
+        The transformed compilation result and an ordered SADD report.
 
     Raises:
         TypeError: If ``method`` is not a :class:`SADDMethod`.
-        ValueError: If the schedule and architecture are incompatible or the
+        ValueError: If the result and architecture are incompatible or the
             architecture lacks actions required by the selected method.
     """
+    if not isinstance(result, CompilationResult):
+        msg = "result must be a CompilationResult"
+        raise TypeError(msg)
     if not isinstance(method, SADDMethod):
         msg = "method must be a SADDMethod"
         raise TypeError(msg)
-    validate_schedule_compatibility(schedule, architecture)
+    schedule = result.schedule
+    resolved_architecture = architecture or result.architecture
+    replay_schedule(schedule, resolved_architecture)
     required_actions = (Rx,) if method is SADDMethod.PULSE_ONLY else (Rx, Shuttle, PhysicalSwap)
-    unsupported = [action_type.__name__ for action_type in required_actions if not architecture.supports(action_type)]
+    unsupported = [
+        action_type.__name__ for action_type in required_actions if not resolved_architecture.supports(action_type)
+    ]
     if unsupported:
         msg = f"SADD requires actions unsupported by the architecture: {', '.join(unsupported)}"
         raise ValueError(msg)
@@ -367,13 +443,13 @@ def run_sadd(
     records: list[SADDOpportunityRecord] = []
     local_pulse_action_ids: set[int] = set()
     accepted_count = 0
-    for target_pz, window in _iter_control_windows(updated, architecture, resolved_config):
+    for target_pz, window in _iter_control_windows(updated, resolved_architecture, resolved_config):
         opportunity_input = updated
         if resolved_config.max_accepted_windows is not None and accepted_count >= resolved_config.max_accepted_windows:
             break
         selection = _select_participating_ions(
             updated,
-            architecture,
+            resolved_architecture,
             target_pz,
             window,
             resolved_config,
@@ -384,13 +460,12 @@ def run_sadd(
         try:
             problem = build_sadd_problem(
                 updated,
-                architecture,
+                resolved_architecture,
                 target_pz=target_pz,
                 t_start=window[0],
                 t_end=window[1],
                 participating_ions=selection.selected_ions,
                 scale=resolved_config.scale,
-                operation_durations=resolved_config.operation_durations,
                 num_search_workers=resolved_config.num_search_workers,
                 local_pulse_action_ids=frozenset(local_pulse_action_ids),
             )
@@ -401,9 +476,10 @@ def run_sadd(
                 allow_pulses=resolved_config.allow_pulses,
             )
         except ImportError as error:
-            return DDPassResult(
-                schedule=updated,
-                architecture=architecture,
+            return _sadd_result(
+                result,
+                updated,
+                resolved_architecture,
                 report=SADDReport(method=method, opportunities=tuple(records)),
                 unavailable_reason=str(error),
             )
@@ -443,7 +519,7 @@ def run_sadd(
                 phase_after_by_ion=(
                     _phase_by_ion_for_program(
                         solution.schedule,
-                        architecture,
+                        resolved_architecture,
                         problem.phase_segments,
                         solution_local_pulse_action_ids,
                     )
@@ -458,23 +534,50 @@ def run_sadd(
                 model_num_constraints=solution.model_num_constraints,
             )
         )
-    return DDPassResult(
-        schedule=updated,
-        architecture=architecture,
+    return _sadd_result(
+        result,
+        updated,
+        resolved_architecture,
         report=SADDReport(method=method, opportunities=tuple(records)),
     )
 
 
+def _sadd_result(
+    source: CompilationResult,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
+    *,
+    report: SADDReport,
+    unavailable_reason: str | None = None,
+) -> SADDResult:
+    """Build the public SADD result around a replayed compilation artifact.
+
+    Returns:
+        The SADD result containing the transformed compilation artifact.
+    """
+    transformed = (
+        source
+        if schedule is source.schedule and architecture is source.architecture
+        else replace(
+            source,
+            schedule=schedule,
+            architecture=architecture,
+            final_state=architecture.replay_schedule(schedule),
+        )
+    )
+    return SADDResult(transformed, report, unavailable_reason)
+
+
 def _iter_control_windows(
-    program: ActionSchedule,
-    architecture: Architecture,
+    program: Schedule,
+    architecture: LinearArchitecture,
     config: SADDConfig,
 ) -> tuple[tuple[str, tuple[int, int]], ...]:
     timeline = build_timeline(program, architecture)
     windows: list[tuple[str, tuple[int, int]]] = []
     for pz_name in sorted(architecture.processing_zones or {}):
         start: int | None = None
-        for timestep in range(timeline.makespan):
+        for timestep in range(timeline.start_time, timeline.end_time):
             if not timeline.pz_busy(pz_name, timestep):
                 if start is None:
                     start = timestep
@@ -483,7 +586,7 @@ def _iter_control_windows(
                 windows.extend(_split_window(pz_name, start, timestep, config))
                 start = None
         if start is not None:
-            windows.extend(_split_window(pz_name, start, timeline.makespan, config))
+            windows.extend(_split_window(pz_name, start, timeline.end_time, config))
     ordered = sorted(windows, key=lambda item: (item[1][0], item[1][1], item[0]))
     if config.opportunity_order == "reverse_chronological":
         ordered.reverse()
@@ -507,8 +610,8 @@ def _split_window(
 
 
 def _select_participating_ions(
-    program: ActionSchedule,
-    architecture: Architecture,
+    program: Schedule,
+    architecture: LinearArchitecture,
     target_pz: str,
     window: tuple[int, int],
     config: SADDConfig,
@@ -522,7 +625,7 @@ def _select_participating_ions(
     busy_ions: list[int] = []
     rejected_no_segment: list[int] = []
     rejected_unreachable: list[int] = []
-    for ion, _site in timeline.state_at(0).positions:
+    for ion, _site in timeline.state_at(timeline.start_time).positions:
         if any(timeline.ion_busy(ion, timestep) for timestep in range(window[0], window[1])):
             # Being busy for part of the window is recorded but does not disqualify the ion:
             # the solver's control and operation-duration constraints already forbid a pulse
@@ -607,8 +710,8 @@ def _phase_by_ion(segments: tuple[CriticalSegment, ...]) -> dict[int, float]:
 
 
 def _phase_by_ion_for_program(
-    program: ActionSchedule,
-    architecture: Architecture,
+    program: Schedule,
+    architecture: LinearArchitecture,
     source_segments: tuple[CriticalSegment, ...],
     local_pulse_action_ids: frozenset[int],
 ) -> dict[int, float]:
@@ -624,8 +727,8 @@ def _phase_by_ion_for_program(
 
 
 def _transport_delta(
-    before: ActionSchedule,
-    after: ActionSchedule | None,
+    before: Schedule,
+    after: Schedule | None,
 ) -> dict[str, int]:
     if after is None:
         return {}
@@ -971,10 +1074,10 @@ def _freeze_timesteps_mapping(values: IonTimestepsMapping | None, name: str) -> 
 
 
 __all__ = [
-    "OperationDurations",
     "SADDConfig",
     "SADDMethod",
     "SADDOpportunityRecord",
     "SADDReport",
+    "SADDResult",
     "run_sadd",
 ]

@@ -17,20 +17,23 @@ from itertools import count
 from time import perf_counter
 from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES, Action, AdvanceTime, GateAction
-from mqt.ionshuttler.linear.config import LinearCompilerConfig, TransportTiming
+from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES, Action
+from mqt.ionshuttler.linear.config import LinearCompilerConfig
 from mqt.ionshuttler.linear.cost import cost, heuristic, zero_heuristic
 from mqt.ionshuttler.linear.expand import ExpansionOptions, GenerationMode, expand, replay_path
-from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
-from mqt.ionshuttler.linear.schedule import ActionSchedule
-from mqt.ionshuttler.linear.state import State, normalize_initial_state
+from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus, LinearDiagnostics
+from mqt.ionshuttler.linear.schedule import schedule_from_path
+from mqt.ionshuttler.linear.state import AdvanceTime, State, normalize_initial_state
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from mqt.ionshuttler.linear.architecture import Architecture
+    from mqt.ionshuttler.circuit import Circuit
+    from mqt.ionshuttler.linear.architecture import LinearArchitecture
     from mqt.ionshuttler.linear.config import SearchConfig
     from mqt.ionshuttler.linear.cost import HeuristicFn
+    from mqt.ionshuttler.linear.result import LinearCompilationResult
+    from mqt.ionshuttler.linear.state import SearchTransition
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +75,7 @@ class _SearchPolicy:
     iterative_diving: bool
     num_solutions: int
     max_frontier_size: int | None
+    use_dependencies: bool
     heuristic: HeuristicFn | None = None
 
     @classmethod
@@ -91,6 +95,7 @@ class _SearchPolicy:
             iterative_diving=config.iterative_diving_search,
             num_solutions=config.num_solutions,
             max_frontier_size=config.max_frontier_size,
+            use_dependencies=config.use_dependencies,
             heuristic=config.heuristic,
         )
 
@@ -113,31 +118,31 @@ class _SearchNode:
     """Store one compiler state and the schedule prefix that reached it."""
 
     state: State
-    path: tuple[Action, ...]
+    path: tuple[SearchTransition, ...]
     cost_value: int
     heuristic_value: int
     generation_mode: GenerationMode
 
 
 @dataclass(frozen=True)
-class _FoundSolution:
-    """Store a completed schedule and its final state and cost."""
+class _SearchOutcome:
+    """Store the internal result of one search invocation."""
 
-    path: tuple[Action, ...]
+    path: tuple[SearchTransition, ...]
     final_state: State
-    cost_value: int
+    status: CompilationStatus
+    explored_nodes: int
 
 
 @dataclass(frozen=True)
 class _SearchContext:
     """Collect immutable circuit, hardware, and search-policy inputs."""
 
-    architecture: Architecture
-    gate_order: Sequence[int]
-    gates: Mapping[int, GateAction]
-    predecessors: Mapping[int, frozenset[int]] | None
+    architecture: LinearArchitecture
+    circuit: Circuit
+    active_gate_ids: tuple[int, ...]
+    predecessors: tuple[frozenset[int], ...]
     policy: _SearchPolicy
-    transport_timing: TransportTiming
     action_types: tuple[type[Action], ...]
     critical_path_cache: dict[tuple[int, ...], int] = field(default_factory=dict)
     gate_zone: Mapping[int, str] = field(default_factory=dict)
@@ -165,11 +170,11 @@ class _SearchProgress:
     best_by_state: dict[State, tuple[int, int]]
     best_by_mode: dict[tuple[State, GenerationMode], int]
     explored_nodes: int
-    best_path: tuple[Action, ...]
+    best_path: tuple[SearchTransition, ...]
     best_state: State
     best_key: tuple[int, int, int]
     found_goal_states: set[State]
-    best_solution: _FoundSolution | None
+    best_solution: _SearchOutcome | None
 
 
 @dataclass
@@ -177,22 +182,20 @@ class _RollingProgress:
     """Accumulate committed schedule windows and their explored-node count."""
 
     state: State
-    schedule: list[Action]
+    schedule: list[SearchTransition]
     explored_nodes: int = 0
 
 
 def search(
     initial_state: State,
-    gate_order: Sequence[int],
-    gates: Mapping[int, GateAction],
-    architecture: Architecture,
-    predecessors: Mapping[int, frozenset[int]] | None = None,
+    circuit: Circuit,
+    architecture: LinearArchitecture,
     config: LinearCompilerConfig | None = None,
     *,
     action_types: tuple[type[Action], ...] = DEFAULT_ACTION_TYPES,
     gate_zone: Mapping[int, str] | None = None,
     zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
-) -> CompilationResult:
+) -> LinearCompilationResult:
     """Compile a circuit using the configured global or rolling search.
 
     Returns:
@@ -204,9 +207,7 @@ def search(
         return exhaustive_search(
             normalized_state,
             architecture,
-            gate_order,
-            gates,
-            predecessors=predecessors,
+            circuit,
             config=compiler_config,
             action_types=action_types,
             gate_zone=gate_zone,
@@ -215,9 +216,7 @@ def search(
     return rolling_horizon_search(
         normalized_state,
         architecture,
-        gate_order,
-        gates,
-        predecessors=predecessors,
+        circuit,
         config=compiler_config,
         action_types=action_types,
         gate_zone=gate_zone,
@@ -227,16 +226,14 @@ def search(
 
 def exhaustive_search(
     initial_state: State,
-    architecture: Architecture,
-    gate_order: Sequence[int],
-    gates: Mapping[int, GateAction],
+    architecture: LinearArchitecture,
+    circuit: Circuit,
     *,
-    predecessors: Mapping[int, frozenset[int]] | None = None,
     config: LinearCompilerConfig | None = None,
     action_types: tuple[type[Action], ...] = DEFAULT_ACTION_TYPES,
     gate_zone: Mapping[int, str] | None = None,
     zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
-) -> CompilationResult:
+) -> LinearCompilationResult:
     """Search the complete circuit at once.
 
     Returns:
@@ -246,39 +243,36 @@ def exhaustive_search(
     budget = _TimeBudget.start(compiler_config.search.max_compile_time)
     context = _context(
         architecture,
-        gate_order,
-        gates,
-        predecessors,
+        circuit,
         compiler_config,
         action_types,
         gate_zone,
         zone_site_pairs,
     )
-    result = _search_with_budget(initial_state, context, budget)
-    return _with_public_metadata(
-        result,
+    outcome = _search_with_budget(initial_state, context, budget)
+    return _materialize_result(
+        outcome,
+        initial_state=initial_state,
         budget=budget,
         architecture=architecture,
-        initial_state=initial_state,
     )
 
 
 def rolling_horizon_search(
     initial_state: State,
-    architecture: Architecture,
-    gate_order: Sequence[int],
-    gates: Mapping[int, GateAction],
+    architecture: LinearArchitecture,
+    circuit: Circuit,
     *,
-    predecessors: Mapping[int, frozenset[int]] | None,
     config: LinearCompilerConfig,
     action_types: tuple[type[Action], ...] = DEFAULT_ACTION_TYPES,
     gate_zone: Mapping[int, str] | None = None,
     zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
-) -> CompilationResult:
+) -> LinearCompilationResult:
     """Plan a limited number of upcoming gates at a time.
 
     Returns:
         The combined schedule from every completed planning window.
+        Not globally optimal.
 
     Raises:
         ValueError: If the configuration does not select a rolling horizon.
@@ -291,9 +285,7 @@ def rolling_horizon_search(
     budget = _TimeBudget.start(config.search.max_compile_time)
     context = _context(
         architecture,
-        gate_order,
-        gates,
-        predecessors,
+        circuit,
         config,
         action_types,
         gate_zone,
@@ -312,14 +304,16 @@ def rolling_horizon_search(
     except KeyboardInterrupt:
         status = CompilationStatus.INTERRUPTED
 
-    return _rolling_result(
-        progress.schedule,
-        status,
-        architecture,
-        progress.explored_nodes,
-        budget,
-        final_state=progress.state,
+    return _materialize_result(
+        _SearchOutcome(
+            path=tuple(progress.schedule),
+            final_state=progress.state,
+            status=status,
+            explored_nodes=progress.explored_nodes,
+        ),
         initial_state=initial_state,
+        budget=budget,
+        architecture=architecture,
     )
 
 
@@ -330,41 +324,39 @@ def _run_rolling_search(
     committed_gates: int,
     budget: _TimeBudget,
 ) -> CompilationStatus:
-    goal = frozenset(context.gate_order)
+    goal = frozenset(context.active_gate_ids)
     while not goal.issubset(progress.state.completed_gates):
         if budget.expired():
             return CompilationStatus.TIMEOUT
-        local_order = [gate_id for gate_id in context.gate_order if gate_id not in progress.state.completed_gates][
-            :horizon
-        ]
-        local_gates = {gate_id: context.gates[gate_id] for gate_id in local_order}
-        local_predecessors = _local_predecessors(
-            local_order,
-            context.predecessors,
-            progress.state.completed_gates,
-        )
+        local_gate_ids = [
+            gate_id for gate_id in context.active_gate_ids if gate_id not in progress.state.completed_gates
+        ][:horizon]
         local_context = _SearchContext(
             architecture=context.architecture,
-            gate_order=local_order,
-            gates=local_gates,
-            predecessors=local_predecessors,
+            circuit=context.circuit,
+            active_gate_ids=tuple(local_gate_ids),
+            predecessors=context.predecessors,
             policy=context.policy,
-            transport_timing=context.transport_timing,
             action_types=context.action_types,
             gate_zone=context.gate_zone,
             zone_site_pairs=context.zone_site_pairs,
         )
-        local_result = _search_with_budget(progress.state, local_context, budget)
-        progress.explored_nodes += local_result.explored_nodes or 0
-        if local_result.status is not CompilationStatus.SUCCESS:
-            return local_result.status
-        _commit_window(progress, local_result.schedule.path, local_context, committed_gates)
+        local_outcome = _search_with_budget(progress.state, local_context, budget)
+        progress.explored_nodes += local_outcome.explored_nodes
+        if local_outcome.status is not CompilationStatus.SUCCESS:
+            return local_outcome.status
+        _commit_window(
+            progress,
+            local_outcome.path,
+            local_context,
+            committed_gates,
+        )
     return CompilationStatus.SUCCESS
 
 
 def _commit_window(
     progress: _RollingProgress,
-    path: Sequence[Action],
+    path: Sequence[SearchTransition],
     context: _SearchContext,
     committed_gates: int,
 ) -> None:
@@ -374,35 +366,31 @@ def _commit_window(
             progress.state,
             context.architecture,
             [action],
-            context.gate_order,
-            context.gates,
+            context.circuit,
+            active_gate_ids=context.active_gate_ids,
             predecessors=context.predecessors,
         )
         progress.schedule.append(action)
         completed = progress.state.completed_gates.difference(completed_before)
-        if len(completed & set(context.gate_order)) >= committed_gates:
+        if len(completed & set(context.active_gate_ids)) >= committed_gates:
             return
 
 
 def _context(
-    architecture: Architecture,
-    gate_order: Sequence[int],
-    gates: Mapping[int, GateAction],
-    predecessors: Mapping[int, frozenset[int]] | None,
+    architecture: LinearArchitecture,
+    circuit: Circuit,
     config: LinearCompilerConfig,
     action_types: tuple[type[Action], ...],
     gate_zone: Mapping[int, str] | None = None,
     zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
 ) -> _SearchContext:
-    if config.search.heuristic is not None and gate_zone:
-        logger.warning("The built-in pre-partition bias is ignored when a custom heuristic is supplied.")
+    policy = _SearchPolicy.from_config(config.search)
     return _SearchContext(
         architecture=architecture,
-        gate_order=gate_order,
-        gates=gates,
-        predecessors=predecessors,
-        policy=_SearchPolicy.from_config(config.search),
-        transport_timing=config.hardware_timing.transport,
+        circuit=circuit,
+        active_gate_ids=tuple(circuit.gate_ids),
+        predecessors=_effective_predecessors(circuit, use_dependencies=policy.use_dependencies),
+        policy=policy,
         action_types=action_types,
         gate_zone={} if gate_zone is None else gate_zone,
         zone_site_pairs={} if zone_site_pairs is None else zone_site_pairs,
@@ -413,7 +401,7 @@ def _search_with_budget(
     initial_state: State,
     context: _SearchContext,
     budget: _TimeBudget,
-) -> CompilationResult:
+) -> _SearchOutcome:
     tie_breaker = count()
     frontier: Frontier = []
     initial_heuristic = _heuristic(initial_state, context)
@@ -443,16 +431,14 @@ def _search_with_budget(
     )
 
     try:
-        return _run_search(progress, context, budget, initial_state)
+        return _run_search(progress, context, budget)
     except KeyboardInterrupt:
-        return _partial_result(
+        return _partial_outcome(
             progress.best_solution,
             progress.best_path,
             CompilationStatus.INTERRUPTED,
-            context.architecture,
             progress.explored_nodes,
             best_state=progress.best_state,
-            initial_state=initial_state,
         )
 
 
@@ -460,19 +446,16 @@ def _run_search(
     progress: _SearchProgress,
     context: _SearchContext,
     budget: _TimeBudget,
-    initial_state: State,
-) -> CompilationResult:
-    goal = frozenset(context.gate_order)
+) -> _SearchOutcome:
+    goal = frozenset(context.active_gate_ids)
     while progress.current_node is not None or progress.frontier:
         if budget.expired():
-            return _partial_result(
+            return _partial_outcome(
                 progress.best_solution,
                 progress.best_path,
                 CompilationStatus.TIMEOUT,
-                context.architecture,
                 progress.explored_nodes,
                 best_state=progress.best_state,
-                initial_state=initial_state,
             )
 
         node, progress.current_node = _take_node(
@@ -487,18 +470,20 @@ def _run_search(
         if goal.issubset(node.state.completed_gates):
             solution = _better_solution(
                 progress.best_solution,
-                _FoundSolution(node.path, node.state, node.cost_value),
+                _SearchOutcome(
+                    path=node.path,
+                    final_state=node.state,
+                    status=CompilationStatus.SUCCESS,
+                    explored_nodes=progress.explored_nodes,
+                ),
             )
             progress.best_solution = solution
             progress.found_goal_states.add(node.state)
             if len(progress.found_goal_states) >= context.policy.num_solutions:
-                return _result(
-                    solution.path,
-                    CompilationStatus.SUCCESS,
-                    context.architecture,
-                    progress.explored_nodes,
-                    initial_state=initial_state,
-                    final_state=solution.final_state,
+                return replace(
+                    solution,
+                    status=CompilationStatus.SUCCESS,
+                    explored_nodes=progress.explored_nodes,
                 )
             continue
 
@@ -522,21 +507,16 @@ def _run_search(
         _queue_children(progress, context.policy, node, children)
 
     if progress.best_solution is not None:
-        return _result(
-            progress.best_solution.path,
-            CompilationStatus.SUCCESS,
-            context.architecture,
-            progress.explored_nodes,
-            initial_state=initial_state,
-            final_state=progress.best_solution.final_state,
+        return replace(
+            progress.best_solution,
+            status=CompilationStatus.SUCCESS,
+            explored_nodes=progress.explored_nodes,
         )
-    return _result(
-        progress.best_path,
-        CompilationStatus.FAILED,
-        context.architecture,
-        progress.explored_nodes,
-        initial_state=initial_state,
+    return _SearchOutcome(
+        path=progress.best_path,
         final_state=progress.best_state,
+        status=CompilationStatus.FAILED,
+        explored_nodes=progress.explored_nodes,
     )
 
 
@@ -587,21 +567,17 @@ def _children(
     node: _SearchNode,
     context: _SearchContext,
     best_by_state: Mapping[State, tuple[int, int]],
-    best_path: tuple[Action, ...],
+    best_path: tuple[SearchTransition, ...],
     best_state: State,
     best_key: tuple[int, int, int],
-) -> tuple[list[_SearchNode], tuple[Action, ...], State, tuple[int, int, int]]:
+) -> tuple[list[_SearchNode], tuple[SearchTransition, ...], State, tuple[int, int, int]]:
     children: list[_SearchNode] = []
-    options = ExpansionOptions(
-        mode=node.generation_mode,
-        transport_timing=context.transport_timing,
-        action_types=context.action_types,
-    )
+    options = ExpansionOptions(mode=node.generation_mode, action_types=context.action_types)
     for action, _, new_state in expand(
         node.state,
         context.architecture,
-        context.gate_order,
-        context.gates,
+        context.circuit,
+        active_gate_ids=context.active_gate_ids,
         predecessors=context.predecessors,
         options=options,
     ):
@@ -741,16 +717,20 @@ def _heuristic(state: State, context: _SearchContext) -> int:
         return custom(
             state,
             context.architecture,
-            context.gate_order,
-            context.gates,
+            context.circuit,
+            context.active_gate_ids,
             context.predecessors,
+            use_dependencies=context.policy.use_dependencies,
+            gate_zone=context.gate_zone,
+            zone_site_pairs=context.zone_site_pairs,
         )
     return heuristic(
         state,
         context.architecture,
-        context.gate_order,
-        context.gates,
+        context.circuit,
+        context.active_gate_ids,
         context.predecessors,
+        use_dependencies=context.policy.use_dependencies,
         critical_path_cache=context.critical_path_cache,
         gate_zone=context.gate_zone,
         zone_site_pairs=context.zone_site_pairs,
@@ -766,120 +746,62 @@ def _candidate_key(state: State, heuristic_value: int, cost_value: int) -> tuple
 
 
 def _better_solution(
-    current: _FoundSolution | None,
-    candidate: _FoundSolution,
-) -> _FoundSolution:
+    current: _SearchOutcome | None,
+    candidate: _SearchOutcome,
+) -> _SearchOutcome:
     if current is None:
         return candidate
     return min(
         current,
         candidate,
-        key=lambda solution: (solution.cost_value, len(solution.path)),
+        key=lambda solution: (cost(solution.final_state), len(solution.path)),
     )
 
 
-def _partial_result(
-    solution: _FoundSolution | None,
-    best_path: tuple[Action, ...],
+def _partial_outcome(
+    solution: _SearchOutcome | None,
+    best_path: tuple[SearchTransition, ...],
     status: CompilationStatus,
-    architecture: Architecture,
     explored_nodes: int,
     *,
     best_state: State,
-    initial_state: State,
-) -> CompilationResult:
+) -> _SearchOutcome:
     if solution is not None:
-        return _result(
-            solution.path,
-            status,
-            architecture,
-            explored_nodes,
-            initial_state=initial_state,
-            final_state=solution.final_state,
-        )
-    return _result(
-        best_path,
-        status,
-        architecture,
-        explored_nodes,
-        initial_state=initial_state,
+        return replace(solution, status=status, explored_nodes=explored_nodes)
+    return _SearchOutcome(
+        path=best_path,
         final_state=best_state,
-    )
-
-
-def _result(
-    path: Sequence[Action],
-    status: CompilationStatus,
-    architecture: Architecture,
-    explored_nodes: int,
-    *,
-    initial_state: State,
-    final_state: State,
-) -> CompilationResult:
-    public_path = tuple(path)
-    return CompilationResult(
         status=status,
-        schedule=ActionSchedule.from_actions(public_path, initial_state),
-        architecture=architecture,
-        score=cost(final_state),
-        final_state=final_state,
         explored_nodes=explored_nodes,
     )
 
 
-def _with_public_metadata(
-    result: CompilationResult,
+def _materialize_result(
+    outcome: _SearchOutcome,
     *,
-    budget: _TimeBudget,
-    architecture: Architecture,
     initial_state: State,
-) -> CompilationResult:
-    return replace(
-        result,
+    budget: _TimeBudget,
+    architecture: LinearArchitecture,
+) -> LinearCompilationResult:
+    schedule = schedule_from_path(outcome.path, initial_state, architecture)
+    return CompilationResult(
+        status=outcome.status,
+        schedule=schedule,
+        architecture=architecture,
+        final_state=architecture.replay_schedule(schedule),
         wall_clock_s=budget.elapsed(),
-        schedule=ActionSchedule.from_actions(
-            result.schedule.path,
-            initial_state,
+        diagnostics=LinearDiagnostics(
+            score=cost(outcome.final_state),
+            explored_nodes=outcome.explored_nodes,
         ),
-        architecture=architecture,
     )
 
 
-def _rolling_result(
-    path: Sequence[Action],
-    status: CompilationStatus,
-    architecture: Architecture,
-    explored_nodes: int,
-    budget: _TimeBudget,
-    *,
-    final_state: State,
-    initial_state: State,
-) -> CompilationResult:
-    result = _result(
-        path,
-        status,
-        architecture,
-        explored_nodes,
-        initial_state=initial_state,
-        final_state=final_state,
-    )
-    return _with_public_metadata(
-        result,
-        budget=budget,
-        architecture=architecture,
-        initial_state=initial_state,
-    )
-
-
-def _local_predecessors(
-    local_order: Sequence[int],
-    predecessors: Mapping[int, frozenset[int]] | None,
-    completed_gates: frozenset[int],
-) -> dict[int, frozenset[int]] | None:
-    if predecessors is None:
-        return None
-    included = set(local_order) | set(completed_gates)
-    return {gate_id: predecessors.get(gate_id, frozenset()) & included for gate_id in local_order}
+def _effective_predecessors(circuit: Circuit, *, use_dependencies: bool) -> tuple[frozenset[int], ...]:
+    """Return the selected dependency policy in circuit-indexed form."""
+    if use_dependencies:
+        return circuit.predecessors
+    return tuple(frozenset((gate_id - 1,)) if gate_id else frozenset() for gate_id in circuit.gate_ids)
 
 
 __all__ = ["exhaustive_search", "rolling_horizon_search", "search"]

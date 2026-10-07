@@ -13,8 +13,6 @@ import logging
 from dataclasses import dataclass
 from math import isclose, pi
 
-from mqt.ionshuttler.linear.actions import GateSpec
-
 logger = logging.getLogger(__name__)
 ARBITRARY_X_SCHEME_FAMILY = "arbitrary_x"
 _XY4_AXES = ("X", "Y", "X", "Y")
@@ -37,6 +35,19 @@ _XY16_AXES = (
     "-Y",
     "-X",
 )
+
+
+@dataclass(frozen=True)
+class GateSpec:
+    """Describe the rotation of one decoupling pulse.
+
+    ``gate_name`` names the rotation class, such as ``"Rx"``. A pulse applied
+    to one ion becomes that gate; a global pulse becomes a
+    :class:`~mqt.ionshuttler.core.gates.GlobalGate` with the same rotation.
+    """
+
+    gate_name: str
+    theta: float | None = None
 
 
 @dataclass(frozen=True)
@@ -341,6 +352,7 @@ __all__ = [
     "XY8",
     "XY16",
     "DDScheme",
+    "GateSpec",
     "available_dd_schemes",
     "get_dd_scheme",
     "make_arbitrary_x_scheme",

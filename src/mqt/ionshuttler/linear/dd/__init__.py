@@ -5,7 +5,7 @@
 #
 # Licensed under the MIT License
 
-"""Dynamical-decoupling methods for Linear action schedules."""
+"""Dynamical-decoupling methods for Linear schedules."""
 
 from mqt.ionshuttler.linear.dd.critical_segments import (
     CriticalSegment,
@@ -39,18 +39,20 @@ from mqt.ionshuttler.linear.dd.nearest_hahn import (
 )
 from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
 from mqt.ionshuttler.linear.dd.sadd import (
-    OperationDurations,
     SADDConfig,
     SADDMethod,
     SADDOpportunityRecord,
     SADDReport,
+    SADDResult,
     run_sadd,
 )
+from mqt.ionshuttler.linear.dd.schemes import GateSpec
 
 __all__ = [
     "CriticalSegment",
     "CriticalSegmentResult",
     "DDPassResult",
+    "GateSpec",
     "GlobalDDConfig",
     "GlobalDDReport",
     "IdealizedHahnConfig",
@@ -59,11 +61,11 @@ __all__ = [
     "NearestHahnConfig",
     "NearestHahnOpportunityRecord",
     "NearestHahnReport",
-    "OperationDurations",
     "SADDConfig",
     "SADDMethod",
     "SADDOpportunityRecord",
     "SADDReport",
+    "SADDResult",
     "apply_idealized_hahn",
     "apply_periodic_global_dd",
     "compute_critical_segments",

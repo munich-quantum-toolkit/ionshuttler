@@ -10,13 +10,16 @@
 from __future__ import annotations
 
 import importlib.util
+from dataclasses import replace
 from math import pi
 
 import pytest
 
-from mqt.ionshuttler.linear.actions import AdvanceTime, Rx, Shuttle
-from mqt.ionshuttler.linear.architecture import Architecture
-from mqt.ionshuttler.linear.dd import SADDConfig, SADDMethod, run_sadd
+from mqt.ionshuttler import visualize
+from mqt.ionshuttler.linear import GateTiming, TransportTiming
+from mqt.ionshuttler.linear.actions import Rx, Shuttle
+from mqt.ionshuttler.linear.architecture import LinearArchitecture
+from mqt.ionshuttler.linear.dd import SADDConfig, SADDMethod, SADDResult, run_sadd
 from mqt.ionshuttler.linear.dd import sadd as sadd_module
 from mqt.ionshuttler.linear.dd import sadd_solver as sadd_solver_module
 from mqt.ionshuttler.linear.dd.sadd_solver import (
@@ -26,23 +29,34 @@ from mqt.ionshuttler.linear.dd.sadd_solver import (
 )
 from mqt.ionshuttler.linear.dd.schedule_transform import insert_action_at_time
 from mqt.ionshuttler.linear.field_profile import FieldProfile
-from mqt.ionshuttler.linear.schedule import ActionSchedule
-from mqt.ionshuttler.linear.state import create_initial_state
+from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
+from mqt.ionshuttler.linear.schedule import Schedule, schedule_from_path
+from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 
 
 def _idle_result(
-    architecture: Architecture,
+    architecture: LinearArchitecture,
     *,
     initial_positions: list[int],
     timesteps: int,
-) -> ActionSchedule:
-    return ActionSchedule.from_actions(
+) -> Schedule:
+    return schedule_from_path(
         [AdvanceTime() for _ in range(timesteps)],
         create_initial_state(
             len(initial_positions),
             architecture,
             initial_positions=initial_positions,
         ),
+        architecture,
+    )
+
+
+def _compilation(schedule: Schedule, architecture: LinearArchitecture) -> CompilationResult:
+    return CompilationResult(
+        status=CompilationStatus.SUCCESS,
+        schedule=schedule,
+        architecture=architecture,
+        final_state=architecture.replay_schedule(schedule),
     )
 
 
@@ -64,19 +78,61 @@ def _unsolved(problem_status: str) -> SADDSolution:
 
 def test_sadd_returns_unchanged_noop_without_an_eligible_window() -> None:
     """Avoid loading the optional solver when no opportunity exists."""
-    architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
+    architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
     result = _idle_result(architecture, initial_positions=[0], timesteps=1)
 
-    output = run_sadd(result, architecture, SADDMethod.PULSE_ONLY)
+    compilation = _compilation(result, architecture)
+    output = run_sadd(compilation, SADDMethod.PULSE_ONLY)
 
-    assert output.schedule is result
+    assert output.result is compilation
     assert output.report.opportunities == ()
     assert output.unavailable_reason is None
 
 
+def test_sadd_result_round_trips_the_transformed_compilation() -> None:
+    """Preserve the visualizable compilation artifact with the SADD report."""
+    architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
+    compilation = _compilation(_idle_result(architecture, initial_positions=[0], timesteps=1), architecture)
+
+    output = run_sadd(compilation, SADDMethod.PULSE_ONLY)
+    restored = SADDResult.from_json(output.to_json())
+
+    assert restored == output
+    assert restored.result.schedule == compilation.schedule
+
+
+def test_sadd_result_is_directly_visualizable() -> None:
+    """Expose the transformed compilation through the standard result view."""
+    pyplot = pytest.importorskip("matplotlib.pyplot")
+    architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
+    compilation = _compilation(_idle_result(architecture, initial_positions=[0], timesteps=1), architecture)
+
+    output = run_sadd(compilation, SADDMethod.PULSE_ONLY)
+    figure = visualize(output.result)
+
+    assert figure is not None
+    pyplot.close(figure)
+
+
+def test_sadd_result_owns_an_explicit_architecture_override() -> None:
+    """Carry a compatible DD architecture into the transformed result."""
+    source_architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
+    dd_architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
+    compilation = _compilation(
+        _idle_result(source_architecture, initial_positions=[0], timesteps=1),
+        source_architecture,
+    )
+
+    output = run_sadd(compilation, SADDMethod.PULSE_ONLY, architecture=dd_architecture)
+
+    assert output.result is not compilation
+    assert output.result.architecture is dd_architecture
+    output.result.validate()
+
+
 def test_sadd_reports_unavailable_solver_without_mutating_input(monkeypatch: pytest.MonkeyPatch) -> None:
     """Return dependency guidance as structured pass diagnostics."""
-    architecture = Architecture(num_sites=3, processing_zones={"pz": [1]})
+    architecture = LinearArchitecture(num_sites=3, processing_zones={"pz": [1]})
     result = _idle_result(architecture, initial_positions=[1], timesteps=3)
 
     def unavailable(*args: object, **kwargs: object) -> SADDSolution:
@@ -85,9 +141,10 @@ def test_sadd_reports_unavailable_solver_without_mutating_input(monkeypatch: pyt
         raise ImportError(msg)
 
     monkeypatch.setattr(sadd_module, "solve_sadd_problem", unavailable)
-    output = run_sadd(result, architecture, SADDMethod.FULL)
+    compilation = _compilation(result, architecture)
+    output = run_sadd(compilation, SADDMethod.FULL)
 
-    assert output.schedule is result
+    assert output.result is compilation
     assert output.report.opportunities == ()
     assert output.unavailable_reason == "install the dd extra"
 
@@ -98,7 +155,7 @@ def test_sadd_records_unsolved_opportunity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Preserve infeasible and timeout-like solver outcomes without acceptance."""
-    architecture = Architecture(num_sites=3, processing_zones={"pz": [1]})
+    architecture = LinearArchitecture(num_sites=3, processing_zones={"pz": [1]})
     result = _idle_result(architecture, initial_positions=[1], timesteps=3)
 
     def unsolved(*args: object, **kwargs: object) -> SADDSolution:
@@ -107,9 +164,10 @@ def test_sadd_records_unsolved_opportunity(
 
     monkeypatch.setattr(sadd_module, "solve_sadd_problem", unsolved)
 
-    output = run_sadd(result, architecture, SADDMethod.PULSE_ONLY)
+    compilation = _compilation(result, architecture)
+    output = run_sadd(compilation, SADDMethod.PULSE_ONLY)
 
-    assert output.schedule is result
+    assert output.result is compilation
     assert len(output.report.opportunities) == 1
     record = output.report.opportunities[0]
     assert record.status == status
@@ -119,7 +177,7 @@ def test_sadd_records_unsolved_opportunity(
 
 def test_sadd_rejects_replay_valid_non_improvement(monkeypatch: pytest.MonkeyPatch) -> None:
     """Require a strict objective improvement before replacing the schedule."""
-    architecture = Architecture(num_sites=3, processing_zones={"pz": [1]})
+    architecture = LinearArchitecture(num_sites=3, processing_zones={"pz": [1]})
     result = _idle_result(architecture, initial_positions=[1], timesteps=3)
 
     def unchanged(problem: SADDProblem, **kwargs: object) -> SADDSolution:
@@ -141,15 +199,16 @@ def test_sadd_rejects_replay_valid_non_improvement(monkeypatch: pytest.MonkeyPat
         )
 
     monkeypatch.setattr(sadd_module, "solve_sadd_problem", unchanged)
-    output = run_sadd(result, architecture, SADDMethod.PULSE_ONLY)
+    compilation = _compilation(result, architecture)
+    output = run_sadd(compilation, SADDMethod.PULSE_ONLY)
 
-    assert output.schedule is result
+    assert output.result is compilation
     assert not output.report.opportunities[0].accepted
 
 
 def test_sadd_method_is_the_only_transport_switch(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pass method transport policy unchanged to the shared backend."""
-    architecture = Architecture(num_sites=3, processing_zones={"pz": [1]})
+    architecture = LinearArchitecture(num_sites=3, processing_zones={"pz": [1]})
     result = _idle_result(architecture, initial_positions=[1], timesteps=3)
     observed: list[bool] = []
 
@@ -159,30 +218,50 @@ def test_sadd_method_is_the_only_transport_switch(monkeypatch: pytest.MonkeyPatc
         return _unsolved("UNKNOWN")
 
     monkeypatch.setattr(sadd_module, "solve_sadd_problem", capture)
-    run_sadd(result, architecture, SADDMethod.PULSE_ONLY)
-    run_sadd(result, architecture, SADDMethod.FULL)
+    compilation = _compilation(result, architecture)
+    run_sadd(compilation, SADDMethod.PULSE_ONLY)
+    run_sadd(compilation, SADDMethod.FULL)
 
     assert observed == [False, True]
 
 
-def test_sadd_infers_nondefault_transport_durations_from_schedule(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Use existing schedule timing for transport synthesized by the default pass."""
-    architecture = Architecture(num_sites=3, processing_zones={"pz": [1]})
-    schedule = ActionSchedule.from_actions(
-        [Shuttle(ion=0, src=0, dst=1, duration=2), *(AdvanceTime() for _ in range(4))],
-        create_initial_state(1, architecture, initial_positions=[0]),
+def test_sadd_synthesizes_operations_with_architecture_durations(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give synthesized transport and pulses the durations defined by the architecture."""
+    architecture = LinearArchitecture(
+        num_sites=3,
+        processing_zones={"pz": [1]},
+        gate_timing=GateTiming(rx=2),
+        transport_timing=TransportTiming(shuttle=2, swap=4),
     )
-    observed: list[tuple[int, int]] = []
+    schedule = schedule_from_path(
+        [Shuttle(ion=0, src=0, dst=1), *(AdvanceTime() for _ in range(4))],
+        create_initial_state(1, architecture, initial_positions=[0]),
+        architecture,
+    )
+    observed: list[tuple[int, int, int]] = []
 
     def capture(problem: SADDProblem, **_kwargs: object) -> SADDSolution:
-        observed.append((problem.shuttle_duration, problem.swap_duration))
+        observed.append((problem.shuttle_duration, problem.swap_duration, problem.pulse_duration))
         return _unsolved("UNKNOWN")
 
     monkeypatch.setattr(sadd_module, "solve_sadd_problem", capture)
 
-    run_sadd(schedule, architecture, SADDMethod.FULL)
+    run_sadd(_compilation(schedule, architecture), SADDMethod.FULL)
 
-    assert observed == [(2, 3)]
+    assert observed == [(2, 4, 2)]
+
+
+def test_sadd_requires_a_physical_rx_pulse() -> None:
+    """Reject an architecture whose Rx rotation cannot act as a timed decoupling pulse."""
+    architecture = LinearArchitecture(
+        num_sites=3,
+        processing_zones={"pz": [1]},
+        gate_timing=GateTiming(rx=0, virtual_single_qubit_gates=frozenset({"rx", "rz"})),
+    )
+    schedule = _idle_result(architecture, initial_positions=[1], timesteps=3)
+
+    with pytest.raises(ValueError, match="physical Rx pulse"):
+        build_sadd_problem(schedule, architecture, target_pz="pz", t_start=0, t_end=3, participating_ions=(0,))
 
 
 def test_participant_selection_reports_busy_ions_without_disqualifying_them() -> None:
@@ -192,10 +271,15 @@ def test_participant_selection_reports_busy_ions_without_disqualifying_them() ->
     constraints already forbid a pulse while the ion is busy, so excluding the
     ion outright would discard the window's remaining usable boundaries.
     """
-    architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
-    schedule = ActionSchedule.from_actions(
-        [Rx(ion=0, theta=pi, duration=2), AdvanceTime(), AdvanceTime(), AdvanceTime(), AdvanceTime()],
+    architecture = LinearArchitecture(
+        num_sites=1,
+        processing_zones={"pz": [0]},
+        gate_timing=GateTiming(rx=2),
+    )
+    schedule = schedule_from_path(
+        [Rx(ion=0, theta=pi), AdvanceTime(), AdvanceTime(), AdvanceTime(), AdvanceTime()],
         create_initial_state(1, architecture),
+        architecture,
     )
 
     selection = sadd_module._select_participating_ions(
@@ -215,21 +299,27 @@ def test_participant_selection_reports_busy_ions_without_disqualifying_them() ->
 @pytest.mark.skipif(importlib.util.find_spec("ortools") is None, reason="OR-Tools not installed")
 def test_sadd_optimizes_a_window_in_which_every_ion_is_partly_busy() -> None:
     """Keep SADD effective on schedules whose ions all carry gates or transport."""
-    architecture = Architecture(
+    architecture = LinearArchitecture(
         num_sites=3,
         processing_zones={"pz": [1]},
         field_profile=FieldProfile(num_sites=3, site_field=((0, 4.0), (1, 1.0), (2, 4.0))),
+        transport_timing=TransportTiming(shuttle=2),
     )
-    schedule = ActionSchedule.from_actions(
+    schedule = schedule_from_path(
         [
             AdvanceTime(),
-            Shuttle(ion=0, src=0, dst=1, duration=2),
+            Shuttle(ion=0, src=0, dst=1),
             *(AdvanceTime() for _ in range(5)),
         ],
         create_initial_state(1, architecture, initial_positions=[0]),
+        architecture,
     )
 
-    output = run_sadd(schedule, architecture, SADDMethod.FULL, SADDConfig(max_accepted_windows=1))
+    output = run_sadd(
+        _compilation(schedule, architecture),
+        SADDMethod.FULL,
+        SADDConfig(max_accepted_windows=1),
+    )
 
     assert output.report.opportunities
     opportunity = output.report.opportunities[0]
@@ -238,11 +328,13 @@ def test_sadd_optimizes_a_window_in_which_every_ion_is_partly_busy() -> None:
     assert opportunity.accepted
     assert opportunity.pulse_timesteps is not None
     assert opportunity.pulse_timesteps[0]
+    output.result.validate()
+    assert output.result.schedule is not schedule
 
 
 def test_sadd_reports_transport_changes_by_action_type(monkeypatch: pytest.MonkeyPatch) -> None:
     """Describe schedule transport changes rather than only synthesized actions."""
-    architecture = Architecture(num_sites=3, processing_zones={"pz": [1]})
+    architecture = LinearArchitecture(num_sites=3, processing_zones={"pz": [1]})
     schedule = _idle_result(architecture, initial_positions=[0], timesteps=3)
 
     def add_shuttle(problem: SADDProblem, **_kwargs: object) -> SADDSolution:
@@ -267,14 +359,14 @@ def test_sadd_reports_transport_changes_by_action_type(monkeypatch: pytest.Monke
         )
 
     monkeypatch.setattr(sadd_module, "solve_sadd_problem", add_shuttle)
-    output = run_sadd(schedule, architecture, SADDMethod.FULL)
+    output = run_sadd(_compilation(schedule, architecture), SADDMethod.FULL)
 
     assert output.report.opportunities[0].transport_delta == {"Shuttle": 1}
 
 
 def test_sadd_threads_accepted_pulse_identity_into_later_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     """Treat pulses accepted in an earlier window as DD during later analysis."""
-    architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
+    architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
     schedule = _idle_result(architecture, initial_positions=[0], timesteps=4)
     observed_prior_ids: list[frozenset[int]] = []
 
@@ -303,8 +395,7 @@ def test_sadd_threads_accepted_pulse_identity_into_later_windows(monkeypatch: py
 
     monkeypatch.setattr(sadd_module, "solve_sadd_problem", insert_one_pulse)
     output = run_sadd(
-        schedule,
-        architecture,
+        _compilation(schedule, architecture),
         SADDMethod.PULSE_ONLY,
         SADDConfig(min_window_length=2, max_window_length=2),
     )
@@ -315,9 +406,41 @@ def test_sadd_threads_accepted_pulse_identity_into_later_windows(monkeypatch: py
     assert observed_prior_ids[1] == frozenset(first_pulse_action_ids[0])
 
 
+def test_sadd_control_windows_start_at_the_absolute_schedule_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pass absolute control-window bounds to each SADD problem."""
+    architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
+    base = _idle_result(architecture, initial_positions=[0], timesteps=4)
+    offset = 3
+    shifted = Schedule(
+        base.scheduled_actions,
+        base.end_time + offset,
+        replace(
+            base.initial_state,
+            time=offset,
+            ions_busy_until=((0, offset),),
+            pzs_busy_until=(("pz", offset),),
+        ),
+    )
+    observed_windows: list[tuple[int, int]] = []
+
+    def capture(problem: SADDProblem, **_kwargs: object) -> SADDSolution:
+        observed_windows.append((problem.t_start, problem.t_end))
+        return _unsolved("UNKNOWN")
+
+    monkeypatch.setattr(sadd_module, "solve_sadd_problem", capture)
+
+    run_sadd(
+        _compilation(shifted, architecture),
+        SADDMethod.PULSE_ONLY,
+        SADDConfig(min_window_length=2, max_window_length=2),
+    )
+
+    assert observed_windows == [(3, 5), (5, 7)]
+
+
 def test_problem_validation_and_final_slot_constraints() -> None:
     """Validate problem bounds and pin the closing placement obligation."""
-    architecture = Architecture(num_sites=3, processing_zones={"pz": [1]})
+    architecture = LinearArchitecture(num_sites=3, processing_zones={"pz": [1]})
     result = _idle_result(architecture, initial_positions=[0, 2], timesteps=4)
     problem = build_sadd_problem(
         result,
@@ -346,10 +469,11 @@ def test_problem_validation_and_final_slot_constraints() -> None:
 
 def test_invalid_materialization_reports_replay_failure() -> None:
     """Reject a decoded schedule that conflicts with an algorithmic gate."""
-    architecture = Architecture(num_sites=3, processing_zones={"pz": [1]})
-    result = ActionSchedule.from_actions(
+    architecture = LinearArchitecture(num_sites=3, processing_zones={"pz": [1]})
+    result = schedule_from_path(
         [AdvanceTime(), Rx(ion=0, theta=pi), AdvanceTime(), AdvanceTime()],
         create_initial_state(1, architecture, initial_positions=[1]),
+        architecture,
     )
     problem = build_sadd_problem(
         result,

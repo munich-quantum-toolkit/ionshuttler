@@ -15,18 +15,20 @@ from itertools import count
 from math import isclose, isfinite, pi
 from typing import TYPE_CHECKING, ClassVar, cast
 
-from mqt.ionshuttler.linear.actions import AdvanceTime, GateSpec, GlobalPulse
+from mqt.ionshuttler.linear.actions import GlobalGate
 from mqt.ionshuttler.linear.dd.critical_segments import CriticalSegmentResult, compute_critical_segments
 from mqt.ionshuttler.linear.dd.frame_replay import frame_operation_for_gate_spec, global_pulse_timesteps
 from mqt.ionshuttler.linear.dd.result import DDPassResult
-from mqt.ionshuttler.linear.dd.schedule_transform import rebuild_schedule, validate_schedule_compatibility
-from mqt.ionshuttler.linear.dd.timeline import build_timeline
-from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
+from mqt.ionshuttler.linear.dd.schedule_transform import rebuild_schedule
+from mqt.ionshuttler.linear.dd.schemes import GateSpec
+from mqt.ionshuttler.linear.replay import replay_schedule
+from mqt.ionshuttler.linear.schedule import Schedule, ScheduledAction
+from mqt.ionshuttler.linear.timeline import build_timeline
 
 from ..._json_utils import require_int, require_int_list, require_number, require_str
 
 if TYPE_CHECKING:
-    from mqt.ionshuttler.linear.architecture import Architecture
+    from mqt.ionshuttler.linear.architecture import LinearArchitecture
 
 logger = logging.getLogger(__name__)
 
@@ -143,15 +145,16 @@ class GlobalDDReport:
 
 
 def apply_periodic_global_dd(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
     config: GlobalDDConfig,
 ) -> DDPassResult[GlobalDDReport]:
     """Insert periodic global X pulses, optionally shifting them by phase cost.
 
-    Global pulses are placed before all existing actions at the same schedule
-    boundary and may overlap local gates or transport under the global-frame
-    abstraction.
+    Each pulse is a :class:`~mqt.ionshuttler.linear.actions.GlobalGate` whose
+    targets are all ions of the schedule. Global pulses are placed before all
+    existing actions at the same schedule boundary and may overlap local gates
+    or transport under the global-frame abstraction.
 
     Returns:
         The transformed schedule and selected pulse/phase summary.
@@ -160,8 +163,8 @@ def apply_periodic_global_dd(
         ValueError: If the architecture does not support global pulses, replay
             metadata is absent, or global pulses already exist.
     """
-    validate_schedule_compatibility(schedule, architecture)
-    if not architecture.supports(GlobalPulse):
+    replay_schedule(schedule, architecture)
+    if not architecture.supports(GlobalGate):
         msg = "periodic global DD requires an architecture with global-pulse support"
         raise ValueError(msg)
     timeline = build_timeline(schedule, architecture)
@@ -174,7 +177,8 @@ def apply_periodic_global_dd(
         raise ValueError(msg)
 
     candidate_times = _periodic_pulse_timesteps(
-        schedule.num_timesteps,
+        schedule.start_time,
+        schedule.end_time,
         config.spacing,
         half_first_window=config.half_first_window,
     )
@@ -200,11 +204,11 @@ def apply_periodic_global_dd(
 
 
 def _optimize_global_pulse_timesteps(
-    program: ActionSchedule,
-    architecture: Architecture,
+    program: Schedule,
+    architecture: LinearArchitecture,
     config: GlobalDDConfig,
     base_pulse_timesteps: tuple[int, ...],
-) -> tuple[tuple[int, ...], ActionSchedule, CriticalSegmentResult]:
+) -> tuple[tuple[int, ...], Schedule, CriticalSegmentResult]:
     best_timesteps = base_pulse_timesteps
     best_result, best_summary = _materialize_candidate(
         program,
@@ -224,7 +228,8 @@ def _optimize_global_pulse_timesteps(
         for candidate_timesteps in _shifted_pulse_timestep_candidates(
             best_timesteps,
             pulse_index,
-            program.num_timesteps,
+            program.start_time,
+            program.end_time,
             config.shift_range,
         ):
             candidate_result, candidate_summary = _materialize_candidate(
@@ -252,12 +257,12 @@ def _optimize_global_pulse_timesteps(
 
 
 def _materialize_candidate(
-    program: ActionSchedule,
-    architecture: Architecture,
+    program: Schedule,
+    architecture: LinearArchitecture,
     pulse_timesteps: tuple[int, ...],
     pulse_spec: GateSpec,
-) -> tuple[ActionSchedule, CriticalSegmentResult]:
-    scheduled_actions = _path_with_inserted_global_pulses(program, pulse_timesteps, pulse_spec)
+) -> tuple[Schedule, CriticalSegmentResult]:
+    scheduled_actions = _path_with_inserted_global_pulses(program, architecture, pulse_timesteps, pulse_spec)
     updated = rebuild_schedule(program, scheduled_actions)
     return updated, compute_critical_segments(updated, architecture)
 
@@ -265,12 +270,13 @@ def _materialize_candidate(
 def _shifted_pulse_timestep_candidates(
     pulse_timesteps: tuple[int, ...],
     pulse_index: int,
-    num_timesteps: int,
+    start_time: int,
+    end_time: int,
     shift_range: int,
 ) -> tuple[tuple[int, ...], ...]:
     current_timestep = pulse_timesteps[pulse_index]
-    minimum = 0 if pulse_index == 0 else pulse_timesteps[pulse_index - 1] + 1
-    maximum = num_timesteps - 1 if pulse_index == len(pulse_timesteps) - 1 else pulse_timesteps[pulse_index + 1] - 1
+    minimum = start_time if pulse_index == 0 else pulse_timesteps[pulse_index - 1] + 1
+    maximum = end_time - 1 if pulse_index == len(pulse_timesteps) - 1 else pulse_timesteps[pulse_index + 1] - 1
     candidates: list[tuple[int, ...]] = []
     for delta in range(-shift_range, shift_range + 1):
         candidate_timestep = current_timestep + delta
@@ -283,36 +289,45 @@ def _shifted_pulse_timestep_candidates(
 
 
 def _path_with_inserted_global_pulses(
-    program: ActionSchedule,
+    program: Schedule,
+    architecture: LinearArchitecture,
     pulse_timesteps: tuple[int, ...],
     pulse_spec: GateSpec,
 ) -> tuple[ScheduledAction, ...]:
-    pulses_by_time = {timestep: [GlobalPulse(gate=pulse_spec)] for timestep in pulse_timesteps}
+    pulse = GlobalGate(
+        gate_name=pulse_spec.gate_name.lower(),
+        theta=cast("float", pulse_spec.theta),
+        ions=tuple(ion for ion, _site in program.initial_state.positions),
+    )
+    pulses_by_time = {timestep: [pulse] for timestep in pulse_timesteps}
+    existing_by_time: dict[int, list[ScheduledAction]] = {}
+    for item in program.scheduled_actions:
+        existing_by_time.setdefault(item.start_time, []).append(item)
     updated: list[ScheduledAction] = []
     action_ids = count(program.next_action_id)
-    current_time = 0
-    inserted_at_current_time = False
-    for item in program.scheduled_actions:
-        if not inserted_at_current_time and current_time in pulses_by_time:
-            updated.extend(ScheduledAction(next(action_ids), action) for action in pulses_by_time[current_time])
-            inserted_at_current_time = True
-        updated.append(item)
-        if isinstance(item.action, AdvanceTime):
-            current_time += item.action.timestep_increment
-            inserted_at_current_time = False
-    if not inserted_at_current_time and current_time in pulses_by_time:
-        updated.extend(ScheduledAction(next(action_ids), action) for action in pulses_by_time[current_time])
+    for timestep in sorted(set(existing_by_time) | set(pulses_by_time)):
+        updated.extend(
+            ScheduledAction(
+                next(action_ids),
+                action,
+                start_time=timestep,
+                duration=architecture.action_duration(action),
+            )
+            for action in pulses_by_time.get(timestep, ())
+        )
+        updated.extend(existing_by_time.get(timestep, ()))
     return tuple(updated)
 
 
 def _periodic_pulse_timesteps(
-    num_timesteps: int,
+    start_time: int,
+    end_time: int,
     spacing: int,
     *,
     half_first_window: bool,
 ) -> tuple[int, ...]:
-    first_timestep = spacing // 2 if half_first_window else spacing - 1
-    return tuple(range(first_timestep, num_timesteps, spacing))
+    first_timestep = start_time + (spacing // 2 if half_first_window else spacing - 1)
+    return tuple(range(first_timestep, end_time, spacing))
 
 
 def _global_dd_report(

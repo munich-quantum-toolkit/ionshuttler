@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from mqt.ionshuttler.linear.actions import Action, AdvanceTime, Rx, Rxx, Ry, Rz, Rzz
-from mqt.ionshuttler.linear.architecture import Architecture
+from mqt.ionshuttler.linear.actions import Rx, Rxx, Ry, Rz, Rzz, Shuttle
+from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.dd.critical_segments import (
     SegmentationMode,
     compute_critical_segments,
@@ -23,25 +23,29 @@ from mqt.ionshuttler.linear.dd.critical_segments import (
     normalized_sensitivity_values,
 )
 from mqt.ionshuttler.linear.field_profile import FieldProfile
-from mqt.ionshuttler.linear.schedule import ActionSchedule
-from mqt.ionshuttler.linear.state import create_initial_state
+from mqt.ionshuttler.linear.schedule import schedule_from_path
+from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-_ARCHITECTURE = Architecture(num_sites=1, processing_zones={"pz": [0]})
+    from mqt.ionshuttler.linear.schedule import Schedule
+    from mqt.ionshuttler.linear.state import SearchTransition
+
+_ARCHITECTURE = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
 
 
 def _result(
-    path: Sequence[Action],
+    path: Sequence[SearchTransition],
     *,
     timesteps: int = 3,
-) -> ActionSchedule:
-    program = ActionSchedule.from_actions(
+) -> Schedule:
+    program = schedule_from_path(
         path,
         create_initial_state(1, _ARCHITECTURE),
+        _ARCHITECTURE,
     )
-    assert program.num_timesteps == timesteps
+    assert program.end_time == timesteps
     return program
 
 
@@ -53,7 +57,7 @@ def test_gate_z_effect_classifies_preserving_flipping_and_mixing_gates() -> None
     assert gate_z_effect(Ry(ion=0, theta=2 * pi), 0) == 1
     assert gate_z_effect(Rxx(ion_a=0, ion_b=1, theta=0.2), 0) is None
     with pytest.raises(TypeError, match="gate action"):
-        gate_z_effect(AdvanceTime(), 0)
+        gate_z_effect(Shuttle(ion=0, src=0, dst=1), 0)
 
 
 def test_mixing_gate_closes_segment_and_pi_gate_only_flips_sign() -> None:
@@ -109,7 +113,7 @@ def test_whole_schedule_mode_and_phase_cost_semantics() -> None:
 
 def test_sensitivity_profile_is_rms_normalized_and_validated() -> None:
     """Restrict the generic field profile to the nonnegative DD envelope."""
-    architecture = Architecture(
+    architecture = LinearArchitecture(
         num_sites=2,
         processing_zones={"pz": [0, 1]},
         field_profile=FieldProfile(2, ((0, 0.0), (1, 3.0))),

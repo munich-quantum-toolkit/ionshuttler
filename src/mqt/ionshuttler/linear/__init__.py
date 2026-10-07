@@ -9,18 +9,28 @@
 
 from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES
-from mqt.ionshuttler.linear.architecture import Architecture
-from mqt.ionshuttler.linear.config import (
-    GateTiming,
-    HardwareTiming,
-    LinearCompilerConfig,
-    SearchConfig,
-    TransportTiming,
-)
+from mqt.ionshuttler.core.gates import GateTiming
+from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES, TransportTiming
+from mqt.ionshuttler.linear.architecture import LinearArchitecture
+from mqt.ionshuttler.linear.config import LinearCompilerConfig, SearchConfig
 from mqt.ionshuttler.linear.cost import HeuristicFn, zero_heuristic
-from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
-from mqt.ionshuttler.linear.schedule import ActionSchedule, MachineState, ScheduledAction
+from mqt.ionshuttler.linear.result import (
+    CompilationResult,
+    CompilationStatus,
+    LinearCompilationResult,
+    LinearDiagnostics,
+    load_result,
+    result_from_dict,
+    result_from_json,
+)
+from mqt.ionshuttler.linear.schedule import (
+    LinearMachineState,
+    Schedule,
+    ScheduledAction,
+    load_schedule,
+    schedule_from_dict,
+    schedule_from_json,
+)
 
 if TYPE_CHECKING:
     from mqt.ionshuttler.linear.compiler import LinearCompiler
@@ -47,18 +57,25 @@ def __getattr__(name: str) -> object:
 
 __all__ = [
     "DEFAULT_ACTION_TYPES",
-    "ActionSchedule",
-    "Architecture",
     "CompilationResult",
     "CompilationStatus",
     "GateTiming",
-    "HardwareTiming",
     "HeuristicFn",
+    "LinearArchitecture",
+    "LinearCompilationResult",
     "LinearCompiler",
     "LinearCompilerConfig",
-    "MachineState",
+    "LinearDiagnostics",
+    "LinearMachineState",
+    "Schedule",
     "ScheduledAction",
     "SearchConfig",
     "TransportTiming",
+    "load_result",
+    "load_schedule",
+    "result_from_dict",
+    "result_from_json",
+    "schedule_from_dict",
+    "schedule_from_json",
     "zero_heuristic",
 ]

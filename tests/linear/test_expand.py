@@ -5,17 +5,20 @@
 #
 # Licensed under the MIT License
 
-"""Tests for generating and applying Linear schedule actions."""
+"""Tests for generating and applying Linear search transitions."""
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
+from mqt.ionshuttler.circuit import Circuit
+from mqt.ionshuttler.linear import GateTiming, TransportTiming
 from mqt.ionshuttler.linear.actions import (
     DEFAULT_ACTION_TYPES,
-    AdvanceTime,
-    GateSpec,
-    GlobalPulse,
+    GateAction,
+    GlobalGate,
     PhysicalSwap,
     Rx,
     Ry,
@@ -23,8 +26,7 @@ from mqt.ionshuttler.linear.actions import (
     Rzz,
     Shuttle,
 )
-from mqt.ionshuttler.linear.architecture import Architecture
-from mqt.ionshuttler.linear.config import TransportTiming
+from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.expand import (
     ExpansionOptions,
     GenerationMode,
@@ -35,7 +37,20 @@ from mqt.ionshuttler.linear.expand import (
     ready_gate_ids,
     replay_path,
 )
-from mqt.ionshuttler.linear.state import State
+from mqt.ionshuttler.linear.state import AdvanceTime, State
+
+
+def make_circuit(
+    gates: tuple[GateAction, ...] = (),
+    predecessors: tuple[frozenset[int], ...] | None = None,
+) -> Circuit:
+    """Build a small circuit with stable gate IDs."""
+    normalized = tuple(replace(gate, gate_id=gate_id) for gate_id, gate in enumerate(gates))
+    return Circuit(
+        num_ions=2,
+        gates=normalized,
+        predecessors=tuple(frozenset() for _gate in gates) if predecessors is None else predecessors,
+    )
 
 
 def make_state(
@@ -60,29 +75,37 @@ def make_state(
 
 def test_ready_gate_ids_returns_all_dependency_ready_gates() -> None:
     """Offer every unfinished gate whose direct predecessors are complete."""
-    predecessors = {4: frozenset(), 7: frozenset({4}), 9: frozenset()}
+    predecessors = (frozenset(), frozenset({0}), frozenset())
 
-    assert ready_gate_ids([4, 7, 9], predecessors, frozenset(), ()) == [4, 9]
-    assert ready_gate_ids([4, 7, 9], predecessors, frozenset({4}), ()) == [7, 9]
-    assert ready_gate_ids([4, 7, 9], predecessors, frozenset({4}), ((7, 3),)) == [9]
+    assert ready_gate_ids([0, 1, 2], predecessors, frozenset(), ()) == [0, 2]
+    assert ready_gate_ids([0, 1, 2], predecessors, frozenset({0}), ()) == [1, 2]
+    assert ready_gate_ids([0, 1, 2], predecessors, frozenset({0}), ((1, 3),)) == [2]
 
 
-def test_full_generation_includes_gates_and_configured_transports() -> None:
-    """Offer ready gates, swaps, and shuttles with the configured durations."""
+def test_full_generation_includes_gates_and_available_transports() -> None:
+    """Offer ready gates, swaps, and shuttles in the order of the selected action types."""
     state = make_state(((0, 0), (1, 1)))
     gate = Rx(ion=0, theta=1.0)
 
-    actions = generate_actions(
-        state,
-        Architecture(num_sites=3),
-        [0],
-        {0: gate},
-        transport_timing=TransportTiming(shuttle=2, swap=3),
-    )
+    actions = generate_actions(state, LinearArchitecture(num_sites=3), make_circuit((gate,)))
 
-    assert gate in actions
-    assert PhysicalSwap(ion_a=0, ion_b=1, pos_a=0, pos_b=1, duration=3) in actions
-    assert Shuttle(ion=1, src=1, dst=2, duration=2) in actions
+    assert actions == [
+        gate,
+        PhysicalSwap(ion_a=0, ion_b=1, pos_a=0, pos_b=1),
+        Shuttle(ion=1, src=1, dst=2),
+    ]
+
+
+def test_generated_transport_takes_architecture_durations() -> None:
+    """Reserve shuttled ions for the architecture's configured transport time."""
+    architecture = LinearArchitecture(num_sites=3, transport_timing=TransportTiming(shuttle=2, swap=3))
+    state = make_state(((0, 0), (1, 1)))
+
+    children = expand(state, architecture, make_circuit())
+
+    reserved = {action: child.ions_busy_until for action, _, child in children}
+    assert reserved[Shuttle(ion=1, src=1, dst=2)] == ((0, 0), (1, 2))
+    assert reserved[PhysicalSwap(ion_a=0, ion_b=1, pos_a=0, pos_b=1)] == ((0, 3), (1, 3))
 
 
 @pytest.mark.parametrize("mode", [GenerationMode.FULL, GenerationMode.INFORMED])
@@ -93,9 +116,8 @@ def test_generation_excludes_gate_types_missing_from_hardware_catalog(mode: Gene
 
     actions = generate_actions_by_mode(
         state,
-        Architecture(num_sites=2, processing_zones={"pz": [0]}),
-        [0],
-        {0: gate},
+        LinearArchitecture(num_sites=2, processing_zones={"pz": [0]}),
+        make_circuit((gate,)),
         options=ExpansionOptions(mode=mode, action_types=(Shuttle,)),
     )
 
@@ -114,10 +136,8 @@ def test_generation_respects_dependencies_and_busy_resources() -> None:
 
     actions = generate_actions(
         state,
-        Architecture(num_sites=1),
-        [0, 1],
-        {0: first, 1: second},
-        predecessors={0: frozenset(), 1: frozenset({0})},
+        LinearArchitecture(num_sites=1),
+        make_circuit((first, second), (frozenset(), frozenset({0}))),
     )
 
     assert first not in actions
@@ -127,22 +147,25 @@ def test_generation_respects_dependencies_and_busy_resources() -> None:
 
 def test_advance_time_is_generated_only_while_timed_work_is_pending() -> None:
     """Avoid creating idle branches while retaining deliberate waiting as an action."""
-    architecture = Architecture(num_sites=2)
+    architecture = LinearArchitecture(num_sites=2)
     idle = make_state(((0, 0),))
     busy = make_state(((0, 0),), ions_busy=((0, 2),), time=1)
 
-    assert AdvanceTime() not in generate_actions(idle, architecture, [], {})
-    assert AdvanceTime() in generate_actions(busy, architecture, [], {})
-    assert AdvanceTime().is_valid(idle, architecture)
+    circuit = make_circuit()
+    assert AdvanceTime() not in generate_actions(idle, architecture, circuit)
+    assert AdvanceTime() in generate_actions(busy, architecture, circuit)
+    assert replay_path(idle, architecture, [AdvanceTime()], circuit).time == 1
 
 
 def test_virtual_and_zero_duration_physical_gates_complete_immediately() -> None:
     """Complete instantaneous gates without placing them in the running set."""
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(
+        num_sites=1,
+        gate_timing=GateTiming(rx=0, virtual_single_qubit_gates=frozenset({"rz"})),
+    )
     state = make_state(((0, 0),))
     virtual_gate = Rz(ion=0, theta=0.25)
-    with pytest.warns(UserWarning, match="zero duration"):
-        physical_gate = Rx(ion=0, theta=0.5, duration=0)
+    physical_gate = Rx(ion=0, theta=0.5)
 
     after_virtual = apply(state, architecture, virtual_gate, gate_id=3)
     after_physical = apply(after_virtual, architecture, physical_gate, gate_id=7)
@@ -154,9 +177,9 @@ def test_virtual_and_zero_duration_physical_gates_complete_immediately() -> None
 
 def test_timed_gate_reserves_hardware_and_finishes_after_time_advances() -> None:
     """Track a running gate until its duration has elapsed."""
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1, gate_timing=GateTiming(rx=2))
     state = make_state(((0, 0),))
-    gate = Rx(ion=0, theta=1.0, duration=2)
+    gate = Rx(ion=0, theta=1.0)
 
     started = apply(state, architecture, gate, gate_id=4)
     after_one_tick = apply(started, architecture, AdvanceTime())
@@ -178,18 +201,16 @@ def test_expand_carries_the_exact_gate_id_for_equal_actions() -> None:
 
     children = expand(
         state,
-        Architecture(num_sites=2),
-        [4, 7, 9],
-        {4: first, 7: second, 9: independent},
-        predecessors={4: frozenset(), 7: frozenset({4}), 9: frozenset()},
+        LinearArchitecture(num_sites=2),
+        make_circuit((first, second, independent), (frozenset(), frozenset({0}), frozenset())),
     )
 
     gate_children = [(action, gate_id, child) for action, gate_id, child in children if gate_id is not None]
     assert [(action, gate_id) for action, gate_id, _ in gate_children] == [
-        (first, 4),
-        (independent, 9),
+        (first, 0),
+        (independent, 2),
     ]
-    assert gate_children[0][2].in_progress_gates == ((4, 1),)
+    assert gate_children[0][2].in_progress_gates == ((0, 1),)
 
 
 def test_informed_generation_prefers_ready_gates() -> None:
@@ -199,9 +220,8 @@ def test_informed_generation_prefers_ready_gates() -> None:
 
     actions = generate_actions_by_mode(
         state,
-        Architecture(num_sites=3),
-        [0],
-        {0: gate},
+        LinearArchitecture(num_sites=3),
+        make_circuit((gate,)),
         options=ExpansionOptions(mode=GenerationMode.INFORMED),
     )
 
@@ -210,7 +230,7 @@ def test_informed_generation_prefers_ready_gates() -> None:
 
 def test_informed_generation_moves_relevant_ions_toward_a_zone() -> None:
     """Move only upcoming gate ions closer when no gate can run yet."""
-    architecture = Architecture(num_sites=5, processing_zones={"pz": [2, 3]})
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2, 3]})
     state = make_state(
         ((0, 0), (1, 4)),
         pzs_busy=(("pz", 0),),
@@ -220,8 +240,7 @@ def test_informed_generation_moves_relevant_ions_toward_a_zone() -> None:
     actions = generate_actions_by_mode(
         state,
         architecture,
-        [0],
-        {0: gate},
+        make_circuit((gate,)),
         options=ExpansionOptions(mode=GenerationMode.INFORMED),
     )
 
@@ -233,31 +252,29 @@ def test_informed_generation_moves_relevant_ions_toward_a_zone() -> None:
 
 def test_informed_generation_swaps_a_relevant_ion_toward_a_zone() -> None:
     """Use a neighboring ion when it is the only path toward a processing zone."""
-    architecture = Architecture(num_sites=3, processing_zones={"pz": [0]})
+    architecture = LinearArchitecture(num_sites=3, processing_zones={"pz": [0]})
     state = make_state(((0, 2), (1, 1)), pzs_busy=(("pz", 0),))
     gate = Rx(ion=0, theta=1.0)
 
     actions = generate_actions_by_mode(
         state,
         architecture,
-        [0],
-        {0: gate},
+        make_circuit((gate,)),
         options=ExpansionOptions(mode=GenerationMode.INFORMED),
     )
 
-    assert actions == [PhysicalSwap(ion_a=0, ion_b=1, pos_a=2, pos_b=1, duration=3)]
+    assert actions == [PhysicalSwap(ion_a=0, ion_b=1, pos_a=2, pos_b=1)]
 
 
 def test_uninformed_generation_is_the_remaining_full_action_set() -> None:
     """Use the broader candidates as a fallback after informed choices."""
-    architecture = Architecture(num_sites=5, processing_zones={"pz": [2, 3]})
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2, 3]})
     state = make_state(((0, 0), (1, 4)), pzs_busy=(("pz", 0),))
-    gates = {0: Rzz(ion_a=0, ion_b=1, theta=1.0)}
+    circuit = make_circuit((Rzz(ion_a=0, ion_b=1, theta=1.0),))
     uninformed = generate_actions_by_mode(
         state,
         architecture,
-        [0],
-        gates,
+        circuit,
         options=ExpansionOptions(mode=GenerationMode.UNINFORMED),
     )
 
@@ -266,74 +283,77 @@ def test_uninformed_generation_is_the_remaining_full_action_set() -> None:
 
 def test_generation_accepts_an_additional_gate_action_type() -> None:
     """Schedule a hardware gate without teaching generation about its concrete class."""
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1, gate_timing=GateTiming(rx=2))
     state = make_state(((0, 0),))
-    gate = GlobalPulse(gate=GateSpec("rx", 0.5), duration=2)
+    gate = GlobalGate(gate_name="rx", theta=0.5, ions=(0,))
 
     children = expand(
         state,
         architecture,
-        [6],
-        {6: gate},
-        options=ExpansionOptions(action_types=(*DEFAULT_ACTION_TYPES, GlobalPulse)),
+        make_circuit((gate,)),
+        options=ExpansionOptions(action_types=(*DEFAULT_ACTION_TYPES, GlobalGate)),
     )
 
-    assert children[0][0:2] == (gate, 6)
-    assert children[0][2].in_progress_gates == ((6, 2),)
+    assert children[0][0:2] == (gate, 0)
+    assert children[0][2].in_progress_gates == ((0, 2),)
 
 
 def test_replay_path_validates_actions_and_preserves_the_initial_state() -> None:
     """Reproduce a schedule without mutating its starting state."""
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1)
     initial = make_state(((0, 0),))
-    gate = Rx(ion=0, theta=1.0)
+    gate = Rx(ion=0, theta=1.0, gate_id=0)
     path = [gate, AdvanceTime()]
 
-    final = replay_path(initial, architecture, path, [0], {0: gate})
+    circuit = make_circuit((gate,))
+    final = replay_path(initial, architecture, path, circuit)
 
     assert final.completed_gates == frozenset({0})
     assert initial.completed_gates == frozenset()
     assert initial.time == 0
 
     with pytest.raises(ValueError, match="not valid"):
-        replay_path(initial, architecture, [Shuttle(ion=0, src=1, dst=0)], [], {})
+        replay_path(initial, architecture, [Shuttle(ion=0, src=1, dst=0)], make_circuit())
 
 
-def test_replay_matches_an_equivalent_reconstructed_gate() -> None:
-    """Recognize an equivalent gate after a schedule has been reconstructed."""
-    architecture = Architecture(num_sites=1)
+def test_replay_completes_the_circuit_gate_named_by_gate_id() -> None:
+    """Tell equal ready gates apart by the gate ID of the replayed action."""
+    architecture = LinearArchitecture(num_sites=1)
     initial = make_state(((0, 0),))
-    circuit_gate = Rx(ion=0, theta=1.0)
-    scheduled_gate = Rx(ion=0, theta=1.0)
+    circuit = make_circuit((Rx(ion=0, theta=1.0), Rx(ion=0, theta=1.0)))
 
     final = replay_path(
         initial,
         architecture,
-        [scheduled_gate, AdvanceTime()],
-        [4],
-        {4: circuit_gate},
+        [Rx(ion=0, theta=1.0, gate_id=1), AdvanceTime()],
+        circuit,
+        predecessors=(frozenset(), frozenset()),
     )
 
-    assert final.completed_gates == frozenset({4})
+    assert final.completed_gates == frozenset({1})
 
 
-def test_replay_rejects_an_action_matching_multiple_ready_gates() -> None:
-    """Reject equality matching when it cannot identify one circuit gate."""
-    architecture = Architecture(num_sites=1)
+@pytest.mark.parametrize(
+    ("action", "message"),
+    [
+        (Rx(ion=0, theta=1.0), "has no gate_id"),
+        (Rx(ion=0, theta=0.5, gate_id=0), "does not match circuit gate 0"),
+        (Rx(ion=0, theta=1.0, gate_id=1), "is not ready"),
+    ],
+)
+def test_replay_rejects_a_gate_action_that_names_no_ready_circuit_gate(action: Rx, message: str) -> None:
+    """Require the gate ID of a replayed gate to name a ready, equal circuit gate."""
+    architecture = LinearArchitecture(num_sites=1)
     initial = make_state(((0, 0),))
-    gates = {
-        4: Rx(ion=0, theta=1.0),
-        5: Rx(ion=0, theta=1.0),
-    }
+    circuit = make_circuit((Rx(ion=0, theta=1.0), Rx(ion=0, theta=1.0)))
 
-    with pytest.raises(ValueError, match="does not identify exactly one ready gate"):
+    with pytest.raises(ValueError, match=message):
         replay_path(
             initial,
             architecture,
-            [Rx(ion=0, theta=1.0)],
-            [4, 5],
-            gates,
-            predecessors={4: frozenset(), 5: frozenset()},
+            [action],
+            circuit,
+            predecessors=(frozenset(), frozenset({0})),
         )
 
 
@@ -342,6 +362,6 @@ def test_gate_action_requires_an_explicit_circuit_id() -> None:
     with pytest.raises(ValueError, match="gate_id is required"):
         apply(
             make_state(((0, 0),)),
-            Architecture(num_sites=1),
+            LinearArchitecture(num_sites=1),
             Rx(ion=0, theta=1.0),
         )

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Literal
 from mqt.ionshuttler.linear.actions import (
     Action,
     GateAction,
-    GlobalPulse,
+    GlobalGate,
     Rx,
     Rxx,
     Ry,
@@ -28,14 +28,14 @@ from mqt.ionshuttler.linear.actions import (
     TwoQubitGate,
 )
 from mqt.ionshuttler.linear.dd.frame_replay import build_frame_history
-from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
+from mqt.ionshuttler.linear.timeline import CompiledTimeline, build_timeline
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from mqt.ionshuttler.linear.architecture import Architecture
+    from mqt.ionshuttler.linear.architecture import LinearArchitecture
     from mqt.ionshuttler.linear.field_profile import FieldProfile
-    from mqt.ionshuttler.linear.schedule import ActionSchedule
+    from mqt.ionshuttler.linear.schedule import Schedule
 
 SegmentationMode = Literal["critical", "whole_schedule"]
 
@@ -84,7 +84,7 @@ class CriticalSegmentResult:
 
 
 def normalized_sensitivity_values(
-    architecture: Architecture,
+    architecture: LinearArchitecture,
     profile: FieldProfile | None = None,
 ) -> tuple[float, ...]:
     """Return a nonnegative dimensionless sensitivity envelope with unit RMS.
@@ -132,8 +132,8 @@ def gate_z_effect(action: Action, ion: int) -> int | None:
 
 
 def compute_critical_segments(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
     *,
     sensitivity_profile: FieldProfile | None = None,
     dt: float = 1.0,
@@ -165,13 +165,13 @@ def compute_critical_segments(
     for ion in ion_ids:
         ion_phase = 0.0
         ion_squared_phase = 0.0
-        segment_start = 0
+        segment_start = timeline.start_time
         local_sign = 1
         positions: list[int] = []
         signs: list[int] = []
         weights: list[float] = []
         segment_index = 0
-        for timestep in range(timeline.makespan):
+        for timestep in range(timeline.start_time, timeline.end_time):
             algorithmic_gates = (
                 _algorithmic_gates_for_ion(timeline, ion, timestep, local_pulse_action_ids)
                 if segmentation == "critical"
@@ -210,7 +210,7 @@ def compute_critical_segments(
                 ion,
                 segment_index,
                 segment_start,
-                timeline.makespan,
+                timeline.end_time,
                 positions,
                 signs,
                 weights,
@@ -265,7 +265,7 @@ def _algorithmic_gates_for_ion(
     gates: list[SingleQubitGate | TwoQubitGate] = []
     for item in timeline.scheduled_action_at(timestep) or ():
         action = item.action
-        if isinstance(action, GlobalPulse):
+        if isinstance(action, GlobalGate):
             continue
         if isinstance(action, SingleQubitGate):
             if action.ion != ion or item.action_id in local_pulse_action_ids:
@@ -284,7 +284,7 @@ def _integer_pi_sign(theta: float) -> int | None:
     return -1 if nearest % 2 else 1
 
 
-def _ion_ids(program: ActionSchedule) -> tuple[int, ...]:
+def _ion_ids(program: Schedule) -> tuple[int, ...]:
     return tuple(sorted(ion for ion, _site in program.initial_state.positions))
 
 

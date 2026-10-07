@@ -12,10 +12,10 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Generic, Protocol, TypeVar, cast
+from typing import ClassVar, Generic, Protocol, TypeVar, cast
 
-from mqt.ionshuttler.linear.architecture import Architecture
-from mqt.ionshuttler.linear.schedule import ActionDecoders, ActionSchedule
+from mqt.ionshuttler.linear.architecture import LinearArchitecture
+from mqt.ionshuttler.linear.schedule import Schedule, schedule_from_dict
 
 from ..._json_utils import (
     require_int,
@@ -25,11 +25,6 @@ from ..._json_utils import (
     require_optional_number,
     require_str,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from mqt.ionshuttler.linear.actions import Action
 
 
 class DDReport(Protocol):
@@ -167,8 +162,8 @@ class LocalDDSequence:
 class DDPassResult(Generic[ReportT]):
     """Contain an augmented schedule and diagnostics from one DD pass."""
 
-    schedule: ActionSchedule
-    architecture: Architecture
+    schedule: Schedule
+    architecture: LinearArchitecture
     report: ReportT
     unavailable_reason: str | None = None
 
@@ -179,11 +174,11 @@ class DDPassResult(Generic[ReportT]):
             TypeError: If the schedule or report violates the pass-result protocol.
             ValueError: If an unavailable reason is empty.
         """
-        if not isinstance(self.schedule, ActionSchedule):
-            msg = "schedule must be an ActionSchedule"
+        if not isinstance(self.schedule, Schedule):
+            msg = "schedule must be a Schedule"
             raise TypeError(msg)
-        if not isinstance(self.architecture, Architecture):
-            msg = "architecture must be an Architecture"
+        if not isinstance(self.architecture, LinearArchitecture):
+            msg = "architecture must be a LinearArchitecture"
             raise TypeError(msg)
         if not isinstance(getattr(self.report, "report_type", None), str):
             msg = "report must define a string report_type"
@@ -210,9 +205,6 @@ class DDPassResult(Generic[ReportT]):
         cls,
         data: object,
         report_class: type[ReportT],
-        *,
-        action_types: Sequence[type[Action]] | None = None,
-        action_decoders: ActionDecoders | None = None,
     ) -> DDPassResult[ReportT]:
         """Restore a DD-pass result with an explicit report class.
 
@@ -231,12 +223,8 @@ class DDPassResult(Generic[ReportT]):
             msg = "unavailable_reason must be a string or null"
             raise ValueError(msg)
         return cls(
-            architecture=Architecture.from_dict(mapping.get("architecture"), action_types=action_types),
-            schedule=ActionSchedule.from_dict(
-                mapping.get("schedule"),
-                action_types=action_types,
-                action_decoders=action_decoders,
-            ),
+            architecture=LinearArchitecture.from_dict(mapping.get("architecture")),
+            schedule=schedule_from_dict(mapping.get("schedule")),
             report=cast("ReportT", report_class.from_dict(mapping.get("report"))),
             unavailable_reason=unavailable_reason,
         )
@@ -254,21 +242,13 @@ class DDPassResult(Generic[ReportT]):
         cls,
         raw: str,
         report_class: type[ReportT],
-        *,
-        action_types: Sequence[type[Action]] | None = None,
-        action_decoders: ActionDecoders | None = None,
     ) -> DDPassResult[ReportT]:
         """Restore a DD-pass result from JSON text.
 
         Returns:
             The restored DD-pass result.
         """
-        return cls.from_dict(
-            json.loads(raw),
-            report_class,
-            action_types=action_types,
-            action_decoders=action_decoders,
-        )
+        return cls.from_dict(json.loads(raw), report_class)
 
     def save(self, filename: str | Path) -> Path:
         """Write this DD-pass result to an explicit UTF-8 JSON file.

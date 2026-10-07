@@ -9,18 +9,24 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, ClassVar, cast
+from dataclasses import replace
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from qiskit import QuantumCircuit
 
 import mqt.ionshuttler.linear.compiler as compiler_module
 import mqt.ionshuttler.linear.search as search_module
-from mqt.ionshuttler.linear import DEFAULT_ACTION_TYPES, Architecture, LinearCompiler
+from mqt.ionshuttler.circuit import parse_circuit
+from mqt.ionshuttler.linear import (
+    DEFAULT_ACTION_TYPES,
+    GateTiming,
+    LinearArchitecture,
+    LinearCompiler,
+    result_from_json,
+)
 from mqt.ionshuttler.linear.actions import (
     Action,
-    AdvanceTime,
     GateAction,
     PhysicalSwap,
     Rx,
@@ -29,84 +35,19 @@ from mqt.ionshuttler.linear.actions import (
     Rz,
     Rzz,
     Shuttle,
-    TransportAction,
-    TwoQubitGate,
 )
-from mqt.ionshuttler.linear.config import LinearCompilerConfig, SearchConfig, TransportTiming
-from mqt.ionshuttler.linear.expand import replay_path
-from mqt.ionshuttler.linear.parser import parse_circuit
+from mqt.ionshuttler.linear.config import LinearCompilerConfig, SearchConfig
 from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
-from mqt.ionshuttler.linear.schedule import ActionSchedule
+from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import create_initial_state
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
     from pathlib import Path
-
-    from mqt.ionshuttler.linear.state import State
-
-
-@dataclass(frozen=True)
-class _LongShuttle(TransportAction):
-    """Move one ion two sites in a single hardware operation."""
-
-    ion: int
-    src: int
-    dst: int
-    duration: int = 1
-
-    @classmethod
-    def available_actions(
-        cls,
-        state: State,
-        architecture: Architecture,
-        transport_timing: TransportTiming,
-    ) -> Iterable[Action]:
-        """Return forward two-site moves that remain on the device."""
-        del transport_timing
-        occupied = {position for _, position in state.positions}
-        return (
-            cls(ion=ion, src=source, dst=source + 2)
-            for ion, source in state.positions
-            if source + 2 < architecture.num_sites and source + 2 not in occupied
-        )
-
-    def is_valid(self, state: State, architecture: Architecture) -> bool:
-        """Return whether the ion can make the requested two-site move."""
-        positions = dict(state.positions)
-        return (
-            positions.get(self.ion) == self.src
-            and self.dst == self.src + 2
-            and self.dst < architecture.num_sites
-            and self.dst not in positions.values()
-            and dict(state.ions_busy_until).get(self.ion, state.time + 1) <= state.time
-        )
-
-    def apply(self, state: State, architecture: Architecture) -> State:
-        """Move the ion and reserve it for the configured duration."""
-        del architecture
-        positions = dict(state.positions)
-        busy_until = dict(state.ions_busy_until)
-        positions[self.ion] = self.dst
-        busy_until[self.ion] = state.time + self.duration
-        return replace(
-            state,
-            positions=tuple(sorted(positions.items())),
-            ions_busy_until=tuple(sorted(busy_until.items())),
-        )
-
-
-@dataclass(frozen=True)
-class _CX(TwoQubitGate):
-    """Controlled-X gate used to exercise catalog-driven circuit lowering."""
-
-    circuit_name: ClassVar[str] = "cx"
-    duration: int = 2
 
 
 def test_compiler_produces_a_compact_replayable_schedule() -> None:
     """Compile dependent gates without adding idle time after work completes."""
-    architecture = Architecture(num_sites=9, processing_zones={"pz1": [2, 3], "pz2": [5, 6]})
+    architecture = LinearArchitecture(num_sites=9, processing_zones={"pz1": [2, 3], "pz2": [5, 6]})
     compiler = LinearCompiler(architecture)
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nrx(0.1) q[0];\nry(0.2) q[1];\nrzz(0.3) q[0], q[1];\n'
 
@@ -116,36 +57,32 @@ def test_compiler_produces_a_compact_replayable_schedule() -> None:
     assert result.path == [
         Shuttle(ion=0, src=3, dst=2),
         Shuttle(ion=1, src=4, dst=3),
-        AdvanceTime(),
         Rx(ion=0, theta=0.1),
-        AdvanceTime(),
         Ry(ion=1, theta=0.2),
-        AdvanceTime(),
         Rzz(ion_a=0, ion_b=1, theta=0.3),
-        AdvanceTime(),
-        AdvanceTime(),
     ]
+    assert [item.start_time for item in result.schedule.scheduled_actions] == [0, 0, 1, 2, 3]
     assert result.architecture.supported_action_types == DEFAULT_ACTION_TYPES
     assert result.final_state is not None
     assert result.final_state.time == 5
-    assert result.final_state.completed_gates == frozenset({0, 1, 2})
+    result.validate()
 
 
 def test_pre_partition_is_a_strict_single_zone_no_op() -> None:
     """Produce identical deterministic output when one zone makes partitioning irrelevant."""
-    architecture = Architecture(num_sites=5, processing_zones={"pz": [2, 3]})
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2, 3]})
     compiler = LinearCompiler(architecture)
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nrzz(0.3) q[0],q[1];\n'
 
     baseline = compiler.compile(qasm)
     partitioned = compiler.compile(qasm, pre_partition=True)
 
-    assert replace(partitioned, wall_clock_s=baseline.wall_clock_s) == baseline
+    assert partitioned == baseline
 
 
 def test_pre_partitioned_multi_zone_schedule_is_complete_and_replayable() -> None:
     """Compile every gate and replay the resulting two-zone schedule in full."""
-    architecture = Architecture(
+    architecture = LinearArchitecture(
         num_sites=9,
         processing_zones={"left": [1, 2], "right": [6, 7]},
     )
@@ -159,56 +96,47 @@ rzz(0.3) q[1],q[2];
     compiler = LinearCompiler(architecture)
 
     result = compiler.compile(qasm, pre_partition=True)
-    _, gate_list, predecessors, _ = parse_circuit(
+    circuit = parse_circuit(
         qasm,
-        use_dependencies=compiler.config.search.use_dependencies,
-        gate_timing=compiler.config.hardware_timing.gates,
         gate_types=tuple(
             action_type for action_type in compiler.action_types or () if issubclass(action_type, GateAction)
         ),
     )
-    gate_order = list(range(len(gate_list)))
-    gates = dict(zip(gate_order, gate_list, strict=True))
-    replayed = replay_path(
-        result.initial_state.to_replay_state(),
-        architecture,
-        result.path,
-        gate_order,
-        gates,
-        predecessors=predecessors,
-    )
+    gate_order = list(circuit.gate_ids)
+    scheduled_gate_ids = {
+        item.action.gate_id for item in result.schedule.scheduled_actions if isinstance(item.action, GateAction)
+    }
 
     assert result.status is CompilationStatus.SUCCESS
-    assert result.final_state == replayed
-    assert replayed.completed_gates == frozenset(gate_order)
+    assert result.diagnostics is not None
+    assert result.diagnostics.preferred_gate_zones
+    assert {gate_id for gate_id, _zone_id in result.diagnostics.preferred_gate_zones} == set(gate_order)
+    assert result.final_state == result.architecture.replay_schedule(result.schedule)
+    assert scheduled_gate_ids == set(gate_order)
 
 
-def test_compiler_uses_the_hardware_action_catalog() -> None:
-    """Discover a custom action through its class-owned availability method."""
-    architecture = Architecture(
-        num_sites=3,
-        processing_zones={"pz": [2]},
-        supported_action_types=(*DEFAULT_ACTION_TYPES, _LongShuttle),
-    )
+def test_compiler_proposes_only_the_selected_hardware_actions() -> None:
+    """Generate transport only when the selected subset of the catalog contains it."""
+    architecture = LinearArchitecture(num_sites=3, processing_zones={"pz": [2]})
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.5) q[0];\n'
 
-    custom_result = LinearCompiler(
+    shuttle_result = LinearCompiler(
         architecture,
-        action_types=(Rx, _LongShuttle),
-    ).compile(qasm, initial_positions=[0])
+        action_types=(Rx, Shuttle),
+    ).compile(qasm, initial_placement=[0])
     unavailable_result = LinearCompiler(
         architecture,
         action_types=(Rx,),
-    ).compile(qasm, initial_positions=[0])
+    ).compile(qasm, initial_placement=[0])
 
-    assert custom_result.status is CompilationStatus.SUCCESS
-    assert any(isinstance(action, _LongShuttle) for action in custom_result.path)
+    assert shuttle_result.status is CompilationStatus.SUCCESS
+    assert shuttle_result.path == [Shuttle(ion=0, src=0, dst=1), Shuttle(ion=0, src=1, dst=2), Rx(ion=0, theta=0.5)]
     assert unavailable_result.status is CompilationStatus.FAILED
 
 
 def test_compiler_defaults_to_all_built_in_hardware_actions() -> None:
     """Expose every built-in hardware capability by default."""
-    compiler = LinearCompiler(Architecture(num_sites=2))
+    compiler = LinearCompiler(LinearArchitecture(num_sites=2))
 
     assert compiler.action_types == DEFAULT_ACTION_TYPES
     assert compiler.action_types == (PhysicalSwap, Shuttle, Rx, Ry, Rz, Rzz)
@@ -216,7 +144,7 @@ def test_compiler_defaults_to_all_built_in_hardware_actions() -> None:
 
 def test_compiler_requires_explicit_opt_in_for_non_default_gates() -> None:
     """Keep additional supported gates outside the default hardware set."""
-    architecture = Architecture(num_sites=2, processing_zones={"pz": [0, 1]})
+    architecture = LinearArchitecture(num_sites=2, processing_zones={"pz": [0, 1]})
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nrxx(0.5) q[0],q[1];\n'
 
     with pytest.raises(ValueError, match="unavailable gate 'rxx'"):
@@ -229,7 +157,7 @@ def test_compiler_requires_explicit_opt_in_for_non_default_gates() -> None:
 
 def test_compiler_rejects_circuit_gates_missing_from_hardware_catalog() -> None:
     """Reject a circuit immediately when its gate is unavailable."""
-    architecture = Architecture(num_sites=2, processing_zones={"pz": [0, 1]})
+    architecture = LinearArchitecture(num_sites=2, processing_zones={"pz": [0, 1]})
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nrzz(0.5) q[0],q[1];\n'
 
     with pytest.raises(ValueError, match="unavailable gate 'rzz'"):
@@ -237,46 +165,41 @@ def test_compiler_rejects_circuit_gates_missing_from_hardware_catalog() -> None:
 
 
 @pytest.mark.parametrize("circuit_kind", ["qasm", "qiskit"])
-def test_compiler_lowers_custom_gate_types_from_each_frontend(circuit_kind: str) -> None:
-    """Use one action-owned lowerer for QASM and Qiskit circuit inputs."""
-    architecture = Architecture(
+def test_compiler_lowers_an_enabled_gate_from_each_frontend(circuit_kind: str) -> None:
+    """Lower an enabled non-default gate from QASM and Qiskit and restore the result."""
+    architecture = LinearArchitecture(
         num_sites=2,
         processing_zones={"pz": [0, 1]},
-        supported_action_types=(*DEFAULT_ACTION_TYPES, _CX),
+        supported_action_types=(*DEFAULT_ACTION_TYPES, Rxx),
     )
     if circuit_kind == "qasm":
-        circuit: str | QuantumCircuit = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\ncx q[0],q[1];\n'
+        circuit: str | QuantumCircuit = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nrxx(0.5) q[0],q[1];\n'
     else:
         circuit = QuantumCircuit(2)
-        circuit.cx(0, 1)
+        circuit.rxx(0.5, 0, 1)
 
-    result = LinearCompiler(
-        architecture,
-        action_types=(*DEFAULT_ACTION_TYPES, _CX),
-    ).compile(circuit)
+    result = LinearCompiler(architecture).compile(circuit)
+    restored = result_from_json(result.to_json())
 
     assert result.status is CompilationStatus.SUCCESS
-    assert any(isinstance(action, _CX) for action in result.path)
-    assert result.architecture.supports(_CX)
-    with pytest.raises(ValueError, match="unknown architecture action type"):
-        CompilationResult.from_json(result.to_json())
-    restored = CompilationResult.from_json(result.to_json(), action_types=(_CX,))
+    assert result.path == [Rxx(ion_a=0, ion_b=1, theta=0.5)]
     assert restored.path == result.path
     assert restored.architecture == result.architecture
+    assert restored.architecture.supports(Rxx)
 
 
 def test_compiler_rejects_non_action_types() -> None:
     """Reject catalog entries that do not describe hardware actions."""
     with pytest.raises(TypeError, match="Action subclasses"):
-        LinearCompiler(Architecture(num_sites=2), action_types=(cast("type[Action]", object),))
+        LinearCompiler(LinearArchitecture(num_sites=2), action_types=(cast("type[Action]", object),))
 
-    with pytest.raises(ValueError, match="unique class names"):
-        LinearCompiler(Architecture(num_sites=2), action_types=(Rx, Rx))
+    with pytest.raises(ValueError, match="must not contain duplicates"):
+        LinearCompiler(LinearArchitecture(num_sites=2), action_types=(Rx, Rx))
 
 
 def test_qasm_and_qiskit_inputs_compile_equivalently() -> None:
     """Give equivalent circuit representations the same schedule."""
-    architecture = Architecture(num_sites=5, processing_zones={"pz": [2, 3]})
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2, 3]})
     compiler = LinearCompiler(architecture)
     qasm = """OPENQASM 2.0;
 include "qelib1.inc";
@@ -296,8 +219,8 @@ rzz(0.3) q[0],q[1];
     assert from_qasm.status is CompilationStatus.SUCCESS
     assert from_qiskit.status is CompilationStatus.SUCCESS
     assert from_qiskit.path == from_qasm.path
-    assert from_qiskit.num_timesteps == from_qasm.num_timesteps
-    assert from_qiskit.score == from_qasm.score
+    assert from_qiskit.end_time == from_qasm.end_time
+    assert from_qiskit.diagnostics == from_qasm.diagnostics
     assert from_qiskit.final_state == from_qasm.final_state
 
 
@@ -309,20 +232,20 @@ def test_compiler_accepts_a_qasm_path(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    result = LinearCompiler(Architecture(num_sites=1)).compile(qasm_path)
+    result = LinearCompiler(LinearArchitecture(num_sites=1)).compile(qasm_path)
 
     assert result.status is CompilationStatus.SUCCESS
-    assert result.num_timesteps == 1
+    assert result.end_time == 1
 
 
-def test_compiler_accepts_explicit_initial_positions() -> None:
+def test_compiler_accepts_explicit_initial_placement() -> None:
     """Start the circuit from caller-selected hardware sites."""
     compiler = LinearCompiler(
-        Architecture(num_sites=5, processing_zones={"pz": [0, 1]}),
+        LinearArchitecture(num_sites=5, processing_zones={"pz": [0, 1]}),
     )
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.5) q[0];\n'
 
-    result = compiler.compile(qasm, initial_positions=[0])
+    result = compiler.compile(qasm, initial_placement=[0])
 
     assert result.status is CompilationStatus.SUCCESS
     assert result.initial_state is not None
@@ -340,18 +263,18 @@ def test_exhaustive_configuration_compiles_through_the_same_facade() -> None:
             max_compile_time=None,
         ),
     )
-    compiler = LinearCompiler(Architecture(num_sites=1), config=config)
+    compiler = LinearCompiler(LinearArchitecture(num_sites=1), config=config)
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.5) q[0];\n'
 
     result = compiler.compile(qasm)
 
     assert result.status is CompilationStatus.SUCCESS
-    assert result.num_timesteps == 1
+    assert result.end_time == 1
 
 
 def test_dependency_setting_controls_parallel_gate_readiness() -> None:
-    """Use the configured circuit-dependency policy during normalization."""
-    architecture = Architecture(
+    """Use the configured circuit-dependency policy during compilation."""
+    architecture = LinearArchitecture(
         num_sites=2,
         processing_zones={"left": [0], "right": [1]},
     )
@@ -369,14 +292,31 @@ ry(0.2) q[1];
 
     assert dependency_result.status is CompilationStatus.SUCCESS
     assert sequential_result.status is CompilationStatus.SUCCESS
-    assert dependency_result.num_timesteps == 1
-    assert sequential_result.num_timesteps == 2
+    assert dependency_result.end_time == 1
+    assert sequential_result.end_time == 2
+
+
+def test_barrier_delays_gates_on_its_qubits_until_earlier_gates_finish() -> None:
+    """Start a gate after a register barrier only when every earlier gate has finished."""
+    architecture = LinearArchitecture(
+        num_sites=2,
+        processing_zones={"left": [0], "right": [1]},
+        gate_timing=GateTiming(rx=5),
+    )
+    qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nrx(0.1) q[1];\nbarrier q;\nrz(0.2) q[0];\n'
+
+    result = LinearCompiler(architecture).compile(qasm, initial_placement=[0, 1])
+
+    assert result.status is CompilationStatus.SUCCESS
+    start_times = {type(item.action): item.start_time for item in result.schedule.scheduled_actions}
+    assert start_times == {Rx: 0, Rz: 5}
+    result.validate()
 
 
 def test_zero_time_budget_returns_timeout() -> None:
     """Return a partial result when no search time is available."""
     config = LinearCompilerConfig(search=SearchConfig(max_compile_time=0))
-    compiler = LinearCompiler(Architecture(num_sites=1), config=config)
+    compiler = LinearCompiler(LinearArchitecture(num_sites=1), config=config)
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.5) q[0];\n'
 
     result = compiler.compile(qasm)
@@ -389,18 +329,20 @@ def test_zero_time_budget_returns_timeout() -> None:
 
 def test_failed_search_result_is_returned(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pass an unsuccessful search outcome through the facade unchanged."""
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1)
+    schedule = schedule_from_path([], create_initial_state(1, architecture), architecture)
     failed = CompilationResult(
         status=CompilationStatus.FAILED,
-        schedule=ActionSchedule.from_actions([], create_initial_state(1, architecture)),
+        schedule=schedule,
         architecture=architecture,
+        final_state=schedule.initial_state,
     )
 
     def fail_search(*_args: object, **_kwargs: object) -> CompilationResult:
         return failed
 
     monkeypatch.setattr(compiler_module, "search", fail_search)
-    compiler = LinearCompiler(Architecture(num_sites=1))
+    compiler = LinearCompiler(LinearArchitecture(num_sites=1))
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.5) q[0];\n'
 
     result = compiler.compile(qasm)
@@ -415,7 +357,7 @@ def test_interruption_returns_an_interrupted_result(monkeypatch: pytest.MonkeyPa
         raise KeyboardInterrupt
 
     monkeypatch.setattr(search_module, "_run_search", interrupt)
-    compiler = LinearCompiler(Architecture(num_sites=1))
+    compiler = LinearCompiler(LinearArchitecture(num_sites=1))
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.5) q[0];\n'
 
     result = compiler.compile(qasm)
@@ -431,7 +373,7 @@ def test_invalid_input_fails_before_search(monkeypatch: pytest.MonkeyPatch) -> N
         pytest.fail("search must not run for unsupported circuit input")
 
     monkeypatch.setattr(compiler_module, "search", unexpected_search)
-    compiler = LinearCompiler(Architecture(num_sites=1))
+    compiler = LinearCompiler(LinearArchitecture(num_sites=1))
     circuit = QuantumCircuit(1)
     circuit.h(0)
 
@@ -442,7 +384,7 @@ def test_invalid_input_fails_before_search(monkeypatch: pytest.MonkeyPatch) -> N
 def test_compilation_does_not_write_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep ordinary compilation free of filesystem output."""
     monkeypatch.chdir(tmp_path)
-    compiler = LinearCompiler(Architecture(num_sites=1))
+    compiler = LinearCompiler(LinearArchitecture(num_sites=1))
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.5) q[0];\n'
 
     result = compiler.compile(qasm)
@@ -467,7 +409,9 @@ def test_partition_time_counts_toward_compile_budget(
     monkeypatch.setattr(search_module, "perf_counter", lambda: now[0])
     monkeypatch.setattr(compiler_module, "compute_gate_zone_assignment", partition)
     config = LinearCompilerConfig(search=SearchConfig(horizon=horizon, committed_gates=1, max_compile_time=limit))
-    compiler = LinearCompiler(Architecture(num_sites=4, processing_zones={"left": [0, 1], "right": [2, 3]}), config)
+    compiler = LinearCompiler(
+        LinearArchitecture(num_sites=4, processing_zones={"left": [0, 1], "right": [2, 3]}), config
+    )
     circuit = QuantumCircuit(2)
     circuit.rzz(0.3, 0, 1)
 

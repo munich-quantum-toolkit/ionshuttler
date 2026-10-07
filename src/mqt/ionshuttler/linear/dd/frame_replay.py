@@ -16,10 +16,8 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from mqt.ionshuttler.linear.actions import (
     Action,
-    AdvanceTime,
     GateAction,
-    GateSpec,
-    GlobalPulse,
+    GlobalGate,
     PhysicalSwap,
     Rx,
     Rxx,
@@ -30,25 +28,27 @@ from mqt.ionshuttler.linear.actions import (
     Shuttle,
     TransportAction,
 )
-from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
+from mqt.ionshuttler.linear.dd.schemes import GateSpec
+from mqt.ionshuttler.linear.timeline import CompiledTimeline, build_timeline
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from mqt.ionshuttler.linear.architecture import Architecture
+    from mqt.ionshuttler.linear.architecture import LinearArchitecture
     from mqt.ionshuttler.linear.field_profile import FieldProfile
-    from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
+    from mqt.ionshuttler.linear.schedule import Schedule, ScheduledAction
 
 FrameActionKind = Literal[
     "global_dd_pulse",
     "local_dd_pulse",
     "transport",
     "algorithmic_gate",
-    "advance_time",
     "other",
 ]
 
 _PAULI_LABELS = frozenset({"I", "X", "Y", "Z"})
+# Global gates use circuit gate names; pulse specifications use gate class names.
+_GATE_SPEC_NAMES = {"rx": "Rx", "ry": "Ry", "rz": "Rz"}
 _PAULI_COMPOSITION: dict[tuple[str, str], str] = {
     ("I", "I"): "I",
     ("I", "X"): "X",
@@ -110,6 +110,7 @@ class PauliFrame:
 class FrameHistory:
     """Store global and ion-local Pauli frames at every schedule boundary."""
 
+    start_time: int
     global_frames_by_time: tuple[PauliFrame, ...]
     local_frame_overrides: Mapping[int, tuple[PauliFrame, ...]] = field(default_factory=dict)
 
@@ -133,12 +134,14 @@ class FrameHistory:
         Raises:
             ValueError: If ``timestep`` lies outside the tracked schedule.
         """
-        if timestep < 0 or timestep >= len(self.global_frames_by_time):
-            msg = f"timestep must be within [0, {len(self.global_frames_by_time) - 1}]"
+        index = timestep - self.start_time
+        if index < 0 or index >= len(self.global_frames_by_time):
+            end_time = self.start_time + len(self.global_frames_by_time) - 1
+            msg = f"timestep must be within [{self.start_time}, {end_time}]"
             raise ValueError(msg)
-        frame = self.global_frames_by_time[timestep]
+        frame = self.global_frames_by_time[index]
         overrides = self.local_frame_overrides.get(ion)
-        return frame if overrides is None else frame.compose(overrides[timestep])
+        return frame if overrides is None else frame.compose(overrides[index])
 
     def phase_sign_for_ion(self, ion: int, timestep: int, axis: str = "Z") -> int:
         """Return the frame-induced evolution sign for an ion and axis."""
@@ -161,30 +164,35 @@ def build_frame_history(
 ) -> FrameHistory:
     """Replay Pauli frames through every schedule boundary.
 
-    Entry ``t`` is the frame after decoupling pulses at boundary ``t``. For
-    ``t < makespan``, it applies to phase accumulation on ``[t, t + 1)``. The
-    final entry represents the frame after terminal pulses.
+    Entry ``t - start_time`` is the frame after decoupling pulses at boundary
+    ``t``. For ``t < end_time``, it applies to phase accumulation on
+    ``[t, t + 1)``. The final entry represents the frame after terminal pulses.
+
+    A global pulse that targets every ion of the schedule changes the global
+    frame. A global pulse that targets only some ions, and a recorded local
+    pulse, change only the frames of their ions.
 
     Returns:
         The global and ion-local frame at every schedule boundary.
     """
+    all_ions = _schedule_ions(timeline)
     frames_by_time: list[PauliFrame] = []
     current_frame = PauliFrame()
-    for timestep in range(timeline.makespan + 1):
+    for timestep in range(timeline.start_time, timeline.end_time + 1):
         for action in timeline.action_at(timestep) or ():
-            operation = frame_operation_for_action(action)
-            if operation is not None:
-                current_frame = current_frame.compose(operation)
+            if isinstance(action, GlobalGate) and action.ions == all_ions:
+                current_frame = current_frame.compose(_frame_operation_for_global_gate(action))
         frames_by_time.append(current_frame)
     return FrameHistory(
+        start_time=timeline.start_time,
         global_frames_by_time=tuple(frames_by_time),
-        local_frame_overrides=_build_local_frame_overrides(timeline, local_pulse_action_ids),
+        local_frame_overrides=_build_local_frame_overrides(timeline, local_pulse_action_ids, all_ions),
     )
 
 
 def framed_action_events(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
     timeline: CompiledTimeline | None = None,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> tuple[FramedActionEvent, ...]:
@@ -192,7 +200,7 @@ def framed_action_events(
     resolved_timeline = build_timeline(schedule, architecture) if timeline is None else timeline
     frame_history = build_frame_history(resolved_timeline, local_pulse_action_ids)
     events: list[FramedActionEvent] = []
-    for timestep in range(resolved_timeline.makespan + 1):
+    for timestep in range(resolved_timeline.start_time, resolved_timeline.end_time + 1):
         for scheduled_action in resolved_timeline.scheduled_action_at(timestep) or ():
             action = scheduled_action.action
             events.append(
@@ -200,7 +208,7 @@ def framed_action_events(
                     timestep=timestep,
                     action=action,
                     kind=_framed_action_kind(scheduled_action, local_pulse_action_ids),
-                    ion_frames=_event_ion_frames(action, timestep, resolved_timeline, frame_history),
+                    ion_frames=_event_ion_frames(action, timestep, frame_history),
                 )
             )
     return tuple(events)
@@ -210,16 +218,19 @@ def global_pulse_timesteps(timeline: CompiledTimeline) -> tuple[int, ...]:
     """Return boundaries containing at least one global pulse."""
     return tuple(
         timestep
-        for timestep in range(timeline.makespan + 1)
-        if any(isinstance(action, GlobalPulse) for action in timeline.action_at(timestep) or ())
+        for timestep in range(timeline.start_time, timeline.end_time + 1)
+        if any(isinstance(action, GlobalGate) for action in timeline.action_at(timestep) or ())
     )
 
 
 def frame_operation_for_action(action: Action) -> PauliFrameOperation | None:
-    """Return the frame operation induced by a global pulse, if applicable."""
-    if not isinstance(action, GlobalPulse):
+    """Return the frame operation induced by a global pulse, if applicable.
+
+    The operation applies to every ion the global pulse targets.
+    """
+    if not isinstance(action, GlobalGate):
         return None
-    return frame_operation_for_gate_spec(action.gate)
+    return _frame_operation_for_global_gate(action)
 
 
 def frame_operation_for_gate_spec(spec: GateSpec) -> PauliFrameOperation:
@@ -254,13 +265,13 @@ def effective_action(action: Action, frame: PauliFrame) -> Action:
     """Return a single-ion rotation transformed through a Pauli frame."""
     if isinstance(action, Rx):
         theta = cast("float", effective_gate_spec(GateSpec("Rx", action.theta), frame).theta)
-        return Rx(ion=action.ion, theta=theta, duration=action.duration, virtual=action.virtual)
+        return Rx(ion=action.ion, theta=theta)
     if isinstance(action, Ry):
         theta = cast("float", effective_gate_spec(GateSpec("Ry", action.theta), frame).theta)
-        return Ry(ion=action.ion, theta=theta, duration=action.duration, virtual=action.virtual)
+        return Ry(ion=action.ion, theta=theta)
     if isinstance(action, Rz):
         theta = cast("float", effective_gate_spec(GateSpec("Rz", action.theta), frame).theta)
-        return Rz(ion=action.ion, theta=theta, duration=action.duration, virtual=action.virtual)
+        return Rz(ion=action.ion, theta=theta)
     return action
 
 
@@ -280,8 +291,8 @@ def accumulated_frame_phase(
     """
     if field_profile is None:
         return 0.0
-    if not 0 <= t_start <= t_end <= timeline.makespan:
-        msg = f"expected 0 <= t_start <= t_end <= {timeline.makespan}"
+    if not timeline.start_time <= t_start <= t_end <= timeline.end_time:
+        msg = f"expected {timeline.start_time} <= t_start <= t_end <= {timeline.end_time}"
         raise ValueError(msg)
     history = build_frame_history(timeline, local_pulse_action_ids) if frame_history is None else frame_history
     return sum(
@@ -304,7 +315,7 @@ def _framed_action_kind(
     local_pulse_action_ids: frozenset[int],
 ) -> FrameActionKind:
     action = scheduled_action.action
-    if isinstance(action, GlobalPulse):
+    if isinstance(action, GlobalGate):
         return "global_dd_pulse"
     if isinstance(action, TransportAction):
         return "transport"
@@ -312,15 +323,12 @@ def _framed_action_kind(
         return "local_dd_pulse"
     if isinstance(action, GateAction):
         return "algorithmic_gate"
-    if isinstance(action, AdvanceTime):
-        return "advance_time"
     return "other"
 
 
 def _event_ion_frames(
     action: Action,
     timestep: int,
-    timeline: CompiledTimeline,
     frame_history: FrameHistory,
 ) -> tuple[tuple[int, PauliFrame], ...]:
     if isinstance(action, (Rx, Ry, Rz)):
@@ -337,10 +345,8 @@ def _event_ion_frames(
             (action.ion_a, frame_history.frame_for_ion(action.ion_a, timestep)),
             (action.ion_b, frame_history.frame_for_ion(action.ion_b, timestep)),
         )
-    if isinstance(action, GlobalPulse):
-        return tuple(
-            (ion, frame_history.frame_for_ion(ion, timestep)) for ion, _site in timeline.state_at(timestep).positions
-        )
+    if isinstance(action, GlobalGate):
+        return tuple((ion, frame_history.frame_for_ion(ion, timestep)) for ion in action.ions)
     return ()
 
 
@@ -356,24 +362,38 @@ def _is_odd_pi_rotation(theta: float | None) -> bool:
     return nearest_integer % 2 != 0 and isclose(ratio, nearest_integer, abs_tol=1e-9)
 
 
+def _schedule_ions(timeline: CompiledTimeline) -> tuple[int, ...]:
+    """Return every ion of a schedule in ascending order."""
+    return tuple(ion for ion, _site in timeline.state_at(timeline.start_time).positions)
+
+
 def _build_local_frame_overrides(
     timeline: CompiledTimeline,
     local_pulse_action_ids: frozenset[int],
+    all_ions: tuple[int, ...],
 ) -> dict[int, tuple[PauliFrame, ...]]:
     operations_by_ion: dict[int, dict[int, list[PauliFrameOperation]]] = {}
-    for timestep in range(timeline.makespan + 1):
+    for timestep in range(timeline.start_time, timeline.end_time + 1):
         for item in timeline.scheduled_action_at(timestep) or ():
+            action = item.action
+            if isinstance(action, GlobalGate):
+                if action.ions == all_ions:
+                    continue
+                operation = _frame_operation_for_global_gate(action)
+                for ion in action.ions:
+                    operations_by_ion.setdefault(ion, {}).setdefault(timestep, []).append(operation)
+                continue
             if item.action_id not in local_pulse_action_ids:
                 continue
-            operation = _frame_operation_for_local_action(item.action)
-            ion = cast("Rx | Ry | Rz", item.action).ion
+            operation = _frame_operation_for_local_action(action)
+            ion = cast("Rx | Ry | Rz", action).ion
             operations_by_ion.setdefault(ion, {}).setdefault(timestep, []).append(operation)
 
     overrides: dict[int, tuple[PauliFrame, ...]] = {}
     for ion, operations_by_time in operations_by_ion.items():
         current_frame = PauliFrame()
         frames_for_ion: list[PauliFrame] = []
-        for timestep in range(timeline.makespan + 1):
+        for timestep in range(timeline.start_time, timeline.end_time + 1):
             for operation in operations_by_time.get(timestep, ()):
                 current_frame = current_frame.compose(operation)
             frames_for_ion.append(current_frame)
@@ -391,6 +411,11 @@ def _frame_operation_for_local_action(action: Action) -> PauliFrameOperation:
         return frame_operation_for_gate_spec(GateSpec(type(action).__name__, theta=action.theta))
     msg = f"unsupported local DD pulse action for frame tracking: {action!r}"
     raise ValueError(msg)
+
+
+def _frame_operation_for_global_gate(gate: GlobalGate) -> PauliFrameOperation:
+    """Return the frame operation that a global pulse applies to each targeted ion."""
+    return frame_operation_for_gate_spec(GateSpec(_GATE_SPEC_NAMES[gate.gate_name], theta=gate.theta))
 
 
 __all__ = [

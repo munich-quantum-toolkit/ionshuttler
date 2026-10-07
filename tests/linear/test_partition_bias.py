@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import pytest
 
+from mqt.ionshuttler.circuit import Circuit
 from mqt.ionshuttler.linear import partition_bias
 from mqt.ionshuttler.linear.actions import Rzz
-from mqt.ionshuttler.linear.architecture import Architecture
+from mqt.ionshuttler.linear.architecture import LinearArchitecture
 
 
 def test_single_zone_assignment_does_not_call_partitioner(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -23,15 +24,19 @@ def test_single_zone_assignment_does_not_call_partitioner(monkeypatch: pytest.Mo
         pytest.fail("the partitioner must not run for one processing zone")
 
     monkeypatch.setattr(partition_bias, "compute_fine_grained_gate_partition", unexpected_partitioner)
-    architecture = Architecture(num_sites=4, processing_zones={"only": [1, 2]})
-    gates = {0: Rzz(ion_a=0, ion_b=1, theta=0.5)}
+    architecture = LinearArchitecture(num_sites=4, processing_zones={"only": [1, 2]})
+    circuit = Circuit(
+        num_ions=2,
+        gates=(Rzz(ion_a=0, ion_b=1, theta=0.5, gate_id=0),),
+        predecessors=(frozenset(),),
+    )
 
-    assert partition_bias.compute_gate_zone_assignment([0], gates, architecture) == {}
+    assert partition_bias.compute_gate_zone_assignment(circuit, architecture) == {}
 
 
 def test_zone_site_pairs_are_scoped_to_each_processing_zone() -> None:
     """Exclude cross-zone pairs from a zone-specific heuristic target."""
-    architecture = Architecture(
+    architecture = LinearArchitecture(
         num_sites=8,
         processing_zones={"left": [1, 2, 3], "right": [6, 7]},
     )

@@ -13,8 +13,9 @@ from math import pi
 
 import pytest
 
-from mqt.ionshuttler.linear.actions import AdvanceTime, GateSpec, GlobalPulse, Rx, Ry, Rz, Shuttle
-from mqt.ionshuttler.linear.architecture import Architecture
+from mqt.ionshuttler.linear.actions import GlobalGate, Rx, Ry, Rz, Shuttle
+from mqt.ionshuttler.linear.architecture import LinearArchitecture
+from mqt.ionshuttler.linear.dd import GateSpec
 from mqt.ionshuttler.linear.dd.frame_replay import (
     FrameHistory,
     PauliFrame,
@@ -22,27 +23,33 @@ from mqt.ionshuttler.linear.dd.frame_replay import (
     accumulated_frame_phase,
     build_frame_history,
     effective_action,
+    frame_operation_for_action,
     frame_operation_for_gate_spec,
     framed_action_events,
     global_pulse_timesteps,
 )
-from mqt.ionshuttler.linear.dd.timeline import build_timeline
 from mqt.ionshuttler.linear.field_profile import FieldProfile
-from mqt.ionshuttler.linear.schedule import ActionSchedule
-from mqt.ionshuttler.linear.state import create_initial_state
+from mqt.ionshuttler.linear.schedule import Schedule, schedule_from_path
+from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
+from mqt.ionshuttler.linear.timeline import build_timeline
 
-_ARCHITECTURE = Architecture(num_sites=2, processing_zones={"pz": [0, 1]})
+_ARCHITECTURE = LinearArchitecture(num_sites=2, processing_zones={"pz": [0, 1]})
+_GLOBAL_X = GlobalGate(gate_name="rx", theta=pi, ions=(0,))
+_GLOBAL_Y = GlobalGate(gate_name="ry", theta=pi, ions=(0,))
 
 
 def _result(
-    path: list[AdvanceTime | GlobalPulse | Rx | Ry | Rz | Shuttle],
-    num_timesteps: int,
-) -> ActionSchedule:
-    program = ActionSchedule.from_actions(
+    path: list[AdvanceTime | GlobalGate | Rx | Ry | Rz | Shuttle],
+    end_time: int,
+    *,
+    num_ions: int = 1,
+) -> Schedule:
+    program = schedule_from_path(
         list(path),
-        create_initial_state(1, _ARCHITECTURE, initial_positions=[0]),
+        create_initial_state(num_ions, _ARCHITECTURE, initial_positions=list(range(num_ions))),
+        _ARCHITECTURE,
     )
-    assert program.num_timesteps == num_timesteps
+    assert program.end_time == end_time
     return program
 
 
@@ -53,33 +60,24 @@ def test_pauli_frames_compose_and_transform_single_qubit_axes() -> None:
     assert frame == PauliFrame("Z")
     assert frame.phase_sign("Z") == 1
     assert frame.phase_sign("X") == -1
-    assert effective_action(Rz(ion=0, theta=0.25, duration=3, virtual=False), PauliFrame("X")) == Rz(
-        ion=0,
-        theta=-0.25,
-        duration=3,
-        virtual=False,
-    )
-    assert effective_action(Rx(ion=0, theta=0.5, duration=2), PauliFrame("Z")) == Rx(
-        ion=0,
-        theta=-0.5,
-        duration=2,
-    )
+    assert effective_action(Rz(ion=0, theta=0.25), PauliFrame("X")) == Rz(ion=0, theta=-0.25)
+    assert effective_action(Rx(ion=0, theta=0.5), PauliFrame("Z")) == Rx(ion=0, theta=-0.5)
 
 
 def test_frame_history_includes_same_boundary_and_terminal_global_pulses() -> None:
     """Apply pulses before the following interval and retain terminal frames."""
     program = _result(
         [
-            GlobalPulse(GateSpec("Rx", pi)),
+            _GLOBAL_X,
             AdvanceTime(),
-            GlobalPulse(GateSpec("Ry", pi)),
+            _GLOBAL_Y,
         ],
-        1,
+        2,
     )
     timeline = build_timeline(program, _ARCHITECTURE)
     history = build_frame_history(timeline)
 
-    assert history.global_frames_by_time == (PauliFrame("X"), PauliFrame("Z"))
+    assert history.global_frames_by_time == (PauliFrame("X"), PauliFrame("Z"), PauliFrame("Z"))
     assert global_pulse_timesteps(timeline) == (0, 1)
     assert accumulated_frame_phase(
         timeline,
@@ -91,15 +89,48 @@ def test_frame_history_includes_same_boundary_and_terminal_global_pulses() -> No
     ) == pytest.approx(-0.5)
 
 
+def test_global_pulse_on_some_ions_changes_only_their_frames() -> None:
+    """Apply a pulse that targets some ions to their frames instead of the global frame."""
+    program = _result(
+        [GlobalGate(gate_name="rx", theta=pi, ions=(1,)), AdvanceTime()],
+        1,
+        num_ions=2,
+    )
+    timeline = build_timeline(program, _ARCHITECTURE)
+    history = build_frame_history(timeline)
+    events = framed_action_events(program, _ARCHITECTURE, timeline)
+
+    assert history.global_frames_by_time == (PauliFrame(), PauliFrame())
+    assert history.frame_for_ion(0, 0) == PauliFrame()
+    assert history.frame_for_ion(1, 0) == PauliFrame("X")
+    assert global_pulse_timesteps(timeline) == (0,)
+    assert [(event.kind, event.ion_frames) for event in events] == [("global_dd_pulse", ((1, PauliFrame("X")),))]
+
+
+def test_global_pulse_on_every_ion_changes_the_global_frame() -> None:
+    """Treat a pulse that targets every ion of the schedule as a global frame change."""
+    pulse = GlobalGate(gate_name="rx", theta=pi, ions=(0, 1))
+    program = _result([pulse, AdvanceTime()], 1, num_ions=2)
+    timeline = build_timeline(program, _ARCHITECTURE)
+    history = build_frame_history(timeline)
+    events = framed_action_events(program, _ARCHITECTURE, timeline)
+
+    assert history.global_frames_by_time == (PauliFrame("X"), PauliFrame("X"))
+    assert history.local_frame_overrides == {}
+    assert frame_operation_for_action(pulse) == PauliFrameOperation("X")
+    assert frame_operation_for_action(Rx(ion=0, theta=pi)) is None
+    assert events[0].ion_frames == ((0, PauliFrame("X")), (1, PauliFrame("X")))
+
+
 def test_accumulated_frame_phase_rejects_interval_outside_schedule() -> None:
     """Reject a requested phase interval that lies outside the schedule."""
     program = _result(
         [
-            GlobalPulse(GateSpec("Rx", pi)),
+            _GLOBAL_X,
             AdvanceTime(),
-            GlobalPulse(GateSpec("Ry", pi)),
+            _GLOBAL_Y,
         ],
-        1,
+        2,
     )
     timeline = build_timeline(program, _ARCHITECTURE)
     history = build_frame_history(timeline)
@@ -109,7 +140,7 @@ def test_accumulated_frame_phase_rejects_interval_outside_schedule() -> None:
             timeline,
             ion=0,
             t_start=0,
-            t_end=2,
+            t_end=3,
             field_profile=FieldProfile(num_sites=2, site_field=((0, 0.5),)),
             frame_history=history,
         )
@@ -119,17 +150,17 @@ def test_frame_for_ion_rejects_out_of_range_timestep() -> None:
     """Reject a timestep outside the tracked schedule boundaries."""
     program = _result(
         [
-            GlobalPulse(GateSpec("Rx", pi)),
+            _GLOBAL_X,
             AdvanceTime(),
-            GlobalPulse(GateSpec("Ry", pi)),
+            _GLOBAL_Y,
         ],
-        1,
+        2,
     )
     timeline = build_timeline(program, _ARCHITECTURE)
     history = build_frame_history(timeline)
 
     with pytest.raises(ValueError, match="timestep"):
-        history.frame_for_ion(0, 2)
+        history.frame_for_ion(0, 3)
 
 
 def test_build_frame_history_rejects_unsupported_local_pulse_action() -> None:
@@ -146,6 +177,7 @@ def test_frame_history_rejects_mismatched_local_override_length() -> None:
     """Reject a local override that does not span every schedule boundary."""
     with pytest.raises(ValueError, match="local_frame_overrides"):
         FrameHistory(
+            start_time=0,
             global_frames_by_time=(PauliFrame(), PauliFrame()),
             local_frame_overrides={0: (PauliFrame(),)},
         )
@@ -163,7 +195,7 @@ def test_local_record_identity_and_same_timestep_event_order() -> None:
     events = framed_action_events(program, _ARCHITECTURE, timeline, local_pulse_action_ids)
     history = build_frame_history(timeline, local_pulse_action_ids)
 
-    assert [event.kind for event in events] == ["local_dd_pulse", "algorithmic_gate", "advance_time"]
+    assert [event.kind for event in events] == ["local_dd_pulse", "algorithmic_gate"]
     assert [event.action for event in events] == list(program.path)
     assert history.frame_for_ion(0, 0) == PauliFrame("X")
     assert events[0].ion_frames == ((0, PauliFrame("X")),)
@@ -194,6 +226,6 @@ def test_equal_same_boundary_pulses_retain_distinct_provenance_identity() -> Non
         frozenset({program.scheduled_actions[0].action_id}),
     )
 
-    assert [event.kind for event in events] == ["local_dd_pulse", "algorithmic_gate", "advance_time"]
+    assert [event.kind for event in events] == ["local_dd_pulse", "algorithmic_gate"]
     assert program.scheduled_actions[0].action == program.scheduled_actions[1].action
     assert program.scheduled_actions[0].action_id != program.scheduled_actions[1].action_id

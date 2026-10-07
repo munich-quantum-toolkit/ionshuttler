@@ -9,15 +9,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
+from typing import ClassVar
 
 import numpy as np
 import pytest
 
+from mqt.ionshuttler.linear import GateTiming
 from mqt.ionshuttler.linear.actions import (
-    AdvanceTime,
-    GateSpec,
-    GlobalPulse,
+    GlobalGate,
     PhysicalSwap,
     Rx,
     Rz,
@@ -25,30 +25,18 @@ from mqt.ionshuttler.linear.actions import (
     Shuttle,
     TransportAction,
 )
-from mqt.ionshuttler.linear.architecture import Architecture
+from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.state import State, has_pending_timed_work
-from mqt.ionshuttler.linear.validation import is_action_valid, is_adjacent, is_transport_layer_valid
+from mqt.ionshuttler.linear.validation import is_adjacent, is_transport_layer_valid
 
 
 @dataclass(frozen=True)
 class _ParkingTransfer(TransportAction):
-    """Move an ion to a hardware-defined parking site."""
+    """Transport without Linear rules."""
 
     ion: int
     destination: int
-    enabled: bool = True
-    duration: int = 1
-
-    def is_valid(self, state: State, architecture: Architecture) -> bool:
-        """Return whether the parking transfer is enabled and stays on the device."""
-        return self.enabled and self.ion in dict(state.positions) and 0 <= self.destination < architecture.num_sites
-
-    def apply(self, state: State, architecture: Architecture) -> State:
-        """Move the ion to its parking site."""
-        del architecture
-        positions = dict(state.positions)
-        positions[self.ion] = self.destination
-        return replace(state, positions=tuple(sorted(positions.items())))
+    serialized_type: ClassVar[str] = "test.parking_transfer"
 
 
 def _state(
@@ -80,46 +68,48 @@ def test_adjacency_uses_linear_neighbor_distance() -> None:
 
 def test_action_validation_enforces_transport_occupancy_and_busy_times() -> None:
     """Move or swap ions only when their sites and ions are available."""
-    architecture = Architecture(num_sites=5, processing_zones={"pz": [1, 2, 3]})
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [1, 2, 3]})
     free_state = _state(((0, 0), (1, 3)))
     busy_state = _state(((0, 0), (1, 1)), ions_busy_until=((0, 2), (1, 0)), time=1)
     swap_state = _state(((0, 1), (1, 2)))
 
-    assert is_action_valid(free_state, Shuttle(ion=0, src=0, dst=1), architecture)
-    assert not is_action_valid(free_state, Shuttle(ion=0, src=1, dst=2), architecture)
-    assert not is_action_valid(busy_state, Shuttle(ion=0, src=0, dst=1), architecture)
-    assert is_action_valid(
-        swap_state,
-        PhysicalSwap(ion_a=0, ion_b=1, pos_a=1, pos_b=2),
-        architecture,
-    )
+    assert architecture.is_action_valid(free_state, Shuttle(ion=0, src=0, dst=1))
+    assert not architecture.is_action_valid(free_state, Shuttle(ion=0, src=1, dst=2))
+    assert not architecture.is_action_valid(free_state, Shuttle(ion=0, src=0, dst=2))
+    assert not architecture.is_action_valid(busy_state, Shuttle(ion=0, src=0, dst=1))
+    assert architecture.is_action_valid(swap_state, PhysicalSwap(ion_a=0, ion_b=1, pos_a=1, pos_b=2))
+    assert not architecture.is_action_valid(free_state, PhysicalSwap(ion_a=0, ion_b=1, pos_a=0, pos_b=3))
 
 
 def test_action_validation_enforces_gate_processing_zone_resources() -> None:
     """Start physical gates only on free ions in a free processing zone."""
-    architecture = Architecture(num_sites=5, processing_zones={"pz": [1, 2, 3]})
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [1, 2, 3]})
     gate_state = _state(((0, 1), (1, 2)))
     outside_state = _state(((0, 0), (1, 4)))
     busy_pz_state = _state(((0, 1), (1, 2)), pzs_busy_until=(("pz", 2),))
 
-    assert is_action_valid(gate_state, Rx(ion=0, theta=1.0), architecture)
-    assert is_action_valid(gate_state, Rzz(ion_a=0, ion_b=1, theta=1.0), architecture)
-    assert not is_action_valid(outside_state, Rx(ion=0, theta=1.0), architecture)
-    assert not is_action_valid(outside_state, Rzz(ion_a=0, ion_b=1, theta=1.0), architecture)
-    assert not is_action_valid(busy_pz_state, Rx(ion=0, theta=1.0), architecture)
+    assert architecture.is_action_valid(gate_state, Rx(ion=0, theta=1.0))
+    assert architecture.is_action_valid(gate_state, Rzz(ion_a=0, ion_b=1, theta=1.0))
+    assert not architecture.is_action_valid(outside_state, Rx(ion=0, theta=1.0))
+    assert not architecture.is_action_valid(outside_state, Rzz(ion_a=0, ion_b=1, theta=1.0))
+    assert not architecture.is_action_valid(busy_pz_state, Rx(ion=0, theta=1.0))
 
 
 def test_two_qubit_gate_allows_nonadjacent_ions_in_same_processing_zone() -> None:
     """Allow an interaction across an empty site within one processing zone."""
-    architecture = Architecture(num_sites=5, processing_zones={"pz": [1, 2, 3]})
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [1, 2, 3]})
     gate = Rzz(ion_a=0, ion_b=1, theta=1.0)
 
-    assert is_action_valid(_state(((0, 1), (1, 3))), gate, architecture)
+    assert architecture.is_action_valid(_state(((0, 1), (1, 3))), gate)
 
 
 def test_virtual_single_qubit_gate_requires_only_an_existing_ion() -> None:
     """Allow virtual rotations without waiting for physical hardware."""
-    architecture = Architecture(num_sites=3, processing_zones={"pz": [1]})
+    architecture = LinearArchitecture(
+        num_sites=3,
+        processing_zones={"pz": [1]},
+        gate_timing=GateTiming(rx=0, virtual_single_qubit_gates=frozenset({"rx", "rz"})),
+    )
     busy_state = _state(
         ((0, 0),),
         ions_busy_until=((0, 5),),
@@ -127,33 +117,53 @@ def test_virtual_single_qubit_gate_requires_only_an_existing_ion() -> None:
         time=1,
     )
 
-    virtual_rz = Rz(ion=0, theta=0.25)
-    virtual_rx = Rx(ion=0, theta=0.25, duration=0, virtual=True)
-    assert is_action_valid(busy_state, virtual_rz, architecture)
-    assert is_action_valid(busy_state, virtual_rx, architecture)
-    assert not is_action_valid(busy_state, Rz(ion=1, theta=0.25), architecture)
+    assert architecture.is_action_valid(busy_state, Rz(ion=0, theta=0.25))
+    assert architecture.is_action_valid(busy_state, Rx(ion=0, theta=0.25))
+    assert not architecture.is_action_valid(busy_state, Rz(ion=1, theta=0.25))
 
 
 def test_physical_rz_uses_ordinary_single_qubit_resources() -> None:
     """Apply physical scheduling checks to Rz regardless of its duration."""
-    architecture = Architecture(num_sites=3, processing_zones={"pz": [1]})
+    architecture = LinearArchitecture(
+        num_sites=3,
+        processing_zones={"pz": [1]},
+        gate_timing=GateTiming(rz=1, virtual_single_qubit_gates=frozenset()),
+    )
     gate_state = _state(((0, 1),))
     busy_state = _state(((0, 1),), ions_busy_until=((0, 2),))
     outside_state = _state(((0, 0),))
 
-    physical_rz = Rz(ion=0, theta=0.25, duration=1, virtual=False)
-    with pytest.warns(UserWarning, match="may share a compiler timestep"):
-        zero_duration_physical_rz = Rz(ion=0, theta=0.25, duration=0, virtual=False)
+    physical_rz = Rz(ion=0, theta=0.25)
 
-    assert is_action_valid(gate_state, physical_rz, architecture)
-    assert is_action_valid(gate_state, zero_duration_physical_rz, architecture)
-    assert not is_action_valid(busy_state, zero_duration_physical_rz, architecture)
-    assert not is_action_valid(outside_state, zero_duration_physical_rz, architecture)
+    assert architecture.is_action_valid(gate_state, physical_rz)
+    assert not architecture.is_action_valid(busy_state, physical_rz)
+    assert not architecture.is_action_valid(outside_state, physical_rz)
 
 
-def test_advance_time_validity_is_independent_of_generation_policy() -> None:
-    """Allow deliberate waiting while letting the compiler avoid pointless idling."""
-    architecture = Architecture(num_sites=3)
+def test_global_gate_needs_no_free_ion_or_processing_zone() -> None:
+    """Let global control overlap local gates and transport in the Linear model."""
+    architecture = LinearArchitecture(num_sites=3, processing_zones={"pz": [1]})
+    busy_state = _state(
+        ((0, 0), (1, 1)),
+        ions_busy_until=((0, 3), (1, 3)),
+        pzs_busy_until=(("pz", 3),),
+        time=1,
+    )
+
+    assert architecture.is_action_valid(busy_state, GlobalGate(gate_name="rx", theta=np.pi, ions=(0, 1)))
+    assert architecture.is_action_valid(busy_state, GlobalGate(gate_name="rx", theta=np.pi, ions=(1,)))
+
+
+def test_targeted_global_gate_requires_present_ions() -> None:
+    """Reject a global gate that targets an ion absent from the machine state."""
+    architecture = LinearArchitecture(num_sites=3)
+    state = _state(((0, 0), (1, 1)), pzs_busy_until=(("all_sites", 0),))
+
+    assert not architecture.is_action_valid(state, GlobalGate(gate_name="rx", theta=np.pi, ions=(0, 2)))
+
+
+def test_waiting_is_meaningful_only_while_timed_work_is_pending() -> None:
+    """Let the compiler avoid idle time while busy hardware still has work to finish."""
     idle_state = _state(((0, 0),), pzs_busy_until=(("all_sites", 0),))
     waiting_state = _state(
         ((0, 0),),
@@ -161,16 +171,13 @@ def test_advance_time_validity_is_independent_of_generation_policy() -> None:
         pzs_busy_until=(("all_sites", 0),),
     )
 
-    assert is_action_valid(idle_state, AdvanceTime(), architecture)
-    assert is_action_valid(waiting_state, AdvanceTime(), architecture)
     assert not has_pending_timed_work(idle_state)
     assert has_pending_timed_work(waiting_state)
-    assert is_action_valid(idle_state, GlobalPulse(gate=GateSpec("Rx", theta=np.pi)), architecture)
 
 
 def test_transport_layer_allows_simultaneous_conveyor_shift() -> None:
     """Allow occupied destinations when every occupant vacates in the layer."""
-    architecture = Architecture(num_sites=4)
+    architecture = LinearArchitecture(num_sites=4)
     state = _state(
         ((0, 0), (1, 1), (2, 2)),
         pzs_busy_until=(("all_sites", 0),),
@@ -181,13 +188,13 @@ def test_transport_layer_allows_simultaneous_conveyor_shift() -> None:
         Shuttle(ion=2, src=2, dst=3),
     )
 
-    assert not is_action_valid(state, conveyor[0], architecture)
+    assert not architecture.is_action_valid(state, conveyor[0])
     assert is_transport_layer_valid(state, conveyor, architecture)
 
 
 def test_transport_layer_rejects_conflicting_or_repeated_actions() -> None:
     """Reject final collisions and multiple actions for the same ion."""
-    architecture = Architecture(num_sites=4)
+    architecture = LinearArchitecture(num_sites=4)
     state = _state(((0, 0), (1, 2)), pzs_busy_until=(("all_sites", 0),))
 
     assert not is_transport_layer_valid(
@@ -207,44 +214,27 @@ def test_transport_layer_rejects_conflicting_or_repeated_actions() -> None:
     )
 
 
-def test_transport_layer_uses_custom_action_validity_and_transition() -> None:
-    """Honor custom transport rules and include their final positions in conflicts."""
-    architecture = Architecture(num_sites=4)
+def test_transport_layer_combines_shuttles_and_swaps() -> None:
+    """Check shuttles and swaps that start together against one pre-state."""
+    architecture = LinearArchitecture(num_sites=4)
+    state = _state(((0, 0), (1, 1), (2, 2)), pzs_busy_until=(("all_sites", 0),))
+
+    assert is_transport_layer_valid(
+        state,
+        (PhysicalSwap(ion_a=0, ion_b=1, pos_a=0, pos_b=1), Shuttle(ion=2, src=2, dst=3)),
+        architecture,
+    )
+    assert not is_transport_layer_valid(
+        state,
+        (PhysicalSwap(ion_a=1, ion_b=2, pos_a=1, pos_b=2), Shuttle(ion=2, src=2, dst=3)),
+        architecture,
+    )
+
+
+def test_transport_layer_rejects_transport_without_linear_rules() -> None:
+    """Accept only the Linear transport operations defined by the architecture."""
+    architecture = LinearArchitecture(num_sites=4)
     state = _state(((0, 0), (1, 2)), pzs_busy_until=(("all_sites", 0),))
 
-    assert is_transport_layer_valid(state, (_ParkingTransfer(ion=0, destination=1),), architecture)
-    assert not is_transport_layer_valid(
-        state,
-        (_ParkingTransfer(ion=0, destination=1, enabled=False),),
-        architecture,
-    )
-    assert not is_transport_layer_valid(
-        state,
-        (_ParkingTransfer(ion=0, destination=2),),
-        architecture,
-    )
-
-    mixed_state = _state(((0, 0), (1, 1), (2, 2)), pzs_busy_until=(("all_sites", 0),))
-    assert is_transport_layer_valid(
-        mixed_state,
-        (_ParkingTransfer(ion=0, destination=3), Shuttle(ion=1, src=1, dst=0)),
-        architecture,
-    )
-    assert is_transport_layer_valid(
-        mixed_state,
-        (
-            _ParkingTransfer(ion=0, destination=3),
-            PhysicalSwap(ion_a=1, ion_b=2, pos_a=1, pos_b=2),
-        ),
-        architecture,
-    )
-    assert not is_transport_layer_valid(
-        mixed_state,
-        (_ParkingTransfer(ion=0, destination=3), Shuttle(ion=0, src=0, dst=1)),
-        architecture,
-    )
-    assert not is_transport_layer_valid(
-        mixed_state,
-        (_ParkingTransfer(ion=0, destination=3), Shuttle(ion=2, src=2, dst=3)),
-        architecture,
-    )
+    with pytest.raises(TypeError, match="only shuttles and physical swaps"):
+        is_transport_layer_valid(state, (_ParkingTransfer(ion=0, destination=1),), architecture)

@@ -5,37 +5,31 @@
 #
 # Licensed under the MIT License
 
-"""Executable schedules for the Linear hardware model."""
+"""Linear machine state, explicit schedules, and schedule persistence."""
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.linear.actions import (
-    Action,
-    AdvanceTime,
-    build_action_type_registry,
-)
-from mqt.ionshuttler.linear.state import State
+from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
+from mqt.ionshuttler.linear.actions import Action, decode_linear_action
+from mqt.ionshuttler.linear.state import AdvanceTime, State, advance_time
 
-from .._json_utils import (
-    require_int,
-    require_int_pairs,
-    require_list,
-    require_mapping,
-    require_str_int_pairs,
-)
+from .._json_utils import require_int, require_int_pairs, require_mapping, require_str_int_pairs
 
-ActionDecoder = Callable[[Mapping[str, object]], Action]
-ActionDecoders = Mapping[str, ActionDecoder]
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from mqt.ionshuttler.linear.architecture import LinearArchitecture
+    from mqt.ionshuttler.linear.state import SearchTransition
 
 
 @dataclass(frozen=True)
-class MachineState:
-    """Describe hardware state without compiler circuit-progress fields."""
+class LinearMachineState:
+    """Describes a Linear hardware state independent of compiler progress."""
 
     positions: tuple[tuple[int, int], ...]
     ions_busy_until: tuple[tuple[int, int], ...]
@@ -47,7 +41,7 @@ class MachineState:
 
         Raises:
             TypeError: If the machine clock has the wrong type.
-            ValueError: If state mappings, occupancy, or timestamps are inconsistent.
+            ValueError: If mappings, occupancy, or timestamps are inconsistent.
         """
         positions = tuple(sorted(self.positions))
         ions_busy_until = tuple(sorted(self.ions_busy_until))
@@ -78,18 +72,11 @@ class MachineState:
         object.__setattr__(self, "pzs_busy_until", pzs_busy_until)
 
     @classmethod
-    def from_compiler_state(cls, state: State) -> MachineState:
-        """Copy only hardware fields from a compiler state.
-
-        Availability timestamps in a compiler state may refer to resources
-        that became free before its current clock.  The machine-only view
-        canonicalizes those timestamps to the current clock.
-
-        Args:
-            state: Compiler state whose circuit progress is discarded.
+    def from_compiler_state(cls, state: State) -> LinearMachineState:
+        """Copy hardware fields from a Linear compiler state.
 
         Returns:
-            The canonical machine-only state.
+            The canonical machine state.
         """
         return cls(
             positions=state.positions,
@@ -99,11 +86,7 @@ class MachineState:
         )
 
     def to_replay_state(self) -> State:
-        """Return a state suitable for schedule replay.
-
-        Returns:
-            A compiler-state value with empty circuit-progress fields.
-        """
+        """Return a Linear state with empty circuit progress."""
         return State(
             positions=self.positions,
             completed_gates=frozenset(),
@@ -123,14 +106,13 @@ class MachineState:
         }
 
     @classmethod
-    def from_dict(cls, data: object) -> MachineState:
-        """Restore a machine state from JSON-compatible values.
+    def from_dict(cls, data: object) -> LinearMachineState:
+        """Restore a Linear machine state.
 
         Returns:
-            The restored machine-only state.
-
+            The restored state.
         """
-        mapping = require_mapping(data, "machine_state")
+        mapping = require_mapping(data, "linear_machine_state")
         return cls(
             positions=tuple(require_int_pairs(mapping, "positions")),
             ions_busy_until=tuple(require_int_pairs(mapping, "ions_busy_until")),
@@ -139,260 +121,74 @@ class MachineState:
         )
 
 
-@dataclass(frozen=True)
-class ScheduledAction:
-    """Pair one operation with an ID stable across schedule passes."""
+def schedule_from_path(
+    path: Sequence[SearchTransition],
+    initial_state: State | LinearMachineState,
+    architecture: LinearArchitecture,
+) -> Schedule[Action, LinearMachineState]:
+    """Convert a Linear search path to the shared explicit timeline.
 
-    action_id: int
-    action: Action
-
-    def __post_init__(self) -> None:
-        """Validate the action ID and value.
-
-        Raises:
-            TypeError: If a field has the wrong type.
-            ValueError: If the ID is invalid.
-        """
-        if isinstance(self.action_id, bool) or not isinstance(self.action_id, int):
-            msg = "action_id must be an integer"
-            raise TypeError(msg)
-        if self.action_id < 0:
-            msg = "action_id must be non-negative"
-            raise ValueError(msg)
-        if not isinstance(self.action, Action):
-            msg = "action must be an Action"
-            raise TypeError(msg)
-
-
-@dataclass(frozen=True)
-class ActionSchedule:
-    """Contain the immutable executable boundary shared by downstream stages.
-
-    Action IDs are unique within a schedule and remain attached to
-    preserved actions when a transformation inserts or replaces operations.
-    Compiler search status and dynamical-decoupling reports are intentionally
-    absent.
-    """
-
-    scheduled_actions: tuple[ScheduledAction, ...]
-    num_timesteps: int
-    initial_state: MachineState
-
-    def __post_init__(self) -> None:
-        """Freeze and validate the executable schedule.
-
-        Raises:
-            TypeError: If a schedule field has the wrong type.
-            ValueError: If identifiers or timing are inconsistent.
-        """
-        scheduled_actions = tuple(self.scheduled_actions)
-        if any(not isinstance(item, ScheduledAction) for item in scheduled_actions):
-            msg = "scheduled_actions must contain ScheduledAction values"
-            raise TypeError(msg)
-        action_ids = tuple(item.action_id for item in scheduled_actions)
-        if len(set(action_ids)) != len(action_ids):
-            msg = "scheduled action identifiers must be unique"
-            raise ValueError(msg)
-        if isinstance(self.num_timesteps, bool) or not isinstance(self.num_timesteps, int):
-            msg = "num_timesteps must be an integer"
-            raise TypeError(msg)
-        if self.num_timesteps < 0:
-            msg = "num_timesteps must be non-negative"
-            raise ValueError(msg)
-        actual_timesteps = sum(
-            item.action.timestep_increment for item in scheduled_actions if isinstance(item.action, AdvanceTime)
-        )
-        if actual_timesteps != self.num_timesteps:
-            msg = "num_timesteps must equal the schedule's total time advancement"
-            raise ValueError(msg)
-        if not isinstance(self.initial_state, MachineState):
-            msg = "initial_state must be a MachineState"
-            raise TypeError(msg)
-        object.__setattr__(self, "scheduled_actions", scheduled_actions)
-
-    @property
-    def path(self) -> tuple[Action, ...]:
-        """The ordered executable operations without their metadata."""
-        return tuple(item.action for item in self.scheduled_actions)
-
-    @property
-    def next_action_id(self) -> int:
-        """An unused identifier suitable for the next inserted action."""
-        return max((item.action_id for item in self.scheduled_actions), default=-1) + 1
-
-    @classmethod
-    def from_actions(
-        cls,
-        actions: Sequence[Action],
-        initial_state: State | MachineState,
-    ) -> ActionSchedule:
-        """Create a schedule and assign deterministic action identifiers.
-
-        Args:
-            actions: Ordered executable operations.
-            initial_state: Initial hardware or compiler state. Compiler progress
-                fields are deliberately discarded.
-
-        Returns:
-            The immutable action schedule.
-        """
-        action_values = tuple(actions)
-        machine_state = (
-            initial_state
-            if isinstance(initial_state, MachineState)
-            else MachineState.from_compiler_state(initial_state)
-        )
-        return cls(
-            scheduled_actions=tuple(
-                ScheduledAction(action_id=index, action=action) for index, action in enumerate(action_values)
-            ),
-            num_timesteps=sum(action.timestep_increment for action in action_values if isinstance(action, AdvanceTime)),
-            initial_state=machine_state,
-        )
-
-    def to_dict(self) -> dict[str, object]:
-        """Return the action schedule using JSON-compatible values."""
-        current_time = self.initial_state.time
-        actions: list[dict[str, object]] = []
-        for item in self.scheduled_actions:
-            actions.append({
-                "action_id": item.action_id,
-                "start_time": current_time,
-                "action": item.action.to_dict(),
-            })
-            if isinstance(item.action, AdvanceTime):
-                current_time += item.action.timestep_increment
-        return {
-            "num_timesteps": self.num_timesteps,
-            "initial_state": self.initial_state.to_dict(),
-            "actions": actions,
-        }
-
-    @classmethod
-    def from_dict(
-        cls,
-        data: object,
-        *,
-        action_types: Sequence[type[Action]] | None = None,
-        action_decoders: ActionDecoders | None = None,
-    ) -> ActionSchedule:
-        """Restore a schedule from its JSON-compatible representation.
-
-        Returns:
-            The restored action schedule.
-
-        Raises:
-            ValueError: If the action stream or metadata is malformed.
-        """
-        mapping = require_mapping(data, "serialized action schedule")
-        raw_actions = require_list(mapping, "actions")
-        registry = build_action_type_registry(action_types)
-        scheduled_actions: list[ScheduledAction] = []
-        current_time = require_mapping(mapping.get("initial_state"), "initial_state").get("time")
-        if isinstance(current_time, bool) or not isinstance(current_time, int):
-            msg = "initial_state.time must be an integer"
-            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Malformed JSON uses ValueError.
-        for raw_item in raw_actions:
-            item = require_mapping(raw_item, "each scheduled action")
-            start_time = require_int(item, "start_time")
-            if start_time != current_time:
-                msg = "scheduled action start_time does not match ordered time advancement"
-                raise ValueError(msg)
-            action = decode_action(item.get("action"), registry, action_decoders)
-            scheduled_actions.append(ScheduledAction(action_id=require_int(item, "action_id"), action=action))
-            if isinstance(action, AdvanceTime):
-                current_time += action.timestep_increment
-        return cls(
-            scheduled_actions=tuple(scheduled_actions),
-            num_timesteps=require_int(mapping, "num_timesteps"),
-            initial_state=MachineState.from_dict(mapping.get("initial_state")),
-        )
-
-    def to_json(self) -> str:
-        """Serialize this schedule as JSON text.
-
-        Returns:
-            The JSON document.
-        """
-        return json.dumps(self.to_dict())
-
-    @classmethod
-    def from_json(
-        cls,
-        raw: str,
-        *,
-        action_types: Sequence[type[Action]] | None = None,
-        action_decoders: ActionDecoders | None = None,
-    ) -> ActionSchedule:
-        """Restore a schedule from JSON text.
-
-        Returns:
-            The restored action schedule.
-        """
-        return cls.from_dict(json.loads(raw), action_types=action_types, action_decoders=action_decoders)
-
-    def save(self, filename: str | Path) -> Path:
-        """Write this schedule to an explicit UTF-8 JSON file.
-
-        Returns:
-            The path written.
-        """
-        output_path = Path(filename)
-        if output_path.suffix != ".json":
-            output_path = output_path.with_suffix(".json")
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(self.to_json(), encoding="utf-8")
-        return output_path
-
-    @classmethod
-    def load(
-        cls,
-        filename: str | Path,
-        *,
-        action_types: Sequence[type[Action]] | None = None,
-        action_decoders: ActionDecoders | None = None,
-    ) -> ActionSchedule:
-        """Load a schedule from an explicit UTF-8 JSON file.
-
-        Returns:
-            The restored action schedule.
-        """
-        return cls.from_json(
-            Path(filename).read_text(encoding="utf-8"),
-            action_types=action_types,
-            action_decoders=action_decoders,
-        )
-
-
-def decode_action(
-    data: object,
-    action_types: Mapping[str, type[Action]],
-    action_decoders: ActionDecoders | None,
-) -> Action:
-    """Restore one action using built-in types or a downstream decoder.
-
-    Args:
-        data: Serialized action mapping.
-        action_types: Registered action classes keyed by serialized name.
-        action_decoders: Optional downstream decoders keyed by serialized name.
+    Each :class:`~mqt.ionshuttler.linear.state.AdvanceTime` transition moves
+    the clock forward and does not appear in the schedule. The architecture
+    supplies every action's duration and processing zone.
 
     Returns:
-        The restored action.
-
-    Raises:
-        ValueError: If the action mapping or type is malformed or unknown.
+        A schedule with explicit action start times.
     """
-    mapping = require_mapping(data, "action")
-    action_type = mapping.get("type")
-    if not isinstance(action_type, str):
-        msg = "action.type must be a string"
-        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Malformed JSON uses ValueError.
-    if action_type in action_types:
-        return action_types[action_type].from_dict(mapping)
-    if action_decoders is not None and action_type in action_decoders:
-        return action_decoders[action_type](mapping)
-    msg = f"unknown action type: {action_type}"
-    raise ValueError(msg)
+    machine_state = (
+        initial_state
+        if isinstance(initial_state, LinearMachineState)
+        else LinearMachineState.from_compiler_state(initial_state)
+    )
+    replay_state = machine_state.to_replay_state()
+    scheduled_actions: list[ScheduledAction[Action]] = []
+    for transition in path:
+        if isinstance(transition, AdvanceTime):
+            replay_state = advance_time(replay_state)
+            continue
+        scheduled_actions.append(
+            ScheduledAction(
+                action_id=len(scheduled_actions),
+                action=transition,
+                start_time=replay_state.time,
+                duration=architecture.action_duration(transition),
+                processing_zone_id=architecture.action_processing_zone(transition, replay_state),
+            )
+        )
+        replay_state = architecture.apply_action(replay_state, transition)
+    end_time = max([replay_state.time, *(item.end_time for item in scheduled_actions)])
+    return Schedule(tuple(scheduled_actions), end_time, machine_state)
+
+
+def schedule_from_dict(data: object) -> Schedule[Action, LinearMachineState]:
+    """Restore a Linear schedule from its versioned JSON representation.
+
+    Returns:
+        The restored schedule.
+    """
+    return Schedule.from_dict(
+        data,
+        decode_action=decode_linear_action,
+        decode_state=LinearMachineState.from_dict,
+    )
+
+
+def schedule_from_json(raw: str) -> Schedule[Action, LinearMachineState]:
+    """Restore a Linear schedule from JSON text.
+
+    Returns:
+        The restored schedule.
+    """
+    return schedule_from_dict(json.loads(raw))
+
+
+def load_schedule(filename: str | Path) -> Schedule[Action, LinearMachineState]:
+    """Load a Linear schedule from a UTF-8 JSON file.
+
+    Returns:
+        The restored schedule.
+    """
+    return schedule_from_json(Path(filename).read_text(encoding="utf-8"))
 
 
 def _require_unique_keys(values: Sequence[tuple[object, object]], label: str) -> None:
@@ -402,9 +198,11 @@ def _require_unique_keys(values: Sequence[tuple[object, object]], label: str) ->
 
 
 __all__ = [
-    "ActionDecoder",
-    "ActionDecoders",
-    "ActionSchedule",
-    "MachineState",
+    "LinearMachineState",
+    "Schedule",
     "ScheduledAction",
+    "load_schedule",
+    "schedule_from_dict",
+    "schedule_from_json",
+    "schedule_from_path",
 ]

@@ -19,14 +19,14 @@ from mqt.ionshuttler.linear.dd.frame_replay import (
     build_frame_history,
 )
 from mqt.ionshuttler.linear.dd.phase import accumulated_phase
-from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
+from mqt.ionshuttler.linear.timeline import CompiledTimeline, build_timeline
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from mqt.ionshuttler.linear.architecture import Architecture
+    from mqt.ionshuttler.linear.architecture import LinearArchitecture
     from mqt.ionshuttler.linear.dd.result import LocalDDSequence
-    from mqt.ionshuttler.linear.schedule import ActionSchedule
+    from mqt.ionshuttler.linear.schedule import Schedule
 
 
 @dataclass(frozen=True)
@@ -43,27 +43,30 @@ class ResidualPhaseSummary:
         object.__setattr__(self, "residual_phase_by_ion", MappingProxyType(dict(self.residual_phase_by_ion)))
 
 
-def decoupling_ratio(schedule: ActionSchedule, sequences: Sequence[LocalDDSequence] = ()) -> float:
+def decoupling_ratio(schedule: Schedule, sequences: Sequence[LocalDDSequence] = ()) -> float:
     """Return the fraction of ion-time volume covered by recorded DD windows."""
     ion_ids = frozenset(_infer_ion_ids(schedule))
     num_ions = len(ion_ids)
-    if schedule.num_timesteps <= 0 or num_ions <= 0 or not sequences:
+    if schedule.duration <= 0 or num_ions <= 0 or not sequences:
         return 0.0
     windows_by_ion: dict[int, list[tuple[int, int]]] = {}
     for record in sequences:
         if record.ion not in ion_ids:
             continue
         start, end = record.window
-        clamped = (max(0, min(start, schedule.num_timesteps)), max(0, min(end, schedule.num_timesteps)))
+        clamped = (
+            max(schedule.start_time, min(start, schedule.end_time)),
+            max(schedule.start_time, min(end, schedule.end_time)),
+        )
         if clamped[1] > clamped[0]:
             windows_by_ion.setdefault(record.ion, []).append(clamped)
     covered_volume = sum(end - start for windows in windows_by_ion.values() for start, end in _merge_windows(windows))
-    return covered_volume / (schedule.num_timesteps * num_ions)
+    return covered_volume / (schedule.duration * num_ions)
 
 
 def relative_phase_reduction(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
     sequences: Sequence[LocalDDSequence] = (),
 ) -> float:
     """Return recorded absolute phase reduction relative to unrefocused phase."""
@@ -75,8 +78,8 @@ def relative_phase_reduction(
             accumulated_phase(
                 timeline,
                 ion=ion,
-                t_start=0,
-                t_end=timeline.makespan,
+                t_start=timeline.start_time,
+                t_end=timeline.end_time,
                 field_profile=architecture.field_profile,
             )
         )
@@ -87,7 +90,7 @@ def relative_phase_reduction(
     return sum(record.phase_reduction for record in sequences) / total_phase
 
 
-def phase_reduction_per_gate(schedule: ActionSchedule, sequences: Sequence[LocalDDSequence] = ()) -> float:
+def phase_reduction_per_gate(schedule: Schedule, sequences: Sequence[LocalDDSequence] = ()) -> float:
     """Return recorded absolute phase reduction per inserted pulse."""
     del schedule
     num_inserted_gates = sum(len(record.pulse_timesteps) for record in sequences)
@@ -97,8 +100,8 @@ def phase_reduction_per_gate(schedule: ActionSchedule, sequences: Sequence[Local
 
 
 def summarize_residual_phases(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
     timeline: CompiledTimeline | None = None,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> ResidualPhaseSummary:
@@ -113,8 +116,8 @@ def summarize_residual_phases(
         ion: accumulated_frame_phase(
             resolved_timeline,
             ion=ion,
-            t_start=0,
-            t_end=resolved_timeline.makespan,
+            t_start=resolved_timeline.start_time,
+            t_end=resolved_timeline.end_time,
             field_profile=architecture.field_profile,
             frame_history=frame_history,
         )
@@ -130,8 +133,8 @@ def summarize_residual_phases(
 
 
 def residual_phase_by_ion(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> dict[int, float]:
     """Return schedule-end residual phase for every ion."""
@@ -145,8 +148,8 @@ def residual_phase_by_ion(
 
 
 def sum_absolute_residual_phase(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> float:
     """Return the sum of absolute schedule-end residual phases."""
@@ -156,8 +159,8 @@ def sum_absolute_residual_phase(
 
 
 def sum_squared_residual_phase(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> float:
     """Return the sum of squared schedule-end residual phases."""
@@ -169,8 +172,8 @@ def sum_squared_residual_phase(
 
 
 def max_absolute_residual_phase(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> float:
     """Return the largest absolute schedule-end residual phase."""
@@ -180,8 +183,8 @@ def max_absolute_residual_phase(
 
 
 def rank_ions_by_residual_phase(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
     timeline: CompiledTimeline | None = None,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> tuple[tuple[int, float], ...]:
@@ -200,8 +203,8 @@ def rank_ions_by_residual_phase(
 
 
 def window_residual_phase(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
     ion: int,
     window: tuple[int, int],
     timeline: CompiledTimeline | None = None,
@@ -222,8 +225,8 @@ def window_residual_phase(
 
 
 def residual_phase_at_timestep(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
     ion: int,
     timestep: int,
     timeline: CompiledTimeline | None = None,
@@ -236,14 +239,14 @@ def residual_phase_at_timestep(
         ValueError: If ``timestep`` lies outside the schedule.
     """
     resolved_timeline = timeline or build_timeline(schedule, architecture)
-    if not 0 <= timestep <= resolved_timeline.makespan:
-        msg = f"timestep must be within [0, {resolved_timeline.makespan}]"
+    if not resolved_timeline.start_time <= timestep <= resolved_timeline.end_time:
+        msg = f"timestep must be within [{resolved_timeline.start_time}, {resolved_timeline.end_time}]"
         raise ValueError(msg)
     history = frame_history or build_frame_history(resolved_timeline, local_pulse_action_ids)
     return accumulated_frame_phase(
         resolved_timeline,
         ion,
-        0,
+        resolved_timeline.start_time,
         timestep,
         architecture.field_profile,
         history,
@@ -251,8 +254,8 @@ def residual_phase_at_timestep(
 
 
 def residual_phase_at_window_end(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
     ion: int,
     window: tuple[int, int],
     timeline: CompiledTimeline | None = None,
@@ -272,9 +275,9 @@ def residual_phase_at_window_end(
 
 
 def residual_phase_at_window_end_reduction(
-    before_schedule: ActionSchedule,
-    after_schedule: ActionSchedule,
-    architecture: Architecture,
+    before_schedule: Schedule,
+    after_schedule: Schedule,
+    architecture: LinearArchitecture,
     ion: int,
     window: tuple[int, int],
     before_timeline: CompiledTimeline | None = None,
@@ -319,7 +322,7 @@ def _merge_windows(windows: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return merged
 
 
-def _infer_ion_ids(program: ActionSchedule) -> tuple[int, ...]:
+def _infer_ion_ids(program: Schedule) -> tuple[int, ...]:
     return tuple(ion for ion, _site in program.initial_state.positions)
 
 

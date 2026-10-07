@@ -19,21 +19,25 @@ from typing import TYPE_CHECKING
 import pytest
 
 import mqt.ionshuttler.linear.search as search_module
-from mqt.ionshuttler.linear.actions import AdvanceTime, Rx, Ry, Rzz, Shuttle
-from mqt.ionshuttler.linear.architecture import Architecture
-from mqt.ionshuttler.linear.config import GateTiming, LinearCompilerConfig, SearchConfig
+from mqt.ionshuttler.circuit import Circuit, parse_circuit
+from mqt.ionshuttler.linear import GateTiming
+from mqt.ionshuttler.linear.actions import Rx, Ry, Rzz, Shuttle
+from mqt.ionshuttler.linear.architecture import LinearArchitecture
+from mqt.ionshuttler.linear.config import LinearCompilerConfig, SearchConfig
 from mqt.ionshuttler.linear.cost import zero_heuristic
-from mqt.ionshuttler.linear.expand import GenerationMode, replay_path
-from mqt.ionshuttler.linear.parser import parse_qasm_file
-from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
-from mqt.ionshuttler.linear.schedule import ActionSchedule
-from mqt.ionshuttler.linear.state import State, create_initial_state, has_pending_timed_work
+from mqt.ionshuttler.linear.expand import GenerationMode
+from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus, LinearDiagnostics
+from mqt.ionshuttler.linear.schedule import (
+    LinearMachineState,
+)
+from mqt.ionshuttler.linear.state import State, create_initial_state
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from mqt.ionshuttler.linear.actions import Action, GateAction
+    from mqt.ionshuttler.linear.actions import GateAction
     from mqt.ionshuttler.linear.cost import HeuristicFn
+    from mqt.ionshuttler.linear.state import SearchTransition
 
 
 def exhaustive_config(
@@ -60,73 +64,78 @@ def exhaustive_config(
     )
 
 
-def assert_replays(
-    result: CompilationResult,
-    initial_state: State,
-    architecture: Architecture,
-    gate_order: Sequence[int],
+def diagnostics(result: CompilationResult) -> LinearDiagnostics:
+    """Return the Linear search statistics of a result."""
+    assert isinstance(result.diagnostics, LinearDiagnostics)
+    return result.diagnostics
+
+
+def make_circuit(
     gates: Mapping[int, GateAction],
     predecessors: Mapping[int, frozenset[int]] | None = None,
-) -> None:
-    """Check that a returned path legally reaches its reported state."""
-    assert result.final_state is not None
-    assert (
-        replay_path(
-            initial_state,
-            architecture,
-            result.path,
-            gate_order,
-            gates,
-            predecessors=predecessors,
-        )
-        == result.final_state
+) -> Circuit:
+    """Build a circuit from concise test mappings."""
+    gate_ids = range(len(gates))
+    dependencies = (
+        tuple(frozenset((gate_id - 1,)) if gate_id else frozenset() for gate_id in gate_ids)
+        if predecessors is None
+        else tuple(predecessors.get(gate_id, frozenset()) for gate_id in gate_ids)
     )
+    return Circuit(
+        num_ions=8,
+        gates=tuple(gates[gate_id] for gate_id in gate_ids),
+        predecessors=dependencies,
+    )
+
+
+def assert_replays(result: CompilationResult) -> None:
+    """Check that the canonical replay reaches the reported state."""
+    result.validate()
 
 
 def test_zero_heuristic_compiles_with_exact_search_profile() -> None:
     """Compile a small circuit with every quality-oriented shortcut disabled."""
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1)
     initial_state = create_initial_state(1, architecture)
-    gate = Rx(ion=0, theta=0.5)
+    gate = Rx(ion=0, theta=0.5, gate_id=0)
 
     result = search_module.search(
         initial_state,
-        [0],
-        {0: gate},
+        make_circuit({0: gate}),
         architecture,
         config=exhaustive_config(heuristic=zero_heuristic),
     )
 
     assert result.status is CompilationStatus.SUCCESS
-    assert result.score == 1
-    assert result.path == [gate, AdvanceTime()]
+    assert diagnostics(result).score == 1
+    assert result.path == [gate]
+    assert result.schedule.scheduled_actions[0].start_time == 0
 
 
 def test_exhaustive_search_schedules_and_completes_a_gate() -> None:
     """Start an available gate and wait until it finishes."""
-    architecture = Architecture(num_sites=2)
+    architecture = LinearArchitecture(num_sites=2)
     initial_state = create_initial_state(1, architecture)
-    gates = {0: Rx(ion=0, theta=1.0)}
+    gates = {0: Rx(ion=0, theta=1.0, gate_id=0)}
 
     result = search_module.search(
         initial_state,
-        [0],
-        gates,
+        make_circuit(gates),
         architecture,
         config=exhaustive_config(),
     )
 
     assert result.status is CompilationStatus.SUCCESS
-    assert result.path == [gates[0], AdvanceTime()]
-    assert result.num_timesteps == 1
-    assert result.score == 1
-    assert_replays(result, initial_state, architecture, [0], gates)
+    assert result.path == [gates[0]]
+    assert result.end_time == 1
+    assert diagnostics(result).score == 1
+    assert_replays(result)
     assert initial_state.completed_gates == frozenset()
 
 
 def test_exhaustive_search_serializes_actions_from_the_entry_time() -> None:
     """Derive schedule timestamps from the search entry rather than its final state."""
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1)
     initial_state = State(
         positions=((0, 0),),
         completed_gates=frozenset(),
@@ -139,8 +148,7 @@ def test_exhaustive_search_serializes_actions_from_the_entry_time() -> None:
     result = search_module.exhaustive_search(
         initial_state,
         architecture,
-        [0],
-        {0: Rx(ion=0, theta=0.5)},
+        make_circuit({0: Rx(ion=0, theta=0.5, gate_id=0)}),
         config=exhaustive_config(),
     )
 
@@ -152,20 +160,20 @@ def test_exhaustive_search_serializes_actions_from_the_entry_time() -> None:
 
 def test_exhaustive_search_attaches_the_public_scheduled_program(monkeypatch: pytest.MonkeyPatch) -> None:
     """Attach initial hardware metadata at the public search boundary."""
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1)
     initial_state = create_initial_state(1, architecture)
-    internal_result = CompilationResult(
+    internal_outcome = search_module._SearchOutcome(
+        path=(),
+        final_state=initial_state,
         status=CompilationStatus.SUCCESS,
-        schedule=ActionSchedule.from_actions([], initial_state),
-        architecture=architecture,
+        explored_nodes=1,
     )
-    monkeypatch.setattr(search_module, "_search_with_budget", lambda *_args: internal_result)
+    monkeypatch.setattr(search_module, "_search_with_budget", lambda *_args: internal_outcome)
 
     result = search_module.exhaustive_search(
         initial_state,
         architecture,
-        [],
-        {},
+        make_circuit({}),
         config=exhaustive_config(),
     )
 
@@ -175,7 +183,7 @@ def test_exhaustive_search_attaches_the_public_scheduled_program(monkeypatch: py
 
 def test_two_qubit_gate_routes_ions_into_one_processing_zone() -> None:
     """Move separated ions into a shared zone before running their gate."""
-    architecture = Architecture(num_sites=5, processing_zones={"pz": [2, 3]})
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2, 3]})
     initial_state = State(
         positions=((0, 0), (1, 4)),
         completed_gates=frozenset(),
@@ -184,73 +192,69 @@ def test_two_qubit_gate_routes_ions_into_one_processing_zone() -> None:
         pzs_busy_until=(("pz", 0),),
         time=0,
     )
-    gates = {0: Rzz(ion_a=0, ion_b=1, theta=1.0)}
+    gates = {0: Rzz(ion_a=0, ion_b=1, theta=1.0, gate_id=0)}
 
     result = search_module.search(
         initial_state,
-        [0],
-        gates,
+        make_circuit(gates),
         architecture,
         config=exhaustive_config(),
     )
 
     assert result.status is CompilationStatus.SUCCESS
     assert any(isinstance(action, Shuttle) for action in result.path)
-    assert_replays(result, initial_state, architecture, [0], gates)
+    assert_replays(result)
 
 
 def test_independent_gates_share_a_timestep() -> None:
     """Run gates concurrently when they use separate ions and zones."""
-    architecture = Architecture(
+    architecture = LinearArchitecture(
         num_sites=2,
         processing_zones={"left": [0], "right": [1]},
     )
     initial_state = create_initial_state(2, architecture)
-    gates = {0: Rx(ion=0, theta=1.0), 1: Ry(ion=1, theta=0.5)}
+    gates = {0: Rx(ion=0, theta=1.0, gate_id=0), 1: Ry(ion=1, theta=0.5, gate_id=1)}
     predecessors = {0: frozenset(), 1: frozenset()}
 
     result = search_module.search(
         initial_state,
-        [0, 1],
-        gates,
+        make_circuit(gates, predecessors),
         architecture,
-        predecessors,
         exhaustive_config(),
     )
 
     assert result.status is CompilationStatus.SUCCESS
     assert result.path[:2] == [gates[0], gates[1]]
-    assert result.num_timesteps == 1
-    assert_replays(result, initial_state, architecture, [0, 1], gates, predecessors)
+    assert result.end_time == 1
+    assert_replays(result)
 
 
 def test_dependencies_wait_for_gate_completion() -> None:
     """Start a dependent gate only after its predecessor has finished."""
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1, gate_timing=GateTiming(rx=2))
     initial_state = create_initial_state(1, architecture)
-    gates = {0: Rx(ion=0, theta=1.0, duration=2), 1: Ry(ion=0, theta=0.5)}
+    gates = {0: Rx(ion=0, theta=1.0, gate_id=0), 1: Ry(ion=0, theta=0.5, gate_id=1)}
     predecessors = {0: frozenset(), 1: frozenset({0})}
 
     result = search_module.search(
         initial_state,
-        [0, 1],
-        gates,
+        make_circuit(gates, predecessors),
         architecture,
-        predecessors,
         exhaustive_config(),
     )
 
     assert result.path.index(gates[1]) > result.path.index(gates[0])
-    assert result.path[:3] == [gates[0], AdvanceTime(), AdvanceTime()]
-    assert_replays(result, initial_state, architecture, [0, 1], gates, predecessors)
+    assert result.path == [gates[0], gates[1]]
+    assert [item.start_time for item in result.schedule.scheduled_actions] == [0, 2]
+    assert_replays(result)
 
 
 @pytest.mark.parametrize(("horizon", "committed"), [(1, 1), (2, 1), (2, 2)])
 def test_rolling_horizon_completes_serial_gates(horizon: int, committed: int) -> None:
     """Combine planning windows into one valid complete schedule."""
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1)
     initial_state = create_initial_state(1, architecture)
-    gates = {0: Rx(ion=0, theta=1.0), 1: Ry(ion=0, theta=0.5)}
+    gates = {0: Rx(ion=0, theta=1.0, gate_id=0), 1: Ry(ion=0, theta=0.5, gate_id=1)}
     predecessors = {0: frozenset(), 1: frozenset({0})}
     config = LinearCompilerConfig(
         search=SearchConfig(
@@ -264,45 +268,41 @@ def test_rolling_horizon_completes_serial_gates(horizon: int, committed: int) ->
 
     result = search_module.search(
         initial_state,
-        [0, 1],
-        gates,
+        make_circuit(gates, predecessors),
         architecture,
-        predecessors,
         config,
     )
 
     assert result.status is CompilationStatus.SUCCESS
-    assert result.final_state is not None
-    assert result.final_state.completed_gates == frozenset({0, 1})
-    assert_replays(result, initial_state, architecture, [0, 1], gates, predecessors)
+    result.validate()
+    assert_replays(result)
 
 
 def test_informed_prioritization_falls_back_to_broader_actions() -> None:
     """Recover when the most directed moves alone cannot finish routing."""
-    architecture = Architecture(num_sites=5, processing_zones={"pz": [2, 3]})
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2, 3]})
     initial_state = create_initial_state(2, architecture, initial_positions=[0, 4])
-    gates = {0: Rzz(ion_a=0, ion_b=1, theta=1.0)}
+    gates = {0: Rzz(ion_a=0, ion_b=1, theta=1.0, gate_id=0)}
     config = exhaustive_config(informed_action_prioritization=True)
 
     result = search_module.search(
         initial_state,
-        [0],
-        gates,
+        make_circuit(gates),
         architecture,
         config=config,
     )
 
     assert result.status is CompilationStatus.SUCCESS
-    assert_replays(result, initial_state, architecture, [0], gates)
+    assert_replays(result)
 
 
 def test_iterative_diving_and_bounded_frontier_find_a_valid_schedule(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Keep deferred alternatives within the configured memory bound."""
-    architecture = Architecture(num_sites=5, processing_zones={"pz": [2, 3]})
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2, 3]})
     initial_state = create_initial_state(2, architecture, initial_positions=[0, 4])
-    gates = {0: Rzz(ion_a=0, ion_b=1, theta=1.0)}
+    gates = {0: Rzz(ion_a=0, ion_b=1, theta=1.0, gate_id=0)}
     observed_sizes: list[int] = []
     original_push = search_module._push_frontier
 
@@ -323,8 +323,7 @@ def test_iterative_diving_and_bounded_frontier_find_a_valid_schedule(
 
     result = search_module.search(
         initial_state,
-        [0],
-        gates,
+        make_circuit(gates),
         architecture,
         config=config,
     )
@@ -332,7 +331,7 @@ def test_iterative_diving_and_bounded_frontier_find_a_valid_schedule(
     assert result.status is CompilationStatus.SUCCESS
     assert observed_sizes
     assert max(observed_sizes) <= 2
-    assert_replays(result, initial_state, architecture, [0], gates)
+    assert_replays(result)
 
 
 @pytest.mark.parametrize("search_style", ["astar", "iterative_diving"])
@@ -341,13 +340,12 @@ def test_multiple_solution_search_returns_the_lowest_cost_goal(
 ) -> None:
     """Continue after one goal and retain the best schedule found."""
     iterative_diving = search_style == "iterative_diving"
-    architecture = Architecture(num_sites=3)
+    architecture = LinearArchitecture(num_sites=3)
     initial_state = create_initial_state(1, architecture)
-    gates = {0: Rx(ion=0, theta=1.0)}
+    gates = {0: Rx(ion=0, theta=1.0, gate_id=0)}
     one = search_module.search(
         initial_state,
-        [0],
-        gates,
+        make_circuit(gates),
         architecture,
         config=exhaustive_config(
             iterative_diving_search=iterative_diving,
@@ -356,8 +354,7 @@ def test_multiple_solution_search_returns_the_lowest_cost_goal(
     )
     multiple = search_module.search(
         initial_state,
-        [0],
-        gates,
+        make_circuit(gates),
         architecture,
         config=exhaustive_config(
             iterative_diving_search=iterative_diving,
@@ -367,8 +364,8 @@ def test_multiple_solution_search_returns_the_lowest_cost_goal(
 
     assert one.status is CompilationStatus.SUCCESS
     assert multiple.status is CompilationStatus.SUCCESS
-    assert multiple.score == one.score
-    assert (multiple.explored_nodes or 0) > (one.explored_nodes or 0)
+    assert diagnostics(multiple).score == diagnostics(one).score
+    assert diagnostics(multiple).explored_nodes > diagnostics(one).explored_nodes
 
 
 def test_timeout_keeps_a_complete_goal_found_while_seeking_more(
@@ -379,9 +376,9 @@ def test_timeout_keeps_a_complete_goal_found_while_seeking_more(
     original_better_solution = search_module._better_solution
 
     def record_goal(
-        current: search_module._FoundSolution | None,
-        candidate: search_module._FoundSolution,
-    ) -> search_module._FoundSolution:
+        current: search_module._SearchOutcome | None,
+        candidate: search_module._SearchOutcome,
+    ) -> search_module._SearchOutcome:
         nonlocal goal_found
         goal_found = True
         return original_better_solution(current, candidate)
@@ -392,22 +389,20 @@ def test_timeout_keeps_a_complete_goal_found_while_seeking_more(
         "expired",
         lambda _budget: goal_found,
     )
-    architecture = Architecture(num_sites=3)
+    architecture = LinearArchitecture(num_sites=3)
     initial_state = create_initial_state(1, architecture)
-    gates = {0: Rx(ion=0, theta=1.0)}
+    gates = {0: Rx(ion=0, theta=1.0, gate_id=0)}
 
     result = search_module.search(
         initial_state,
-        [0],
-        gates,
+        make_circuit(gates),
         architecture,
         config=exhaustive_config(num_solutions=2, max_compile_time=1.0),
     )
 
     assert result.status is CompilationStatus.TIMEOUT
-    assert result.path == [gates[0], AdvanceTime()]
-    assert result.final_state is not None
-    assert result.final_state.completed_gates == frozenset({0})
+    assert result.path == [gates[0]]
+    result.validate()
 
 
 def test_timeout_returns_the_best_partial_schedule(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -418,22 +413,21 @@ def test_timeout_returns_the_best_partial_schedule(monkeypatch: pytest.MonkeyPat
         "expired",
         lambda _budget: next(checks, True),
     )
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1)
     initial_state = create_initial_state(1, architecture)
-    gates = {0: Rx(ion=0, theta=1.0)}
+    gates = {0: Rx(ion=0, theta=1.0, gate_id=0)}
 
     result = search_module.search(
         initial_state,
-        [0],
-        gates,
+        make_circuit(gates),
         architecture,
         config=exhaustive_config(max_compile_time=1.0),
     )
 
     assert result.status is CompilationStatus.TIMEOUT
     assert result.path == [gates[0]]
-    assert result.final_state is not None
-    assert result.final_state.in_progress_gates == ((0, 1),)
+    assert result.final_state.time == 1
+    result.validate()
 
 
 def test_interruption_returns_the_best_state_reached(
@@ -445,38 +439,36 @@ def test_interruption_returns_the_best_state_reached(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(search_module, "expand", interrupt)
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1)
     initial_state = create_initial_state(1, architecture)
 
     result = search_module.search(
         initial_state,
-        [0],
-        {0: Rx(ion=0, theta=1.0)},
+        make_circuit({0: Rx(ion=0, theta=1.0, gate_id=0)}),
         architecture,
         config=exhaustive_config(),
     )
 
     assert result.status is CompilationStatus.INTERRUPTED
     assert result.path == []
-    assert result.final_state == initial_state
+    assert result.final_state == LinearMachineState.from_compiler_state(initial_state)
 
 
 def test_impossible_gate_returns_failed_without_idle_search() -> None:
     """Stop when no action can make progress toward the requested gate."""
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1)
     initial_state = create_initial_state(1, architecture)
 
     result = search_module.search(
         initial_state,
-        [0],
-        {0: Rx(ion=1, theta=1.0)},
+        make_circuit({0: Rx(ion=1, theta=1.0, gate_id=0)}),
         architecture,
         config=exhaustive_config(),
     )
 
     assert result.status is CompilationStatus.FAILED
     assert result.path == []
-    assert result.final_state == initial_state
+    assert result.final_state == LinearMachineState.from_compiler_state(initial_state)
 
 
 def test_rolling_windows_share_one_time_budget(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -488,14 +480,14 @@ def test_rolling_windows_share_one_time_budget(monkeypatch: pytest.MonkeyPatch) 
         initial_state: State,
         context: search_module._SearchContext,
         budget: search_module._TimeBudget,
-    ) -> CompilationResult:
+    ) -> search_module._SearchOutcome:
         budget_ids.append(id(budget))
         return original_search(initial_state, context, budget)
 
     monkeypatch.setattr(search_module, "_search_with_budget", recording_search)
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1)
     initial_state = create_initial_state(1, architecture)
-    gates = {0: Rx(ion=0, theta=1.0), 1: Ry(ion=0, theta=0.5)}
+    gates = {0: Rx(ion=0, theta=1.0, gate_id=0), 1: Ry(ion=0, theta=0.5, gate_id=1)}
     predecessors = {0: frozenset(), 1: frozenset({0})}
     config = LinearCompilerConfig(
         search=SearchConfig(
@@ -509,10 +501,8 @@ def test_rolling_windows_share_one_time_budget(monkeypatch: pytest.MonkeyPatch) 
 
     result = search_module.search(
         initial_state,
-        [0, 1],
-        gates,
+        make_circuit(gates, predecessors),
         architecture,
-        predecessors,
         config,
     )
 
@@ -523,21 +513,20 @@ def test_rolling_windows_share_one_time_budget(monkeypatch: pytest.MonkeyPatch) 
 
 def test_rolling_search_times_out_before_starting_a_window() -> None:
     """Return immediately when no time remains for the first planning window."""
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1)
     initial_state = create_initial_state(1, architecture)
     config = LinearCompilerConfig(search=SearchConfig(horizon=1, committed_gates=1, max_compile_time=0.0))
 
     result = search_module.search(
         initial_state,
-        [0],
-        {0: Rx(ion=0, theta=1.0)},
+        make_circuit({0: Rx(ion=0, theta=1.0, gate_id=0)}),
         architecture,
         config=config,
     )
 
     assert result.status is CompilationStatus.TIMEOUT
     assert result.path == []
-    assert result.final_state == initial_state
+    assert result.final_state == LinearMachineState.from_compiler_state(initial_state)
 
 
 def test_rolling_search_reports_an_interruption(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -547,26 +536,25 @@ def test_rolling_search_reports_an_interruption(monkeypatch: pytest.MonkeyPatch)
         raise KeyboardInterrupt
 
     monkeypatch.setattr(search_module, "_run_rolling_search", interrupt)
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1)
     initial_state = create_initial_state(1, architecture)
 
     result = search_module.search(
         initial_state,
-        [0],
-        {0: Rx(ion=0, theta=1.0)},
+        make_circuit({0: Rx(ion=0, theta=1.0, gate_id=0)}),
         architecture,
     )
 
     assert result.status is CompilationStatus.INTERRUPTED
     assert result.path == []
-    assert result.final_state == initial_state
+    assert result.final_state == LinearMachineState.from_compiler_state(initial_state)
 
 
-def test_rolling_search_without_dependency_maps_uses_circuit_order() -> None:
-    """Schedule gates in circuit order when no dependency maps are supplied."""
-    architecture = Architecture(num_sites=1)
+def test_rolling_search_serial_policy_uses_circuit_order() -> None:
+    """Schedule gates in circuit order when dependency scheduling is disabled."""
+    architecture = LinearArchitecture(num_sites=1)
     initial_state = create_initial_state(1, architecture)
-    gates = {0: Rx(ion=0, theta=1.0), 1: Ry(ion=0, theta=0.5)}
+    gates = {0: Rx(ion=0, theta=1.0, gate_id=0), 1: Ry(ion=0, theta=0.5, gate_id=1)}
     config = LinearCompilerConfig(
         search=SearchConfig(
             horizon=1,
@@ -574,41 +562,40 @@ def test_rolling_search_without_dependency_maps_uses_circuit_order() -> None:
             iterative_diving_search=False,
             max_frontier_size=None,
             max_compile_time=None,
+            use_dependencies=False,
         )
     )
 
     result = search_module.search(
         initial_state,
-        [0, 1],
-        gates,
+        make_circuit(gates, {0: frozenset(), 1: frozenset()}),
         architecture,
         config=config,
     )
 
     assert result.status is CompilationStatus.SUCCESS
-    assert result.path == [gates[0], AdvanceTime(), gates[1], AdvanceTime()]
-    assert_replays(result, initial_state, architecture, [0, 1], gates)
+    assert result.path == [gates[0], gates[1]]
+    assert [item.start_time for item in result.schedule.scheduled_actions] == [0, 1]
+    assert_replays(result)
 
 
 def test_rolling_horizon_entry_point_requires_a_finite_horizon() -> None:
     """Reject the rolling entry point when complete-circuit search was selected."""
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1)
     initial_state = create_initial_state(1, architecture)
 
     with pytest.raises(ValueError, match="finite horizon"):
         search_module.rolling_horizon_search(
             initial_state,
             architecture,
-            [0],
-            {0: Rx(ion=0, theta=1.0)},
-            predecessors=None,
+            make_circuit({0: Rx(ion=0, theta=1.0, gate_id=0)}),
             config=exhaustive_config(),
         )
 
 
 def test_rolling_window_accepts_a_completed_global_predecessor() -> None:
     """Treat dependencies completed before the current window as satisfied."""
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1)
     initial_state = State(
         positions=((0, 0),),
         completed_gates=frozenset({0}),
@@ -617,7 +604,7 @@ def test_rolling_window_accepts_a_completed_global_predecessor() -> None:
         pzs_busy_until=(("all_sites", 0),),
         time=0,
     )
-    gates = {0: Rx(ion=0, theta=1.0), 1: Ry(ion=0, theta=0.5)}
+    gates = {0: Rx(ion=0, theta=1.0, gate_id=0), 1: Ry(ion=0, theta=0.5, gate_id=1)}
     predecessors = {0: frozenset(), 1: frozenset({0})}
     config = LinearCompilerConfig(
         search=SearchConfig(
@@ -631,70 +618,63 @@ def test_rolling_window_accepts_a_completed_global_predecessor() -> None:
 
     result = search_module.search(
         initial_state,
-        [0, 1],
-        gates,
+        make_circuit(gates, predecessors),
         architecture,
-        predecessors,
         config,
     )
 
     assert result.status is CompilationStatus.SUCCESS
-    assert result.path == [gates[1], AdvanceTime()]
-    assert_replays(result, initial_state, architecture, [0, 1], gates, predecessors)
+    assert result.path == [gates[1]]
+    assert_replays(result)
 
 
 def test_production_defaults_build_the_expected_compact_schedule() -> None:
     """Keep the compact production schedule deterministic."""
-    architecture = Architecture(
+    architecture = LinearArchitecture(
         num_sites=9,
         processing_zones={"pz1": [2, 3], "pz2": [5, 6]},
     )
     initial_state = create_initial_state(2, architecture)
     gates = {
-        0: Rx(ion=0, theta=0.1),
-        1: Ry(ion=1, theta=0.2),
-        2: Rzz(ion_a=0, ion_b=1, theta=0.3, duration=2),
+        0: Rx(ion=0, theta=0.1, gate_id=0),
+        1: Ry(ion=1, theta=0.2, gate_id=1),
+        2: Rzz(ion_a=0, ion_b=1, theta=0.3, gate_id=2),
     }
     predecessors = {0: frozenset(), 1: frozenset(), 2: frozenset({0, 1})}
 
     result = search_module.search(
         initial_state,
-        [0, 1, 2],
-        gates,
+        make_circuit(gates, predecessors),
         architecture,
-        predecessors,
     )
 
     assert result.status is CompilationStatus.SUCCESS
-    assert result.num_timesteps == 5
-    assert result.score == 5
+    assert result.end_time == 5
+    assert diagnostics(result).score == 5
     assert result.path == [
         Shuttle(ion=0, src=3, dst=2),
         Shuttle(ion=1, src=4, dst=3),
-        AdvanceTime(),
         gates[0],
-        AdvanceTime(),
         gates[1],
-        AdvanceTime(),
         gates[2],
-        AdvanceTime(),
-        AdvanceTime(),
     ]
-    assert_replays(result, initial_state, architecture, [0, 1, 2], gates, predecessors)
+    assert [item.start_time for item in result.schedule.scheduled_actions] == [0, 0, 1, 2, 3]
+    assert_replays(result)
 
 
 def test_larger_schedule_remains_deterministic_and_replayable() -> None:
     """Cover concurrent work, routing, and successive time advances."""
-    architecture = Architecture(
+    architecture = LinearArchitecture(
         num_sites=12,
         processing_zones={"left": [2, 3, 4], "right": [7, 8, 9]},
+        gate_timing=GateTiming(rx=2, ry=2),
     )
     initial_state = create_initial_state(4, architecture)
     gates = {
-        0: Rx(ion=0, theta=0.1, duration=2),
-        1: Ry(ion=3, theta=0.2, duration=2),
-        2: Rzz(ion_a=0, ion_b=1, theta=0.3, duration=2),
-        3: Rzz(ion_a=2, ion_b=3, theta=0.4, duration=2),
+        0: Rx(ion=0, theta=0.1, gate_id=0),
+        1: Ry(ion=3, theta=0.2, gate_id=1),
+        2: Rzz(ion_a=0, ion_b=1, theta=0.3, gate_id=2),
+        3: Rzz(ion_a=2, ion_b=3, theta=0.4, gate_id=3),
     }
     predecessors = {
         0: frozenset(),
@@ -702,62 +682,42 @@ def test_larger_schedule_remains_deterministic_and_replayable() -> None:
         2: frozenset({0}),
         3: frozenset({1}),
     }
-    expected: list[Action] = [
+    expected: list[SearchTransition] = [
         Shuttle(ion=0, src=4, dst=3),
         Shuttle(ion=1, src=5, dst=4),
         gates[1],
-        AdvanceTime(),
         gates[0],
-        AdvanceTime(),
-        AdvanceTime(),
         Shuttle(ion=3, src=7, dst=8),
         Shuttle(ion=2, src=6, dst=7),
         gates[2],
-        AdvanceTime(),
         gates[3],
-        AdvanceTime(),
-        AdvanceTime(),
     ]
 
     result = search_module.search(
         initial_state,
-        [0, 1, 2, 3],
-        gates,
+        make_circuit(gates, predecessors),
         architecture,
-        predecessors,
     )
 
     assert result.status is CompilationStatus.SUCCESS
     assert result.path == expected
-    assert result.num_timesteps == 6
-    assert_replays(result, initial_state, architecture, [0, 1, 2, 3], gates, predecessors)
+    assert result.end_time == 6
+    assert_replays(result)
 
 
 def test_six_qubit_qft_matches_frozen_schedule() -> None:
-    """Keep a substantial production schedule exactly reproducible.
-
-    The frozen values changed once when bounded-frontier eviction stopped
-    corrupting heap order: the search reaches the same makespan using eleven
-    fewer shuttles.
-    """
+    """Keep a substantial production schedule exactly reproducible."""
     qasm_path = Path(__file__).parent / "fixtures" / "qft_6.qasm"
-    num_qubits, gate_list, predecessors, _ = parse_qasm_file(
-        qasm_path,
-        gate_timing=GateTiming(),
-    )
-    architecture = Architecture(
+    circuit = parse_circuit(qasm_path)
+    architecture = LinearArchitecture(
         num_sites=9,
         processing_zones={"pz1": [2, 3], "pz2": [5, 6]},
     )
-    initial_state = create_initial_state(num_qubits, architecture)
-    gates = dict(enumerate(gate_list))
-
+    initial_state = create_initial_state(circuit.num_ions, architecture)
     result = search_module.search(
         initial_state,
-        list(gates),
-        gates,
+        circuit,
         architecture,
-        predecessors,
     )
 
     serialized_actions = [action.to_dict() for action in result.path]
@@ -767,11 +727,10 @@ def test_six_qubit_qft_matches_frozen_schedule() -> None:
         separators=(",", ":"),
     ).encode()
     assert result.status is CompilationStatus.SUCCESS
-    assert len(gates) == 143
-    assert len(result.path) == 415
-    assert result.num_timesteps == 219
+    assert len(circuit.gates) == 143
+    assert len(result.path) == 196
+    assert result.end_time == 219
     assert Counter(type(action).__name__ for action in result.path) == {
-        "AdvanceTime": 219,
         "PhysicalSwap": 36,
         "Rx": 5,
         "Ry": 54,
@@ -780,30 +739,16 @@ def test_six_qubit_qft_matches_frozen_schedule() -> None:
         "Shuttle": 17,
     }
     assert hashlib.sha256(encoded_actions, usedforsecurity=False).hexdigest() == (
-        "9f0eb19da96b5b34cc86be1afb2617e1873f0fc3365bf36f3835347d7ca69d3c"
+        "1717a9a774d55a141bc5af2a586837bcf4f3419e7f261cd3b4174c4bb6f9a191"
     )
-    assert result.final_state is not None
-    assert result.final_state.completed_gates == frozenset(gates)
-    replayed_state = initial_state
-    for action in result.path:
-        if isinstance(action, AdvanceTime):
-            assert has_pending_timed_work(replayed_state)
-        replayed_state = replay_path(
-            replayed_state,
-            architecture,
-            [action],
-            list(gates),
-            gates,
-            predecessors=predecessors,
-        )
-    assert replayed_state == result.final_state
+    result.validate()
     assert initial_state.completed_gates == frozenset()
 
 
 @pytest.mark.parametrize("max_frontier_size", [None, 1, 2, 5, 64])
 def test_frontier_returns_nodes_in_best_first_order(max_frontier_size: int | None) -> None:
     """Take frontier nodes cheapest-first, whether or not the frontier is bounded."""
-    architecture = Architecture(num_sites=5, processing_zones={"pz": [2, 3]})
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2, 3]})
     state = create_initial_state(2, architecture, initial_positions=[0, 4])
     tie_breaker = count()
     frontier: search_module.Frontier = []
@@ -836,21 +781,25 @@ def test_frontier_returns_nodes_in_best_first_order(max_frontier_size: int | Non
 
 def test_custom_heuristic_replaces_the_built_in_estimate() -> None:
     """Route a two-qubit gate using a supplied heuristic instead of the default."""
-    architecture = Architecture(num_sites=5, processing_zones={"pz": [2, 3]})
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2, 3]})
     initial_state = create_initial_state(2, architecture, initial_positions=[0, 4])
-    gates: dict[int, GateAction] = {0: Rzz(ion_a=0, ion_b=1, theta=1.0)}
+    gates: dict[int, GateAction] = {0: Rzz(ion_a=0, ion_b=1, theta=1.0, gate_id=0)}
     calls: list[int] = []
 
     def custom_heuristic(
         state: State,
-        architecture_: Architecture,
-        gate_order: Sequence[int],
-        gates_: Mapping[int, GateAction],
-        predecessors: Mapping[int, frozenset[int]] | None = None,
+        architecture_: LinearArchitecture,
+        circuit: Circuit,
+        active_gate_ids: Sequence[int],
+        predecessors: Sequence[frozenset[int]],
+        *,
+        use_dependencies: bool = True,
+        gate_zone: Mapping[int, str] | None = None,
+        zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
     ) -> int:
-        del architecture_, gates_, predecessors
+        del architecture_, circuit, predecessors, use_dependencies, gate_zone, zone_site_pairs
         calls.append(state.time)
-        return len([gate_id for gate_id in gate_order if gate_id not in state.completed_gates])
+        return len([gate_id for gate_id in active_gate_ids if gate_id not in state.completed_gates])
 
     config = LinearCompilerConfig(
         search=SearchConfig(
@@ -863,30 +812,34 @@ def test_custom_heuristic_replaces_the_built_in_estimate() -> None:
         )
     )
 
-    result = search_module.search(initial_state, [0], gates, architecture, config=config)
+    result = search_module.search(initial_state, make_circuit(gates), architecture, config=config)
 
     assert result.status is CompilationStatus.SUCCESS
     assert calls, "the supplied heuristic was never consulted"
-    assert_replays(result, initial_state, architecture, [0], gates)
+    assert_replays(result)
 
 
 def test_custom_heuristic_is_used_by_rolling_horizon_windows() -> None:
     """Carry the supplied heuristic into every rolling planning window."""
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1)
     initial_state = create_initial_state(1, architecture)
-    gates: dict[int, GateAction] = {0: Rx(ion=0, theta=1.0), 1: Ry(ion=0, theta=0.5)}
+    gates: dict[int, GateAction] = {0: Rx(ion=0, theta=1.0, gate_id=0), 1: Ry(ion=0, theta=0.5, gate_id=1)}
     predecessors = {0: frozenset[int](), 1: frozenset({0})}
     windows: list[tuple[int, ...]] = []
 
     def custom_heuristic(
         state: State,
-        architecture_: Architecture,
-        gate_order: Sequence[int],
-        gates_: Mapping[int, GateAction],
-        predecessors_: Mapping[int, frozenset[int]] | None = None,
+        architecture_: LinearArchitecture,
+        circuit: Circuit,
+        active_gate_ids: Sequence[int],
+        predecessors_: Sequence[frozenset[int]],
+        *,
+        use_dependencies: bool = True,
+        gate_zone: Mapping[int, str] | None = None,
+        zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
     ) -> int:
-        del state, architecture_, gates_, predecessors_
-        windows.append(tuple(gate_order))
+        del state, architecture_, circuit, predecessors_, use_dependencies, gate_zone, zone_site_pairs
+        windows.append(tuple(active_gate_ids))
         return 0
 
     config = LinearCompilerConfig(
@@ -900,19 +853,18 @@ def test_custom_heuristic_is_used_by_rolling_horizon_windows() -> None:
         )
     )
 
-    result = search_module.search(initial_state, [0, 1], gates, architecture, predecessors, config)
+    result = search_module.search(initial_state, make_circuit(gates, predecessors), architecture, config)
 
     assert result.status is CompilationStatus.SUCCESS
-    assert result.final_state is not None
-    assert result.final_state.completed_gates == frozenset({0, 1})
+    result.validate()
     assert set(windows) == {(0,), (1,)}
 
 
 def test_zero_heuristic_yields_an_admissible_estimate() -> None:
     """Skip estimation entirely when the zero heuristic is selected."""
-    architecture = Architecture(num_sites=1)
+    architecture = LinearArchitecture(num_sites=1)
     initial_state = create_initial_state(1, architecture)
-    gates: dict[int, GateAction] = {0: Rx(ion=0, theta=0.5)}
+    gates: dict[int, GateAction] = {0: Rx(ion=0, theta=0.5, gate_id=0)}
 
     config = LinearCompilerConfig(
         search=SearchConfig(
@@ -925,23 +877,23 @@ def test_zero_heuristic_yields_an_admissible_estimate() -> None:
         )
     )
 
-    result = search_module.search(initial_state, [0], gates, architecture, config=config)
+    result = search_module.search(initial_state, make_circuit(gates), architecture, config=config)
 
     assert result.status is CompilationStatus.SUCCESS
-    assert result.path == [gates[0], AdvanceTime()]
+    assert result.path == [gates[0]]
 
 
 def test_omitting_a_custom_heuristic_keeps_the_built_in_schedule() -> None:
     """Produce the same schedule with an explicit ``None`` as with the default."""
-    architecture = Architecture(num_sites=5, processing_zones={"pz": [2, 3]})
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2, 3]})
     initial_state = create_initial_state(2, architecture, initial_positions=[0, 4])
-    gates: dict[int, GateAction] = {0: Rzz(ion_a=0, ion_b=1, theta=1.0)}
+    gates: dict[int, GateAction] = {0: Rzz(ion_a=0, ion_b=1, theta=1.0, gate_id=0)}
 
-    default_result = search_module.search(initial_state, [0], gates, architecture, config=exhaustive_config())
+    circuit = make_circuit(gates)
+    default_result = search_module.search(initial_state, circuit, architecture, config=exhaustive_config())
     explicit_result = search_module.search(
         initial_state,
-        [0],
-        gates,
+        circuit,
         architecture,
         config=LinearCompilerConfig(
             search=SearchConfig(
@@ -956,34 +908,48 @@ def test_omitting_a_custom_heuristic_keeps_the_built_in_schedule() -> None:
     )
 
     assert explicit_result.status is default_result.status
-    assert explicit_result.score == default_result.score
+    assert diagnostics(explicit_result).score == diagnostics(default_result).score
     assert explicit_result.path == default_result.path
 
 
 @pytest.mark.parametrize("horizon", [None, 1])
-@pytest.mark.parametrize("custom", [False, True])
 @pytest.mark.parametrize("assigned", [False, True])
-def test_partition_bias_warning_and_unknown_zone_fallback(
-    caplog: pytest.LogCaptureFixture, horizon: int | None, *, custom: bool, assigned: bool
-) -> None:
-    """Warn once for custom estimates and tolerate unmatched zone names."""
-    architecture = Architecture(num_sites=2)
+def test_custom_heuristic_receives_partition_bias(horizon: int | None, *, assigned: bool) -> None:
+    """Pass optional pre-partition data to custom estimates in both search modes."""
+    architecture = LinearArchitecture(num_sites=2)
     initial_state = create_initial_state(2, architecture)
-    gates = {0: Rzz(ion_a=0, ion_b=1, theta=0.3), 1: Rzz(ion_a=0, ion_b=1, theta=0.5)}
-    config = LinearCompilerConfig(
-        search=SearchConfig(horizon=horizon, committed_gates=1, heuristic=zero_heuristic if custom else None)
-    )
+    gates = {0: Rzz(ion_a=0, ion_b=1, theta=0.3, gate_id=0), 1: Rzz(ion_a=0, ion_b=1, theta=0.5, gate_id=1)}
+    received: list[tuple[Mapping[int, str] | None, Mapping[str, tuple[tuple[int, int], ...]] | None]] = []
+
+    def custom_heuristic(
+        state: State,
+        architecture_: LinearArchitecture,
+        circuit: Circuit,
+        active_gate_ids: Sequence[int],
+        predecessors: Sequence[frozenset[int]],
+        /,
+        *,
+        use_dependencies: bool = True,
+        gate_zone: Mapping[int, str] | None = None,
+        zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
+    ) -> int:
+        del state, architecture_, circuit, active_gate_ids, predecessors, use_dependencies
+        received.append((gate_zone, zone_site_pairs))
+        return 0
+
+    config = LinearCompilerConfig(search=SearchConfig(horizon=horizon, committed_gates=1, heuristic=custom_heuristic))
+    expected_gate_zone = {0: "missing", 1: "missing"} if assigned else {}
+    expected_zone_site_pairs = {"other": ((0, 1),)}
 
     result = search_module.search(
         initial_state,
-        [0, 1],
-        gates,
+        make_circuit(gates),
         architecture,
         config=config,
-        gate_zone={0: "missing", 1: "missing"} if assigned else {},
-        zone_site_pairs={"other": ((0, 1),)},
+        gate_zone=expected_gate_zone,
+        zone_site_pairs=expected_zone_site_pairs,
     )
 
     assert result.status is CompilationStatus.SUCCESS
-    warnings = [record for record in caplog.records if "pre-partition bias is ignored" in record.message]
-    assert len(warnings) == int(custom and assigned)
+    assert received
+    assert all(item == (expected_gate_zone, expected_zone_site_pairs) for item in received)

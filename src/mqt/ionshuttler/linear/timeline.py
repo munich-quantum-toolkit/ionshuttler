@@ -11,36 +11,36 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING
 
 from mqt.ionshuttler.linear.actions import (
     Action,
-    AdvanceTime,
-    PhysicalSwap,
-    Shuttle,
+    GateAction,
     SingleQubitGate,
-    TwoQubitGate,
+    TransportAction,
 )
+from mqt.ionshuttler.linear.replay import apply_schedule
 from mqt.ionshuttler.linear.state import State, to_dict
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
-    from mqt.ionshuttler.linear.architecture import Architecture
-    from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
-
-
-class _TimedGate(Protocol):
-    """Describe the duration field shared by concrete physical gates."""
-
-    duration: int
+    from mqt.ionshuttler.linear.architecture import LinearArchitecture
+    from mqt.ionshuttler.linear.schedule import Schedule, ScheduledAction
 
 
 @dataclass(frozen=True)
 class CompiledTimeline:
-    """Provide schedule-boundary positions, resource occupancy, and actions."""
+    """Provide schedule-boundary positions, resource occupancy, and actions.
 
-    makespan: int
+    The timeline covers the boundaries from ``start_time``, the time of the
+    schedule's initial state, to ``end_time``. All times are absolute schedule
+    times. The schedule describes nothing before ``start_time``, so queries
+    outside this range raise :class:`ValueError`.
+    """
+
+    start_time: int
+    end_time: int
     _positions_by_time: tuple[Mapping[int, int], ...]
     _ion_busy_by_time: Mapping[int, frozenset[int]]
     _ion_gate_busy_by_time: Mapping[int, frozenset[int]]
@@ -50,35 +50,35 @@ class CompiledTimeline:
 
     def ion_position(self, ion_id: int, timestep: int) -> int:
         """Return an ion's site at one schedule boundary."""
-        return self._positions_by_time[_validate_time(timestep, self.makespan)][ion_id]
+        return self._positions_at(timestep)[ion_id]
 
     def ion_busy(self, ion_id: int, timestep: int) -> bool:
         """Return whether an ion is occupied by any physical action."""
-        time = _validate_time(timestep, self.makespan)
+        time = self._validate_time(timestep)
         return time in self._ion_busy_by_time.get(ion_id, frozenset())
 
     def ion_gate_busy(self, ion_id: int, timestep: int) -> bool:
         """Return whether an ion is occupied specifically by a gate."""
-        time = _validate_time(timestep, self.makespan)
+        time = self._validate_time(timestep)
         return time in self._ion_gate_busy_by_time.get(ion_id, frozenset())
 
     def pz_busy(self, zone_name: str, timestep: int) -> bool:
         """Return whether a processing zone is occupied by a gate."""
-        time = _validate_time(timestep, self.makespan)
+        time = self._validate_time(timestep)
         return time in self._pz_busy_by_time.get(zone_name, frozenset())
 
     def position_occupied_by_other(self, ion_id: int, site: int, timestep: int) -> bool:
         """Return whether another ion occupies a site at a boundary."""
-        positions = self._positions_by_time[_validate_time(timestep, self.makespan)]
+        positions = self._positions_at(timestep)
         return any(position == site for ion, position in positions.items() if ion != ion_id)
 
     def action_at(self, timestep: int) -> tuple[Action, ...] | None:
         """Return the ordered actions at a schedule boundary, if any."""
-        return self._actions_by_time.get(_validate_time(timestep, self.makespan))
+        return self._actions_by_time.get(self._validate_time(timestep))
 
     def scheduled_action_at(self, timestep: int) -> tuple[ScheduledAction, ...] | None:
         """Return actions with stable identity at one boundary."""
-        return self._scheduled_actions_by_time.get(_validate_time(timestep, self.makespan))
+        return self._scheduled_actions_by_time.get(self._validate_time(timestep))
 
     def state_at(self, timestep: int) -> State:
         """Reconstruct the hardware portion of state at a schedule boundary.
@@ -86,15 +86,16 @@ class CompiledTimeline:
         Returns:
             The reconstructed hardware state.
         """
-        current_time = _validate_time(timestep, self.makespan)
-        positions = tuple(sorted(self._positions_by_time[current_time].items()))
+        current_time = self._validate_time(timestep)
+        current_positions = self._positions_at(current_time)
+        positions = tuple(sorted(current_positions.items()))
         ions_busy_until = tuple(
             sorted(
                 (
                     ion_id,
                     current_time + 1 if self.ion_busy(ion_id, current_time) else current_time,
                 )
-                for ion_id in self._positions_by_time[current_time]
+                for ion_id in current_positions
             )
         )
         pzs_busy_until = tuple(
@@ -131,12 +132,12 @@ class CompiledTimeline:
                 would finish beyond the timeline.
         """
         action = scheduled_action.action
-        if not isinstance(action, SingleQubitGate) or action.virtual:
+        if not isinstance(action, SingleQubitGate) or scheduled_action.processing_zone_id is None:
             msg = "incremental timeline insertion requires a physical single-qubit gate"
             raise ValueError(msg)
-        start = _validate_time(timestep, self.makespan)
-        duration = _action_duration(action)
-        if start + duration > self.makespan:
+        start = self._validate_time(timestep)
+        duration = scheduled_action.duration
+        if start + duration > self.end_time:
             msg = "inserted gate must finish within the timeline"
             raise ValueError(msg)
 
@@ -149,11 +150,9 @@ class CompiledTimeline:
         pz_busy[zone] = pz_busy.get(zone, frozenset()) | occupied
 
         actions = dict(self._actions_by_time)
-        actions[start] = _insert_action_before_time_advance(actions.get(start, ()), action)
+        actions[start] = (*actions.get(start, ()), action)
         scheduled_actions = dict(self._scheduled_actions_by_time)
-        scheduled_actions[start] = _insert_scheduled_action_before_time_advance(
-            scheduled_actions.get(start, ()), scheduled_action
-        )
+        scheduled_actions[start] = (*scheduled_actions.get(start, ()), scheduled_action)
         return replace(
             self,
             _ion_busy_by_time=MappingProxyType(ion_busy),
@@ -163,10 +162,22 @@ class CompiledTimeline:
             _scheduled_actions_by_time=MappingProxyType(scheduled_actions),
         )
 
+    def _validate_time(self, timestep: int) -> int:
+        if isinstance(timestep, bool) or not isinstance(timestep, int):
+            msg = "timestep must be an integer"
+            raise TypeError(msg)
+        if not self.start_time <= timestep <= self.end_time:
+            msg = f"timestep must be within [{self.start_time}, {self.end_time}]"
+            raise ValueError(msg)
+        return timestep
+
+    def _positions_at(self, timestep: int) -> Mapping[int, int]:
+        return self._positions_by_time[self._validate_time(timestep) - self.start_time]
+
 
 def build_timeline(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
 ) -> CompiledTimeline:
     """Reconstruct a timeline solely from executable schedule information.
 
@@ -178,67 +189,59 @@ def build_timeline(
         The reconstructed immutable timeline.
     """
     initial_positions = to_dict(schedule.initial_state.to_replay_state())
-    makespan = schedule.num_timesteps
+    end_time = schedule.end_time
     initial_time = schedule.initial_state.time
     position_checkpoints: list[tuple[int, dict[int, int]]] = []
     ion_busy_by_time: dict[int, set[int]] = {
-        ion_id: set(range(max(0, free_time - initial_time)))
-        for ion_id, free_time in schedule.initial_state.ions_busy_until
+        ion_id: set(range(initial_time, free_time)) for ion_id, free_time in schedule.initial_state.ions_busy_until
     }
     ion_gate_busy_by_time: dict[int, set[int]] = {ion_id: set() for ion_id in initial_positions}
     initial_pz_availability = dict(schedule.initial_state.pzs_busy_until)
     pz_busy_by_time: dict[str, set[int]] = {
-        zone_name: set(range(max(0, initial_pz_availability.get(zone_name, initial_time) - initial_time)))
+        zone_name: set(range(initial_time, initial_pz_availability.get(zone_name, initial_time)))
         for zone_name in (architecture.processing_zones or {})
     }
     actions_by_time: dict[int, list[Action]] = {}
     scheduled_actions_by_time: dict[int, list[ScheduledAction]] = {}
-    current_positions = dict(initial_positions)
-    current_time = 0
 
-    for scheduled_action in schedule.scheduled_actions:
-        action = scheduled_action.action
-        actions_by_time.setdefault(current_time, []).append(action)
-        scheduled_actions_by_time.setdefault(current_time, []).append(scheduled_action)
-
-        if isinstance(action, Shuttle):
-            current_positions[action.ion] = action.dst
-            _mark_busy_range(ion_busy_by_time.setdefault(action.ion, set()), current_time, action.duration)
-            _record_positions(position_checkpoints, current_positions, current_time)
-        elif isinstance(action, PhysicalSwap):
-            current_positions[action.ion_a], current_positions[action.ion_b] = (
-                current_positions[action.ion_b],
-                current_positions[action.ion_a],
-            )
-            _mark_busy_range(ion_busy_by_time.setdefault(action.ion_a, set()), current_time, action.duration)
-            _mark_busy_range(ion_busy_by_time.setdefault(action.ion_b, set()), current_time, action.duration)
-            _record_positions(position_checkpoints, current_positions, current_time)
-        elif isinstance(action, SingleQubitGate):
-            if not action.virtual:
-                _mark_gate_resources(
-                    action.ion,
-                    _action_duration(action),
+    def record_applied_layer(before: State, layer: Sequence[ScheduledAction], after: State) -> None:
+        current_time = before.time
+        for scheduled_action in layer:
+            action = scheduled_action.action
+            actions_by_time.setdefault(current_time, []).append(action)
+            scheduled_actions_by_time.setdefault(current_time, []).append(scheduled_action)
+            if isinstance(action, TransportAction):
+                for ion in action.ions:
+                    _mark_busy_range(
+                        ion_busy_by_time.setdefault(ion, set()),
+                        current_time,
+                        scheduled_action.duration,
+                    )
+            elif isinstance(action, GateAction) and scheduled_action.processing_zone_id is not None:
+                for ion in action.ions:
+                    _mark_busy_range(ion_busy_by_time.setdefault(ion, set()), current_time, scheduled_action.duration)
+                    _mark_busy_range(
+                        ion_gate_busy_by_time.setdefault(ion, set()), current_time, scheduled_action.duration
+                    )
+                _mark_busy_range(
+                    pz_busy_by_time.setdefault(scheduled_action.processing_zone_id, set()),
                     current_time,
-                    current_positions,
-                    architecture,
-                    ion_busy_by_time,
-                    ion_gate_busy_by_time,
-                    pz_busy_by_time,
+                    scheduled_action.duration,
                 )
-        elif isinstance(action, TwoQubitGate):
-            for ion in (action.ion_a, action.ion_b):
-                duration = _action_duration(action)
-                _mark_busy_range(ion_busy_by_time.setdefault(ion, set()), current_time, duration)
-                _mark_busy_range(ion_gate_busy_by_time.setdefault(ion, set()), current_time, duration)
-            zone = architecture.get_processing_zone(current_positions[action.ion_a])
-            if zone is not None:
-                _mark_busy_range(pz_busy_by_time.setdefault(zone, set()), current_time, duration)
-        elif isinstance(action, AdvanceTime):
-            current_time += action.timestep_increment
+        if before.positions != after.positions:
+            _record_positions(position_checkpoints, dict(after.positions), current_time)
+
+    apply_schedule(
+        schedule,
+        architecture,
+        on_layer_applied=record_applied_layer,
+        validate=False,
+    )
 
     return CompiledTimeline(
-        makespan=makespan,
-        _positions_by_time=_materialize_positions(position_checkpoints, initial_positions, makespan),
+        start_time=initial_time,
+        end_time=end_time,
+        _positions_by_time=_materialize_positions(position_checkpoints, initial_positions, initial_time, end_time),
         _ion_busy_by_time=MappingProxyType({ion_id: frozenset(times) for ion_id, times in ion_busy_by_time.items()}),
         _ion_gate_busy_by_time=MappingProxyType({
             ion_id: frozenset(times) for ion_id, times in ion_gate_busy_by_time.items()
@@ -249,37 +252,6 @@ def build_timeline(
             timestep: tuple(actions) for timestep, actions in scheduled_actions_by_time.items()
         }),
     )
-
-
-def _mark_gate_resources(
-    ion: int,
-    duration: int,
-    current_time: int,
-    current_positions: dict[int, int],
-    architecture: Architecture,
-    ion_busy_by_time: dict[int, set[int]],
-    ion_gate_busy_by_time: dict[int, set[int]],
-    pz_busy_by_time: dict[str, set[int]],
-) -> None:
-    _mark_busy_range(ion_busy_by_time.setdefault(ion, set()), current_time, duration)
-    _mark_busy_range(ion_gate_busy_by_time.setdefault(ion, set()), current_time, duration)
-    zone = architecture.get_processing_zone(current_positions[ion])
-    if zone is not None:
-        _mark_busy_range(pz_busy_by_time.setdefault(zone, set()), current_time, duration)
-
-
-def _action_duration(action: SingleQubitGate | TwoQubitGate) -> int:
-    return cast("_TimedGate", action).duration
-
-
-def _validate_time(timestep: int, makespan: int) -> int:
-    if isinstance(timestep, bool) or not isinstance(timestep, int):
-        msg = "timestep must be an integer"
-        raise TypeError(msg)
-    if not 0 <= timestep <= makespan:
-        msg = f"timestep must be within [0, {makespan}]"
-        raise ValueError(msg)
-    return timestep
 
 
 def _mark_busy_range(target: set[int], start: int, duration: int) -> None:
@@ -301,36 +273,19 @@ def _record_positions(
 def _materialize_positions(
     checkpoints: list[tuple[int, dict[int, int]]],
     initial_positions: dict[int, int],
-    makespan: int,
+    start_time: int,
+    end_time: int,
 ) -> tuple[Mapping[int, int], ...]:
+    """Return the positions at each boundary, indexed from ``start_time``."""
     positions_by_time: list[Mapping[int, int]] = []
     current_positions: Mapping[int, int] = MappingProxyType(dict(initial_positions))
     checkpoint_index = 0
-    for timestep in range(makespan + 1):
+    for timestep in range(start_time, end_time + 1):
         while checkpoint_index < len(checkpoints) and checkpoints[checkpoint_index][0] <= timestep:
             current_positions = MappingProxyType(checkpoints[checkpoint_index][1])
             checkpoint_index += 1
         positions_by_time.append(current_positions)
     return tuple(positions_by_time)
-
-
-def _insert_action_before_time_advance(items: tuple[Action, ...], action: Action) -> tuple[Action, ...]:
-    insert_index = next(
-        (index for index, existing in enumerate(items) if isinstance(existing, AdvanceTime)),
-        len(items),
-    )
-    return (*items[:insert_index], action, *items[insert_index:])
-
-
-def _insert_scheduled_action_before_time_advance(
-    items: tuple[ScheduledAction, ...],
-    scheduled_action: ScheduledAction,
-) -> tuple[ScheduledAction, ...]:
-    insert_index = next(
-        (index for index, existing in enumerate(items) if isinstance(existing.action, AdvanceTime)),
-        len(items),
-    )
-    return (*items[:insert_index], scheduled_action, *items[insert_index:])
 
 
 __all__ = ["CompiledTimeline", "build_timeline"]
