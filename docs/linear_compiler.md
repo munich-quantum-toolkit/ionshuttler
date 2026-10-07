@@ -59,8 +59,8 @@ result = LinearCompiler(architecture).compile(
 
 The positions must be distinct, lie within the architecture, and match the
 number of circuit qubits. See also the
-{doc}`trapped-ion hardware model <linear_hardware_model>` for further details on
-the hardware abstraction.
+{doc}`hardware model overview <hardware_models>` for further details on the
+hardware abstraction.
 
 | Compile option      | User-visible effect                                                                                                                                                                                             |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -404,7 +404,7 @@ that every row uses the same timestep scale.
 
 ## See also
 
-- {doc}`linear_hardware_model` — sites, processing zones, timing, and physical
+- {doc}`hardware_models` — sites, processing zones, timing, and physical
   assumptions
 - {doc}`linear_dd` — dynamical-decoupling methods and comparison metrics
 - {doc}`design` — compiler architecture and extension points

@@ -7,8 +7,8 @@ backend. The Linear compiler serves as the current reference implementation.
 
 For instructions on using that compiler, see the
 {doc}`Linear compiler guide <linear_compiler>`. The
-{doc}`trapped-ion hardware model <linear_hardware_model>` explains the physical
-assumptions behind the Linear architecture.
+{doc}`hardware model overview <hardware_models>` explains the scheduling
+abstractions used by the available compilers.
 
 ## Overall structure
 
@@ -181,6 +181,6 @@ explicit backend knowledge.
 ## See also
 
 - {doc}`linear_compiler` — configure and run the Linear compiler
-- {doc}`linear_hardware_model` — Linear sites, processing zones, and timing
+- {doc}`hardware_models` — Linear and grid scheduling abstractions
 - {doc}`linear_dd` — downstream dynamical-decoupling passes
 - {doc}`api/mqt/ionshuttler/index` — complete Python API reference

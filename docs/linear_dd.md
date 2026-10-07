@@ -333,7 +333,7 @@ assumptions and are reference points, not competing implementations.
 ## See also
 
 - {doc}`linear_compiler` — compile circuits into schedules
-- {doc}`linear_hardware_model` — define sites, processing zones, timing, and
-  field profiles
+- {doc}`hardware_models` — define sites, processing zones, timing, and field
+  profiles
 - {doc}`api/mqt/ionshuttler/linear/dd/index` — consult the complete DD Python
   API
