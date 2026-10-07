@@ -18,9 +18,12 @@ the phase accumulated by idle ions. The Linear backend provides four methods:
 | Idealized Hahn reference  | Estimating the benefit of unrestricted control     | Deliberately ignores where local pulses can be applied |
 | Periodic global DD        | Applying one pulse to all ions at regular spacing  | Uses schedule-wide global pulses                       |
 
-Each method leaves the input {py:class}`~mqt.ionshuttler.linear.ActionSchedule`
-unchanged and returns a {py:class}`~mqt.ionshuttler.linear.dd.DDPassResult`. The
-result contains the transformed `schedule` and a method-specific `report`.
+Each method leaves its input unchanged and returns its transformed artifact with
+a method-specific report. SADD accepts a compilation result and returns a
+{py:class}`~mqt.ionshuttler.linear.dd.SADDResult`, whose `result` remains a
+complete, visualizable compilation artifact. The reference methods currently
+operate directly on schedules and return
+{py:class}`~mqt.ionshuttler.linear.dd.DDPassResult`.
 
 ## Installation
 
@@ -45,12 +48,12 @@ from dataclasses import replace
 
 from qiskit import QuantumCircuit
 
-from mqt.ionshuttler.linear import Architecture, LinearCompiler
-from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES, GlobalPulse
+from mqt.ionshuttler.linear import LinearArchitecture, LinearCompiler
+from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES, GlobalGate
 from mqt.ionshuttler.linear.dd import compute_critical_segments
 from mqt.ionshuttler.linear.field_profile import FieldProfile
 
-compilation_architecture = Architecture(
+compilation_architecture = LinearArchitecture(
     num_sites=6,
     processing_zones={"pz": [2, 3]},
     field_profile=FieldProfile(
@@ -77,12 +80,12 @@ compilation = LinearCompiler(compilation_architecture).compile(circuit)
 schedule = compilation.schedule
 dd_architecture = replace(
     compilation.architecture,
-    supported_action_types=(*DEFAULT_ACTION_TYPES, GlobalPulse),
+    supported_action_types=(*DEFAULT_ACTION_TYPES, GlobalGate),
 )
 {
     "circuit_depth": circuit.depth(),
     "status": compilation.status.value,
-    "timesteps": schedule.num_timesteps,
+    "timesteps": schedule.duration,
     "actions": dict(Counter(type(action).__name__ for action in schedule.path)),
 }
 ```
@@ -118,10 +121,10 @@ use the same SADD backend (publication pending).
 from mqt.ionshuttler.linear.dd import SADDConfig, SADDMethod, run_sadd
 
 sadd = run_sadd(
-    schedule,
-    dd_architecture,
+    compilation,
     SADDMethod.FULL,
     SADDConfig(max_accepted_windows=1, num_search_workers=1),
+    architecture=dd_architecture,
 )
 opportunity = next(record for record in sadd.report.opportunities if record.accepted)
 {
@@ -138,14 +141,25 @@ opportunity = next(record for record in sadd.report.opportunities if record.acce
 
 The default {py:class}`~mqt.ionshuttler.linear.dd.SADDConfig` uses the current
 paper configuration: windows of 2–16 timesteps, at most five ions per window, a
-10-second timeout, phase-based ion ordering, chronological windows, eight solver
-workers, and shuttle/swap/local-pulse durations of 1/3/1 timesteps.
+one-second timeout, phase-based ion ordering, chronological windows, and eight
+solver workers. Synthesized shuttles, swaps, and local pulses take the durations
+of the architecture: its `transport_timing` and its `rx` gate timing. SADD
+requires a physical `rx` pulse with a positive duration.
 
 The opportunity records expose the solver status, whether a proposal was
 accepted, its objective values, and the inserted pulse and transport actions.
 `transport_delta` gives the signed change in transport actions by type relative
 to the schedule entering that opportunity. Runtime and model-size fields are
 diagnostic and may vary between runs.
+
+Both compilation stages can be plotted without rebuilding a result wrapper:
+
+```{code-block} python
+from mqt.ionshuttler import visualize
+
+visualize(compilation).savefig("compiled.png", dpi=150)
+visualize(sadd.result).savefig("compiled_sadd.png", dpi=150)
+```
 
 ## Idealized Hahn reference
 
@@ -228,9 +242,12 @@ windows the hardware served exactly from windows it served only approximately.
 
 ## Periodic global DD
 
-Periodic global DD inserts X pulses that act on all ions. `spacing` sets their
-nominal separation. A nonzero `shift_range` allows small position adjustments
-that minimize the same critical-segment $J_\phi$ metric used by SADD.
+Periodic global DD inserts X pulses that act on all ions. Each pulse is a
+{py:class}`~mqt.ionshuttler.core.gates.GlobalGate` with `gate_name="rx"` whose
+`ions` list every ion of the schedule, and it takes the architecture's ordinary
+`rx` duration. `spacing` sets the nominal separation of the pulses. A nonzero
+`shift_range` allows small position adjustments that minimize the same
+critical-segment $J_\phi$ metric used by SADD.
 
 ```{code-cell} ipython3
 from mqt.ionshuttler.linear.dd import GlobalDDConfig, apply_periodic_global_dd
@@ -245,10 +262,14 @@ global_dd = apply_periodic_global_dd(schedule, dd_architecture, GlobalDDConfig(s
 The ten-timestep spacing inserts one global pulse in this 15-timestep schedule.
 Shorter spacing would assume a substantially higher global control rate.
 
-The base circuit was compiled before `GlobalPulse` was added to the architecture
+The base circuit was compiled before `GlobalGate` was added to the architecture
 catalog. The DD pass accepts the extended architecture because the original
 schedule remains valid on it. It would reject an architecture without
-`GlobalPulse` or one that cannot execute the existing schedule.
+`GlobalGate` or one that cannot execute the existing schedule.
+
+Frame replay also accepts a global gate that targets only some ions of the
+schedule, such as `GlobalGate(gate_name="rx", theta=pi, ions=(0, 2))`. Such a
+pulse changes only the frames of its target ions.
 
 ## Comparing results
 
@@ -266,7 +287,7 @@ sadd_pulse_ids = frozenset(
     "without_dd": round(compute_critical_segments(schedule, dd_architecture).phase_cost, 3),
     "sadd": round(
         compute_critical_segments(
-            sadd.schedule,
+            sadd.result.schedule,
             dd_architecture,
             local_pulse_action_ids=sadd_pulse_ids,
         ).phase_cost,
@@ -311,7 +332,7 @@ assumptions and are reference points, not competing implementations.
 
 ## See also
 
-- {doc}`linear_compiler` — compile circuits into action schedules
+- {doc}`linear_compiler` — compile circuits into schedules
 - {doc}`linear_hardware_model` — define sites, processing zones, timing, and
   field profiles
 - {doc}`api/mqt/ionshuttler/linear/dd/index` — consult the complete DD Python

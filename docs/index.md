@@ -101,7 +101,7 @@ references
 contributing
 ai_usage
 tooling
-linear_design
+design
 support
 ```
 

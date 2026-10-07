@@ -8,11 +8,11 @@ separating storage from interaction regions and using controlled ion transport
 to assemble the qubits needed for each operation.
 {cite:p}`kielpinski2002architecture,schoenberger2024shuttling`.
 
-The model lives at the scheduling level (see also {doc}`linear_design`). It
-describes where ions may be, which operations may occur together, and how long
-those operations occupy hardware resources. It does not attempt to reproduce
-electrode waveforms, motional-mode dynamics, or laser pulses. Those belong to
-(absent) lower control and physics layers.
+The model lives at the scheduling level (see also {doc}`design`). It describes
+where ions may be, which operations may occur together, and how long those
+operations occupy hardware resources. It does not attempt to reproduce electrode
+waveforms, motional-mode dynamics, or laser pulses. Those belong to (absent)
+lower control and physics layers.
 
 ## A chain of discrete sites
 
@@ -67,6 +67,12 @@ configured duration, and participating ions or processing zones remain busy
 until that duration has elapsed. Operations may start at the same timestep when
 they do not compete for the same modeled resources.
 
+Operations that start at the same timestep execute in the order that the
+schedule stores them. For example, a zero-duration physical gate may precede a
+shuttle of its ion at the same timestep. Shuttles and physical swaps that start
+at the same timestep form one transport layer and move together, so an ion may
+enter a site that another ion of the layer leaves.
+
 The timestep is an architecture-defined scheduling unit rather than a fixed
 physical duration. A hardware description might choose one timestep to represent
 a microsecond, a transport clock period, or another convenient unit, provided
@@ -110,22 +116,28 @@ RMS-normalized or otherwise calibrated by the hardware model. Normalization, a
 noise-strength convention, and the physical interpretation of the scalar values
 belong to the downstream analysis using the profile.
 
-## Global control pulses
+## Global gates
 
-`Architecture.supported_action_types` records the operations available on the
-target hardware. The default catalog contains transport and the standard local
-gate set; add `GlobalPulse` to describe control pulses applied to every ion at
-once. Pulse shape, calibration, and implementation remain the responsibility of
-a downstream control layer.
+`LinearArchitecture.supported_action_types` records the operations available on
+the target hardware. The default catalog contains transport and the standard
+local gate set; add `GlobalGate` to describe single-ion rotations that one
+control field applies to several ions at once. Each global gate lists its target
+ions explicitly; a pulse on the whole device lists every ion. The model does not
+yet restrict which sets of ions a field can address.
+
+A global gate takes the ordinary duration of its rotation from `GateTiming`. In
+the Linear model it occupies no processing zone and reserves no ion, so it may
+overlap local gates and transport. Pulse shape, calibration, and implementation
+remain the responsibility of a downstream control layer.
 
 A compiler or later transformation may use any subset of this catalog. This
 allows a circuit to be compiled without global control and subsequently passed
-to periodic global DD under an architecture extended with `GlobalPulse`. The DD
+to periodic global DD under an architecture extended with `GlobalGate`. The DD
 pass first checks that the supplied architecture can execute the existing
 schedule and then checks the new capability.
 
 ## See also
 
 - {doc}`linear_compiler` — compile Qiskit and QASM circuits for this model
-- {doc}`linear_design` — software boundaries and extension points
+- {doc}`design` — compiler boundaries and extension points
 - {doc}`references` — publications underlying the QCCD and shuttling model

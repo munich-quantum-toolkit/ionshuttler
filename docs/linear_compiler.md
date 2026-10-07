@@ -25,9 +25,9 @@ compiler chooses the necessary shuttles, swaps, and gate start times.
 ```{code-cell} ipython3
 from qiskit import QuantumCircuit
 
-from mqt.ionshuttler.linear import Architecture, CompilationStatus, LinearCompiler
+from mqt.ionshuttler.linear import CompilationStatus, LinearArchitecture, LinearCompiler
 
-architecture = Architecture(
+architecture = LinearArchitecture(
     num_sites=5,
     processing_zones={"gate_zone": [2, 3]},
 )
@@ -40,7 +40,7 @@ circuit.rzz(0.75, 0, 1)
 result = LinearCompiler(architecture).compile(circuit)
 
 if result.status is CompilationStatus.SUCCESS:
-    print(f"Compiled in {result.schedule.num_timesteps} timesteps")
+    print(f"Compiled in {result.schedule.duration} timesteps")
     for action in result.schedule.path:
         print(action)
 else:
@@ -53,7 +53,7 @@ site per circuit qubit when a particular loading is required:
 ```{code-cell} ipython3
 result = LinearCompiler(architecture).compile(
     circuit,
-    initial_positions=[0, 4],
+    initial_placement=[0, 4],
 )
 ```
 
@@ -64,14 +64,14 @@ the hardware abstraction.
 
 | Compile option      | User-visible effect                                                                                                                                                                                             |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `initial_positions` | Selects one distinct starting site per circuit qubit. When omitted, the compiler distributes the ions across the available sites.                                                                               |
+| `initial_placement` | Selects one distinct starting site per circuit qubit. When omitted, the compiler distributes the ions across the available sites.                                                                               |
 | `pre_partition`     | On layouts with multiple processing zones, computes a fine-grained gate-to-zone preference once and uses it to guide search. It defaults to `False` and has no effect on layouts with only one processing zone. |
 
 For example, enable the partition-guided heuristic for a multi-zone layout at
 the compilation call:
 
 ```{code-cell} ipython3
-multi_zone_architecture = Architecture(
+multi_zone_architecture = LinearArchitecture(
     num_sites=7,
     processing_zones={"left": [1, 2], "right": [4, 5]},
 )
@@ -98,20 +98,22 @@ an occasional small slowdown. Advanced users can tune the partitioner through
 
 Strings are always treated as QASM text. Use `Path("circuit.qasm")` for a file.
 The default gate set is `rx`, `ry`, `rz`, and `rzz`, a common trapped-ion gate
-set. Additional implemented gates may be enabled through the compiler's
-`action_types`. Rotation parameters must be numeric when compilation begins.
-Barriers and final measurements are accepted but do not become scheduled
-hardware operations. Unsupported or malformed circuits raise an exception before
-schedule search starts.
+set. The implemented `rxx` and `ryy` gates may be enabled through the
+architecture's `supported_action_types`. Rotation parameters must be numeric
+when compilation begins. Barriers and final measurements do not become scheduled
+hardware operations. A barrier orders gates: a gate after the barrier on one of
+its qubits starts only after every earlier gate on the barrier's qubits has
+finished. Unsupported or malformed circuits raise an exception before schedule
+search starts.
 
 ## Describe the architecture
 
 Architectures can be created in Python, as above, or loaded from JSON:
 
 ```{code-cell} ipython3
-from mqt.ionshuttler.linear import Architecture
+from mqt.ionshuttler.linear import LinearArchitecture
 
-architecture = Architecture.from_json(
+architecture = LinearArchitecture.from_json(
     """{
       "num_sites": 7,
       "processing_zones": {
@@ -122,8 +124,11 @@ architecture = Architecture.from_json(
 )
 ```
 
-Use `Architecture.load("architecture.json")` to read the same JSON
-representation from a file.
+Use `LinearArchitecture.load("architecture.json")` to read the same JSON
+representation from a file. The JSON object may also contain `gate_timing`,
+`transport_timing`, `field_profile`, and `supported_action_types`; omitted
+fields use their defaults. The architecture, `gate_timing`, and
+`transport_timing` objects reject unknown fields.
 
 Site numbers start at zero. Each processing zone must contain one or more
 contiguous sites, and processing zones may not overlap. A one-qubit gate needs
@@ -152,28 +157,27 @@ take. Defaults are measured in compiler timesteps:
 For example:
 
 ```{code-cell} ipython3
-from mqt.ionshuttler.linear import (
-    GateTiming,
-    HardwareTiming,
-    LinearCompiler,
-    LinearCompilerConfig,
-    TransportTiming,
-)
+from mqt.ionshuttler.linear import GateTiming, TransportTiming
 
-timing = HardwareTiming(
-    transport=TransportTiming(shuttle=2, swap=5),
-    gates=GateTiming(rx=2, ry=2, rz=0, rxx=4, ryy=4, rzz=4),
+architecture = LinearArchitecture(
+    num_sites=5,
+    processing_zones={"gate_zone": [2, 3]},
+    gate_timing=GateTiming(rx=2, ry=2, rz=0, rxx=4, ryy=4, rzz=4),
+    transport_timing=TransportTiming(shuttle=2, swap=5),
 )
-config = LinearCompilerConfig(hardware_timing=timing)
-compiler = LinearCompiler(architecture, config=config)
+compiler = LinearCompiler(architecture)
 ```
 
-`rx`, `ry`, and `rz` may be selected as virtual single-qubit gates through
-`GateTiming.virtual_single_qubit_gates`. Virtual rotations must have zero
-duration and remain in the logical schedule without reserving hardware time.
-`rz` is virtual by default, reflecting a common trapped-ion implementation. When
-reproducing a schedule created with different timing assumptions, pass those
-durations explicitly.
+The architecture owns these physical timings. `GateTiming` is the same gate
+timing value that every architecture level uses; `TransportTiming` describes the
+Linear transport operations. `rx`, `ry`, and `rz` may be selected as virtual
+single-qubit gates through `GateTiming.virtual_single_qubit_gates`. Virtual
+rotations must have zero duration and remain in the logical schedule without
+reserving hardware time. `rz` is virtual by default, reflecting a common
+trapped-ion implementation. A global gate takes the duration of the rotation it
+applies, so a global `rx` takes as long as a local `rx`. When reproducing a
+schedule created with different timing assumptions, pass those durations
+explicitly.
 
 ## Choose a search profile
 
@@ -274,9 +278,13 @@ default (`None`) and :func:`~mqt.ionshuttler.linear.cost.zero_heuristic`, any
 callable matching :class:`~mqt.ionshuttler.linear.cost.HeuristicFn` may be
 supplied. It receives the current state, the architecture, the gates to
 schedule, and the dependency map, and returns a nonnegative estimate of the
-remaining schedule time. `gate_order` and `gates` also include gates that are
-already completed or running, so you might want to filter them with
-`state.completed_gates` and `state.in_progress_gates`.
+remaining schedule time. The `circuit` contains the complete circuit.
+`active_gate_ids` identifies the gates in the current search window, including
+gates that are already completed or running. Filter those IDs with
+`state.completed_gates` and `state.in_progress_gates` when needed. The
+`use_dependencies` flag selects dependency-DAG or serial execution. The optional
+`gate_zone` and `zone_site_pairs` keyword arguments contain pre-partition data
+when requested. A custom heuristic can use or ignore these mappings.
 
 Because a larger estimate marks a state as further from the goal, adding a
 penalty steers the search away from the states it describes. This heuristic adds
@@ -290,9 +298,28 @@ from mqt.ionshuttler.linear import SearchConfig
 from mqt.ionshuttler.linear.cost import heuristic as default_heuristic
 
 
-def prefer_spread_out_ions(state, architecture, gate_order, gates, predecessors=None):
+def prefer_spread_out_ions(
+    state,
+    architecture,
+    circuit,
+    active_gate_ids,
+    predecessors,
+    *,
+    use_dependencies=True,
+    gate_zone=None,
+    zone_site_pairs=None,
+):
     """Penalize neighboring ions on top of the default estimate."""
-    base = default_heuristic(state, architecture, gate_order, gates, predecessors)
+    base = default_heuristic(
+        state,
+        architecture,
+        circuit,
+        active_gate_ids,
+        predecessors,
+        use_dependencies=use_dependencies,
+        gate_zone=gate_zone,
+        zone_site_pairs=zone_site_pairs,
+    )
     sites = [site for _, site in state.positions]
     crowding = sum(1 for left, right in combinations(sites, 2) if abs(left - right) <= 1)
     return base + crowding
@@ -316,30 +343,69 @@ The result status describes why compilation stopped:
 | `INTERRUPTED` | Compilation was interrupted; the best available partial schedule is returned. |
 | `FAILED`      | The search ran out of candidates before completing the circuit.               |
 
-`result.schedule` is the immutable
-{py:class}`~mqt.ionshuttler.linear.ActionSchedule` that downstream DD and
-simulation stages consume. Its `path` contains the ordered gate, movement, and
-time-advance actions, and its `num_timesteps` is the makespan. It also contains
-the machine-only initial state and a stable identifier for every action. The
-architecture is stored alongside it as `result.architecture`, allowing later
-passes to supply a compatible architecture with additional capabilities.
-Compiler search progress and control-pass provenance are deliberately absent
-from this execution boundary.
+`result.schedule` is the immutable {py:class}`~mqt.ionshuttler.linear.Schedule`
+that downstream DD and simulation stages consume. Its `scheduled_actions`
+contain explicit integer start times and durations. Internal search time
+advances do not appear in the public schedule. A physical gate also records the
+identifier of the processing zone that it reserves. The schedule covers the
+half-open interval from `start_time` to `end_time`; `duration` is the elapsed
+number of timesteps. The schedule also contains the machine-only initial state
+and a stable identifier for every action. The architecture is stored alongside
+it as `result.architecture`, allowing later passes to supply a compatible
+architecture with additional capabilities. Compiler search progress and
+control-pass provenance are deliberately absent from this execution boundary.
 
-The containing result owns compiler-only diagnostics: `result.wall_clock_s`,
-`result.score`, `result.final_state`, and `result.explored_nodes`. Always check
-`status` before treating its schedule as a complete circuit schedule.
+The containing result owns compiler-only information: `result.wall_clock_s`, the
+replayed machine-only `result.final_state`, and `result.diagnostics`. For the
+Linear compiler, the diagnostics are a
+{py:class}`~mqt.ionshuttler.linear.LinearDiagnostics` value with the search
+`score`, the number of `explored_nodes`, and any processing-zone preferences
+produced by pre-partitioning. These preferences may differ from the zones
+actually recorded in the schedule. Result equality ignores
+`result.wall_clock_s`, so two compilations with the same outcome compare equal.
+Always check `status` before treating its schedule as a complete circuit
+schedule.
 
 Invalid input and configuration errors raise exceptions instead of returning
-`FAILED`. Use `result.save(...)` to write beneath `outputs/results/json` in the
-current working directory by default, or pass `directory` explicitly. Use
-{py:meth}`~mqt.ionshuttler.linear.CompilationResult.load` for explicit JSON
-output; compilation does not create caches or result files on its own.
+`FAILED`. Compilation does not create files on its own. Save a result explicitly
+and load it again through the Linear package:
+
+```{code-block} python
+from mqt.ionshuttler.linear import load_result
+
+path = result.save("result.json")
+restored = load_result(path)
+restored.validate()
+```
+
+{py:func}`~mqt.ionshuttler.linear.load_result`,
+{py:func}`~mqt.ionshuttler.linear.result_from_json`, and
+{py:func}`~mqt.ionshuttler.linear.result_from_dict` restore the architecture,
+schedule, machine states, and diagnostics of a Linear result.
+{py:func}`~mqt.ionshuttler.linear.load_schedule` and its `schedule_from_*`
+companions restore a schedule on its own. `result.validate()` checks and replays
+a loaded or transformed artifact.
+
+{py:func}`mqt.ionshuttler.visualize` returns a Matplotlib figure without showing
+or saving it:
+
+```{code-block} python
+from mqt.ionshuttler import visualize
+
+visualize(result).savefig("result.png", dpi=150)
+```
+
+The Linear view plots time on the horizontal axis and sites on the vertical
+axis. Each ion follows a colored trajectory, transport appears as movement
+between sites, processing zones form horizontal bands, and markers identify gate
+applications. Long schedules wrap onto consecutive 25-timestep rows with major
+ticks every five timesteps. A partial final row is proportionally narrower so
+that every row uses the same timestep scale.
 
 ## See also
 
 - {doc}`linear_hardware_model` — sites, processing zones, timing, and physical
   assumptions
 - {doc}`linear_dd` — dynamical-decoupling methods and comparison metrics
-- {doc}`linear_design` — package architecture and custom extension points
+- {doc}`design` — compiler architecture and extension points
 - {doc}`api/mqt/ionshuttler/linear/index` — complete Linear Python API reference
