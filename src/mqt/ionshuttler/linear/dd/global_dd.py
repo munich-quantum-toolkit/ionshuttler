@@ -176,10 +176,17 @@ def apply_periodic_global_dd(
         )
         raise ValueError(msg)
 
+    pulse = GlobalGate(
+        gate_name=config.pulse.gate_name.lower(),
+        theta=cast("float", config.pulse.theta),
+        ions=tuple(ion for ion, _site in schedule.initial_state.positions),
+    )
+    pulse_duration = architecture.action_duration(pulse)
     candidate_times = _periodic_pulse_timesteps(
         schedule.start_time,
         schedule.end_time,
         config.spacing,
+        pulse_duration,
         half_first_window=config.half_first_window,
     )
     if not candidate_times:
@@ -191,6 +198,8 @@ def apply_periodic_global_dd(
         architecture,
         config,
         candidate_times,
+        pulse,
+        pulse_duration,
     )
     report = _global_dd_report(config, pulse_timesteps, summary)
     logger.info(
@@ -208,13 +217,15 @@ def _optimize_global_pulse_timesteps(
     architecture: LinearArchitecture,
     config: GlobalDDConfig,
     base_pulse_timesteps: tuple[int, ...],
+    pulse: GlobalGate,
+    pulse_duration: int,
 ) -> tuple[tuple[int, ...], Schedule, CriticalSegmentResult]:
     best_timesteps = base_pulse_timesteps
     best_result, best_summary = _materialize_candidate(
         program,
         architecture,
         base_pulse_timesteps,
-        config.pulse,
+        pulse,
     )
     best_score = best_summary.phase_cost
     if config.shift_range == 0:
@@ -231,12 +242,13 @@ def _optimize_global_pulse_timesteps(
             program.start_time,
             program.end_time,
             config.shift_range,
+            pulse_duration,
         ):
             candidate_result, candidate_summary = _materialize_candidate(
                 program,
                 architecture,
                 candidate_timesteps,
-                config.pulse,
+                pulse,
             )
             candidate_score = candidate_summary.phase_cost
             if candidate_score < pulse_best_score and not isclose(
@@ -260,9 +272,9 @@ def _materialize_candidate(
     program: Schedule,
     architecture: LinearArchitecture,
     pulse_timesteps: tuple[int, ...],
-    pulse_spec: GateSpec,
+    pulse: GlobalGate,
 ) -> tuple[Schedule, CriticalSegmentResult]:
-    scheduled_actions = _path_with_inserted_global_pulses(program, architecture, pulse_timesteps, pulse_spec)
+    scheduled_actions = _path_with_inserted_global_pulses(program, architecture, pulse_timesteps, pulse)
     updated = rebuild_schedule(program, scheduled_actions)
     return updated, compute_critical_segments(updated, architecture)
 
@@ -273,10 +285,13 @@ def _shifted_pulse_timestep_candidates(
     start_time: int,
     end_time: int,
     shift_range: int,
+    pulse_duration: int,
 ) -> tuple[tuple[int, ...], ...]:
     current_timestep = pulse_timesteps[pulse_index]
     minimum = start_time if pulse_index == 0 else pulse_timesteps[pulse_index - 1] + 1
-    maximum = end_time - 1 if pulse_index == len(pulse_timesteps) - 1 else pulse_timesteps[pulse_index + 1] - 1
+    maximum = (
+        end_time - pulse_duration if pulse_index == len(pulse_timesteps) - 1 else pulse_timesteps[pulse_index + 1] - 1
+    )
     candidates: list[tuple[int, ...]] = []
     for delta in range(-shift_range, shift_range + 1):
         candidate_timestep = current_timestep + delta
@@ -292,13 +307,8 @@ def _path_with_inserted_global_pulses(
     program: Schedule,
     architecture: LinearArchitecture,
     pulse_timesteps: tuple[int, ...],
-    pulse_spec: GateSpec,
+    pulse: GlobalGate,
 ) -> tuple[ScheduledAction, ...]:
-    pulse = GlobalGate(
-        gate_name=pulse_spec.gate_name.lower(),
-        theta=cast("float", pulse_spec.theta),
-        ions=tuple(ion for ion, _site in program.initial_state.positions),
-    )
     pulses_by_time = {timestep: [pulse] for timestep in pulse_timesteps}
     existing_by_time: dict[int, list[ScheduledAction]] = {}
     for item in program.scheduled_actions:
@@ -323,11 +333,12 @@ def _periodic_pulse_timesteps(
     start_time: int,
     end_time: int,
     spacing: int,
+    pulse_duration: int,
     *,
     half_first_window: bool,
 ) -> tuple[int, ...]:
     first_timestep = start_time + (spacing // 2 if half_first_window else spacing - 1)
-    return tuple(range(first_timestep, end_time, spacing))
+    return tuple(range(first_timestep, end_time - pulse_duration + 1, spacing))
 
 
 def _global_dd_report(

@@ -64,6 +64,23 @@ def test_pauli_frames_compose_and_transform_single_qubit_axes() -> None:
     assert effective_action(Rx(ion=0, theta=0.5), PauliFrame("Z")) == Rx(ion=0, theta=-0.5)
 
 
+@pytest.mark.parametrize(
+    ("action", "frame"),
+    [
+        (Rx(ion=0, theta=0.25, gate_id=3), PauliFrame("Z")),
+        (Ry(ion=0, theta=0.25, gate_id=4), PauliFrame("X")),
+        (Rz(ion=0, theta=0.25, gate_id=5), PauliFrame("X")),
+    ],
+)
+def test_effective_action_preserves_gate_identity(action: Rx | Ry | Rz, frame: PauliFrame) -> None:
+    """Change only the rotation angle when applying a Pauli frame."""
+    transformed = effective_action(action, frame)
+
+    assert isinstance(transformed, type(action))
+    assert transformed.theta == -action.theta
+    assert transformed.gate_id == action.gate_id
+
+
 def test_frame_history_includes_same_boundary_and_terminal_global_pulses() -> None:
     """Apply pulses before the following interval and retain terminal frames."""
     program = _result(

@@ -116,20 +116,22 @@ def test_periodic_global_dd_centers_the_first_odd_spacing_window() -> None:
 
 
 def test_periodic_global_dd_uses_the_architecture_rotation_duration() -> None:
-    """Give each global X pulse the architecture's ordinary Rx duration."""
+    """Keep a multi-timestep global X pulse within the original schedule."""
     architecture = LinearArchitecture(
         num_sites=1,
         processing_zones={"pz": [0]},
         supported_action_types=(*DEFAULT_ACTION_TYPES, GlobalGate),
         gate_timing=GateTiming(rx=3),
     )
-    original = _result(architecture, [AdvanceTime() for _ in range(2)], end_time=2)
+    original = _result(architecture, [AdvanceTime() for _ in range(5)], end_time=5)
 
     output = apply_periodic_global_dd(original, architecture, GlobalDDConfig(spacing=2))
 
     pulses = [item for item in output.schedule.scheduled_actions if isinstance(item.action, GlobalGate)]
     assert [item.action for item in pulses] == [_GLOBAL_X]
+    assert [item.start_time for item in pulses] == [1]
     assert [item.duration for item in pulses] == [3]
+    assert output.schedule.end_time == original.end_time
     replay_schedule(output.schedule, architecture)
 
 

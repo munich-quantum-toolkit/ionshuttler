@@ -75,6 +75,7 @@ def make_circuit(
     predecessors: Mapping[int, frozenset[int]] | None = None,
 ) -> Circuit:
     """Build a circuit from concise test mappings."""
+    assert tuple(gates) == tuple(range(len(gates)))
     gate_ids = range(len(gates))
     dependencies = (
         tuple(frozenset((gate_id - 1,)) if gate_id else frozenset() for gate_id in gate_ids)
@@ -86,11 +87,6 @@ def make_circuit(
         gates=tuple(gates[gate_id] for gate_id in gate_ids),
         predecessors=dependencies,
     )
-
-
-def assert_replays(result: CompilationResult) -> None:
-    """Check that the canonical replay reaches the reported state."""
-    result.validate()
 
 
 def test_zero_heuristic_compiles_with_exact_search_profile() -> None:
@@ -129,7 +125,7 @@ def test_exhaustive_search_schedules_and_completes_a_gate() -> None:
     assert result.path == [gates[0]]
     assert result.end_time == 1
     assert diagnostics(result).score == 1
-    assert_replays(result)
+    result.validate()
     assert initial_state.completed_gates == frozenset()
 
 
@@ -203,7 +199,7 @@ def test_two_qubit_gate_routes_ions_into_one_processing_zone() -> None:
 
     assert result.status is CompilationStatus.SUCCESS
     assert any(isinstance(action, Shuttle) for action in result.path)
-    assert_replays(result)
+    result.validate()
 
 
 def test_independent_gates_share_a_timestep() -> None:
@@ -226,7 +222,7 @@ def test_independent_gates_share_a_timestep() -> None:
     assert result.status is CompilationStatus.SUCCESS
     assert result.path[:2] == [gates[0], gates[1]]
     assert result.end_time == 1
-    assert_replays(result)
+    result.validate()
 
 
 def test_dependencies_wait_for_gate_completion() -> None:
@@ -246,7 +242,7 @@ def test_dependencies_wait_for_gate_completion() -> None:
     assert result.path.index(gates[1]) > result.path.index(gates[0])
     assert result.path == [gates[0], gates[1]]
     assert [item.start_time for item in result.schedule.scheduled_actions] == [0, 2]
-    assert_replays(result)
+    result.validate()
 
 
 @pytest.mark.parametrize(("horizon", "committed"), [(1, 1), (2, 1), (2, 2)])
@@ -275,7 +271,6 @@ def test_rolling_horizon_completes_serial_gates(horizon: int, committed: int) ->
 
     assert result.status is CompilationStatus.SUCCESS
     result.validate()
-    assert_replays(result)
 
 
 def test_informed_prioritization_falls_back_to_broader_actions() -> None:
@@ -293,7 +288,7 @@ def test_informed_prioritization_falls_back_to_broader_actions() -> None:
     )
 
     assert result.status is CompilationStatus.SUCCESS
-    assert_replays(result)
+    result.validate()
 
 
 def test_iterative_diving_and_bounded_frontier_find_a_valid_schedule(
@@ -331,7 +326,7 @@ def test_iterative_diving_and_bounded_frontier_find_a_valid_schedule(
     assert result.status is CompilationStatus.SUCCESS
     assert observed_sizes
     assert max(observed_sizes) <= 2
-    assert_replays(result)
+    result.validate()
 
 
 @pytest.mark.parametrize("search_style", ["astar", "iterative_diving"])
@@ -576,7 +571,7 @@ def test_rolling_search_serial_policy_uses_circuit_order() -> None:
     assert result.status is CompilationStatus.SUCCESS
     assert result.path == [gates[0], gates[1]]
     assert [item.start_time for item in result.schedule.scheduled_actions] == [0, 1]
-    assert_replays(result)
+    result.validate()
 
 
 def test_rolling_horizon_entry_point_requires_a_finite_horizon() -> None:
@@ -625,7 +620,7 @@ def test_rolling_window_accepts_a_completed_global_predecessor() -> None:
 
     assert result.status is CompilationStatus.SUCCESS
     assert result.path == [gates[1]]
-    assert_replays(result)
+    result.validate()
 
 
 def test_production_defaults_build_the_expected_compact_schedule() -> None:
@@ -659,7 +654,7 @@ def test_production_defaults_build_the_expected_compact_schedule() -> None:
         gates[2],
     ]
     assert [item.start_time for item in result.schedule.scheduled_actions] == [0, 0, 1, 2, 3]
-    assert_replays(result)
+    result.validate()
 
 
 def test_larger_schedule_remains_deterministic_and_replayable() -> None:
@@ -702,7 +697,7 @@ def test_larger_schedule_remains_deterministic_and_replayable() -> None:
     assert result.status is CompilationStatus.SUCCESS
     assert result.path == expected
     assert result.end_time == 6
-    assert_replays(result)
+    result.validate()
 
 
 def test_six_qubit_qft_matches_frozen_schedule() -> None:
@@ -816,7 +811,7 @@ def test_custom_heuristic_replaces_the_built_in_estimate() -> None:
 
     assert result.status is CompilationStatus.SUCCESS
     assert calls, "the supplied heuristic was never consulted"
-    assert_replays(result)
+    result.validate()
 
 
 def test_custom_heuristic_is_used_by_rolling_horizon_windows() -> None:

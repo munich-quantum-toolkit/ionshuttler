@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from math import isclose, pi
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, cast
@@ -265,13 +265,13 @@ def effective_action(action: Action, frame: PauliFrame) -> Action:
     """Return a single-ion rotation transformed through a Pauli frame."""
     if isinstance(action, Rx):
         theta = cast("float", effective_gate_spec(GateSpec("Rx", action.theta), frame).theta)
-        return Rx(ion=action.ion, theta=theta)
+        return replace(action, theta=theta)
     if isinstance(action, Ry):
         theta = cast("float", effective_gate_spec(GateSpec("Ry", action.theta), frame).theta)
-        return Ry(ion=action.ion, theta=theta)
+        return replace(action, theta=theta)
     if isinstance(action, Rz):
         theta = cast("float", effective_gate_spec(GateSpec("Rz", action.theta), frame).theta)
-        return Rz(ion=action.ion, theta=theta)
+        return replace(action, theta=theta)
     return action
 
 

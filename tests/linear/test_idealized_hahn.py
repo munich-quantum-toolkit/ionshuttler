@@ -199,6 +199,7 @@ def test_idealized_hahn_restores_the_identity_frame_with_a_terminating_pulse() -
     history = build_frame_history(build_timeline(output.schedule, architecture), local_pulse_action_ids)
 
     assert output.report.sequences[0].pulse_timesteps == (2, 4)
+    assert output.schedule.end_time == original.end_time
     assert history.frame_for_ion(0, 4) == PauliFrame("I")
 
 

@@ -226,7 +226,7 @@ def _path_with_inserted_pulses(
                     action_id,
                     action,
                     start_time=timestep,
-                    duration=architecture.action_duration(action),
+                    duration=0,
                     processing_zone_id=architecture.action_processing_zone(action, timeline.state_at(timestep)),
                 )
             )

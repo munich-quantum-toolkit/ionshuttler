@@ -30,7 +30,7 @@ operations, and timing values for the chosen model.
 The Grid model treats connected trap segments as the main storage and transport
 locations. Junctions define which segments ions can move between, and processing
 zones attach gate resources to this network. The model tracks motion through the
-network without resolving an ions' relative position within a segment.
+network without resolving an ion's relative position within a segment.
 Performing gates requires the participating ion(s) to be (co-)located on a
 segment carrying a processing zone.
 
@@ -64,9 +64,9 @@ hardware resources for an architecture-defined number of timesteps.
 This detailed level exposes motion and concurrency within a segment. It is a
 good fit when local ion order and transport affect the result. The
 {doc}`Linear compiler guide <linear_compiler>` shows how to define a concrete
-architecture with the site-level model. It does not model splitting or merging
-of crystals, absorbing the overhead associated with these operations into the
-respective surrounding transport operations.
+architecture with the site-level model. The site-level model omits crystal
+splitting and merging. Their overhead is included in the surrounding transport
+operations.
 
 ## Shared scheduling assumptions
 
