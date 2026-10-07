@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import replace
+from typing import cast
 
 import pytest
 
@@ -19,6 +20,7 @@ from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.dd import (
     GlobalDDConfig,
     IdealizedHahnConfig,
+    IdealizedHahnReport,
     NearestHahnConfig,
     apply_idealized_hahn,
     apply_periodic_global_dd,
@@ -28,7 +30,7 @@ from mqt.ionshuttler.linear.dd import (
     run_nearest_hahn,
 )
 from mqt.ionshuttler.linear.dd.frame_replay import build_frame_history, framed_action_events
-from mqt.ionshuttler.linear.dd.result import LocalDDSequence
+from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
 from mqt.ionshuttler.linear.dd.windows import find_idle_windows
 from mqt.ionshuttler.linear.field_profile import FieldProfile
 from mqt.ionshuttler.linear.schedule import Schedule, schedule_from_path
@@ -164,6 +166,18 @@ def test_dd_passes_translate_pulse_times_from_the_schedule_start() -> None:
         timestep + offset for timestep in base_global.report.pulse_timesteps
     )
     assert shifted_global.report.phase_cost == pytest.approx(base_global.report.phase_cost)
+
+
+def test_dd_pass_result_requires_linear_schedule_and_architecture() -> None:
+    """Reject pass results whose main values use another contract."""
+    architecture = LinearArchitecture(num_sites=1)
+    schedule = schedule_from_path([], create_initial_state(1, architecture), architecture)
+    report = IdealizedHahnReport()
+
+    with pytest.raises(TypeError, match="schedule must be a Schedule"):
+        DDPassResult(cast("Schedule", object()), architecture, report)
+    with pytest.raises(TypeError, match="architecture must be a LinearArchitecture"):
+        DDPassResult(schedule, cast("LinearArchitecture", object()), report)
 
 
 def _shift_schedule(schedule: Schedule, offset: int) -> Schedule:

@@ -22,6 +22,8 @@ from mqt.ionshuttler.core.gates import Rx, Rxx, Ry, Ryy, Rz, Rzz
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from mqt.ionshuttler.core.gates import GateAction
+
 QASM2_ALL_GATES = """
 OPENQASM 2.0;
 include "qelib1.inc";
@@ -241,3 +243,37 @@ def test_parse_circuit_rejects_unknown_input_types() -> None:
     """Require callers to use one of the documented circuit input forms."""
     with pytest.raises(TypeError, match="QuantumCircuit"):
         parse_circuit(cast("str", object()))
+
+
+def test_gate_type_registry_rejects_invalid_and_duplicate_entries() -> None:
+    """Require each configured circuit name to identify one gate class."""
+
+    class DuplicateRx(Rx):
+        pass
+
+    with pytest.raises(TypeError, match="GateAction subclasses"):
+        parse_circuit(QASM2_ALL_GATES, gate_types=(cast("type[GateAction]", object),))
+    with pytest.raises(ValueError, match="duplicate circuit gate name 'rx'"):
+        parse_circuit(QASM2_ALL_GATES, gate_types=(Rx, DuplicateRx))
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        pytest.param("opaque;", id="unsupported-statement"),
+        pytest.param("rx(pi) q;", id="malformed-operand"),
+    ],
+)
+def test_qasm_rejects_statements_that_are_not_supported_gate_records(statement: str) -> None:
+    """Reject statements that cannot produce a complete gate record."""
+    qasm = f"OPENQASM 2.0;\nqreg q[1];\n{statement}"
+
+    with pytest.raises(ValueError, match="Unsupported QASM syntax"):
+        parse_circuit(qasm)
+
+
+def test_qasm_parameter_arithmetic_supports_subtraction() -> None:
+    """Evaluate subtraction in a numeric QASM gate parameter."""
+    circuit = parse_circuit("OPENQASM 2.0;\nqreg q[1];\nrx(pi-pi/2) q[0];")
+
+    assert circuit.gates == (Rx(ion=0, theta=math.pi / 2),)

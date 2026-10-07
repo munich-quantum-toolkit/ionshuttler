@@ -36,7 +36,7 @@ from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 from mqt.ionshuttler.visualization import LinearVisualizer, Visualizer
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from matplotlib.figure import Figure
@@ -51,6 +51,72 @@ def _program(path: Sequence[SearchTransition] | None = None) -> Schedule:
         create_initial_state(1, architecture, initial_positions=[0]),
         architecture,
     )
+
+
+@pytest.mark.parametrize(
+    ("build", "error", "message"),
+    [
+        pytest.param(
+            lambda: LinearDiagnostics(cast("int", object()), 0),
+            TypeError,
+            "score must be an integer",
+            id="score-type",
+        ),
+        pytest.param(lambda: LinearDiagnostics(-1, 0), ValueError, "score must be non-negative", id="score-negative"),
+        pytest.param(
+            lambda: LinearDiagnostics(0, 0, ((cast("int", object()), "pz"),)),
+            TypeError,
+            "preferred gate IDs must be integers",
+            id="gate-id-type",
+        ),
+        pytest.param(
+            lambda: LinearDiagnostics(0, 0, ((-1, "pz"),)),
+            ValueError,
+            "preferred gate IDs must be non-negative",
+            id="gate-id-negative",
+        ),
+        pytest.param(
+            lambda: LinearDiagnostics(0, 0, ((0, cast("str", 1)),)),
+            TypeError,
+            "processing-zone IDs must be strings",
+            id="zone-type",
+        ),
+        pytest.param(
+            lambda: LinearDiagnostics(0, 0, ((0, ""),)),
+            ValueError,
+            "processing-zone IDs must be non-empty",
+            id="zone-empty",
+        ),
+        pytest.param(
+            lambda: LinearDiagnostics(0, 0, ((0, "left"), (0, "right"))),
+            ValueError,
+            "preferred gate IDs must be unique",
+            id="duplicate-gate-id",
+        ),
+    ],
+)
+def test_linear_diagnostics_reject_invalid_values(
+    build: Callable[[], object],
+    error: type[Exception],
+    message: str,
+) -> None:
+    """Protect the public validation contract for compiler diagnostics."""
+    with pytest.raises(error, match=message):
+        build()
+
+
+@pytest.mark.parametrize(
+    ("assignments", "message"),
+    [
+        ([0, "pz"], "entries must be"),
+        ([[True, "pz"]], "preferred gate IDs must be integers"),
+        ([[0, 3]], "processing-zone IDs must be strings"),
+    ],
+)
+def test_linear_diagnostics_reject_malformed_json(assignments: object, message: str) -> None:
+    """Reject malformed gate-zone assignments at the JSON boundary."""
+    with pytest.raises(ValueError, match=message):
+        LinearDiagnostics.from_dict({"score": 0, "explored_nodes": 0, "preferred_gate_zones": assignments})
 
 
 def test_schedule_round_trips_identity_and_machine_metadata() -> None:
@@ -276,6 +342,20 @@ def test_linear_visualizer_is_available_as_a_concrete_adapter() -> None:
 def test_visualization_package_exports_its_supported_api() -> None:
     """Keep the visualization extension surface explicit."""
     assert visualization_module.__all__ == ["LinearVisualizer", "Visualizer", "visualize"]
+
+
+def test_visualization_rejects_an_unsupported_architecture() -> None:
+    """Report when no built-in visualizer supports the result architecture."""
+    program = _program()
+    result = CompilationResult(
+        status=CompilationStatus.SUCCESS,
+        schedule=program,
+        architecture=cast("LinearArchitecture", object()),
+        final_state=program.initial_state,
+    )
+
+    with pytest.raises(ValueError, match="no built-in visualizer supports object"):
+        visualize(result)
 
 
 def test_result_visualization_accepts_architecture_subclasses() -> None:

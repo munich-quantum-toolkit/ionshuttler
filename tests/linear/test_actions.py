@@ -171,6 +171,8 @@ def test_architecture_rejects_actions_it_does_not_implement() -> None:
         LinearArchitecture(num_sites=3, supported_action_types=(*DEFAULT_ACTION_TYPES, _CustomRx))
     with pytest.raises(TypeError, match="defines no rules for _CustomAction"):
         LinearArchitecture(num_sites=3).is_action_valid(_state(), _CustomAction(ion=0))
+    with pytest.raises(TypeError, match="defines no rules for _CustomAction"):
+        LinearArchitecture(num_sites=3).apply_action(_state(), _CustomAction(ion=0))
     with pytest.raises(TypeError, match="defines no duration for _CustomAction"):
         LinearArchitecture(num_sites=3).action_duration(_CustomAction(ion=0))
 

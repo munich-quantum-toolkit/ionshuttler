@@ -27,7 +27,7 @@ from mqt.ionshuttler.linear.actions import (
 )
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.state import State, has_pending_timed_work
-from mqt.ionshuttler.linear.validation import is_adjacent, is_transport_layer_valid
+from mqt.ionshuttler.linear.validation import is_adjacent, is_transport_layer_valid, is_transport_valid_in_layer
 
 
 @dataclass(frozen=True)
@@ -238,3 +238,18 @@ def test_transport_layer_rejects_transport_without_linear_rules() -> None:
 
     with pytest.raises(TypeError, match="only shuttles and physical swaps"):
         is_transport_layer_valid(state, (_ParkingTransfer(ion=0, destination=1),), architecture)
+    with pytest.raises(TypeError, match="only shuttles and physical swaps"):
+        is_transport_valid_in_layer(
+            state,
+            _ParkingTransfer(ion=0, destination=1),
+            (_ParkingTransfer(ion=0, destination=1),),
+            architecture,
+        )
+
+
+def test_transport_layer_rejects_an_individually_invalid_transport() -> None:
+    """Reject a conflict-free layer if one transport cannot start."""
+    architecture = LinearArchitecture(num_sites=3)
+    state = _state(((0, 0),), pzs_busy_until=(("all_sites", 0),))
+
+    assert not is_transport_layer_valid(state, (Shuttle(ion=0, src=1, dst=2),), architecture)

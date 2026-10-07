@@ -7,11 +7,18 @@
 
 """Tests for the internal circuit model."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, cast
+
 import pytest
 
 from mqt.ionshuttler.circuit import Circuit
 from mqt.ionshuttler.circuit.parser import parse_circuit
 from mqt.ionshuttler.linear.actions import Rx, Rxx
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def test_circuit_exposes_stable_gate_ids() -> None:
@@ -34,6 +41,47 @@ def test_circuit_rejects_forward_dependencies() -> None:
 
     with pytest.raises(ValueError, match="each predecessor must identify an earlier gate"):
         Circuit(num_ions=1, gates=(gate,), predecessors=(frozenset({0}),))
+
+
+@pytest.mark.parametrize(
+    ("build", "error", "message"),
+    [
+        pytest.param(
+            lambda: Circuit(num_ions=cast("int", object()), gates=(), predecessors=()),
+            TypeError,
+            "num_ions must be an integer",
+            id="boolean-ion-count",
+        ),
+        pytest.param(
+            lambda: Circuit(
+                num_ions=1,
+                gates=(Rx(ion=0, theta=0.5, gate_id=0),),
+                predecessors=(),
+            ),
+            ValueError,
+            "one entry for each gate",
+            id="dependency-count",
+        ),
+        pytest.param(
+            lambda: Circuit(
+                num_ions=1,
+                gates=(Rx(ion=0, theta=0.5, gate_id=1),),
+                predecessors=(frozenset(),),
+            ),
+            ValueError,
+            "stable circuit-order gate_id",
+            id="gate-id-order",
+        ),
+    ],
+)
+def test_circuit_rejects_malformed_structure(
+    build: Callable[[], object],
+    error: type[Exception],
+    message: str,
+) -> None:
+    """Reject circuit values that violate stable compiler identities."""
+    with pytest.raises(error, match=message):
+        build()
 
 
 def test_parsed_circuit_always_retains_dependencies() -> None:

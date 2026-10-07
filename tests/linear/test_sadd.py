@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 from dataclasses import replace
 from math import pi
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -19,7 +20,7 @@ from mqt.ionshuttler import visualize
 from mqt.ionshuttler.linear import GateTiming, TransportTiming
 from mqt.ionshuttler.linear.actions import Rx, Shuttle
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
-from mqt.ionshuttler.linear.dd import SADDConfig, SADDMethod, SADDResult, run_sadd
+from mqt.ionshuttler.linear.dd import SADDConfig, SADDMethod, SADDReport, SADDResult, run_sadd
 from mqt.ionshuttler.linear.dd import sadd as sadd_module
 from mqt.ionshuttler.linear.dd import sadd_solver as sadd_solver_module
 from mqt.ionshuttler.linear.dd.sadd_solver import (
@@ -32,6 +33,9 @@ from mqt.ionshuttler.linear.field_profile import FieldProfile
 from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.linear.schedule import Schedule, schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _idle_result(
@@ -99,6 +103,39 @@ def test_sadd_result_round_trips_the_transformed_compilation() -> None:
 
     assert restored == output
     assert restored.result.schedule == compilation.schedule
+
+
+def test_sadd_result_validates_fields_json_and_file_persistence(tmp_path: Path) -> None:
+    """Reject malformed pass results and persist a valid result with a JSON suffix."""
+    architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
+    compilation = _compilation(_idle_result(architecture, initial_positions=[0], timesteps=1), architecture)
+    report = SADDReport(SADDMethod.PULSE_ONLY)
+
+    with pytest.raises(TypeError, match="result must be a CompilationResult"):
+        SADDResult(object(), report)  # ty: ignore[invalid-argument-type] - Runtime validation test.
+    with pytest.raises(TypeError, match="report must be a SADDReport"):
+        SADDResult(compilation, object())  # ty: ignore[invalid-argument-type] - Runtime validation test.
+    with pytest.raises(ValueError, match="unavailable_reason must be non-empty"):
+        SADDResult(compilation, report, "")
+    with pytest.raises(ValueError, match="SADD result must be a JSON object"):
+        SADDResult.from_dict([])
+    with pytest.raises(ValueError, match="unavailable_reason must be a string or null"):
+        SADDResult.from_dict({"result": compilation.to_dict(), "report": report.to_dict(), "unavailable_reason": 1})
+
+    output = SADDResult(compilation, report).save(tmp_path / "nested" / "result")
+    assert output == tmp_path / "nested" / "result.json"
+    assert output.is_file()
+
+
+def test_run_sadd_rejects_invalid_public_arguments() -> None:
+    """Validate the compilation artifact and method before schedule analysis."""
+    architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
+    compilation = _compilation(_idle_result(architecture, initial_positions=[0], timesteps=1), architecture)
+
+    with pytest.raises(TypeError, match="result must be a CompilationResult"):
+        run_sadd(object(), SADDMethod.PULSE_ONLY)  # ty: ignore[invalid-argument-type] - Runtime validation test.
+    with pytest.raises(TypeError, match="method must be a SADDMethod"):
+        run_sadd(compilation, "pulse_only_sadd")  # ty: ignore[invalid-argument-type] - Runtime validation test.
 
 
 def test_sadd_result_is_directly_visualizable() -> None:

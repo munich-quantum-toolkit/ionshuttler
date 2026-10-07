@@ -266,6 +266,12 @@ def test_architecture_and_field_profile_reject_invalid_shapes() -> None:
         LinearArchitecture(num_sites=1, supported_action_types=(Rx, Rx))
     with pytest.raises(TypeError, match="gate_timing must be GateTiming"):
         LinearArchitecture(num_sites=1, gate_timing=cast("GateTiming", TransportTiming()))
+    with pytest.raises(TypeError, match="transport_timing must be TransportTiming"):
+        LinearArchitecture(num_sites=1, transport_timing=cast("TransportTiming", GateTiming()))
+    with pytest.raises(ValueError, match="processing_zones must be a JSON object"):
+        LinearArchitecture.from_dict({"num_sites": 1, "processing_zones": []})
+    with pytest.raises(ValueError, match="field_profile must be a JSON object"):
+        LinearArchitecture.from_dict({"num_sites": 1, "field_profile": []})
 
 
 def test_action_processing_zone_follows_ion_positions() -> None:

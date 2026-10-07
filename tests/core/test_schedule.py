@@ -13,13 +13,17 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from functools import partial
-from typing import ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import pytest
 
 from mqt.ionshuttler.core.actions import Action, decode_action, index_action_types
 from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -122,6 +126,113 @@ def test_schedule_rejects_unsupported_versions() -> None:
         Schedule.from_dict(data, decode_action=_DECODE_PULSE, decode_state=_ClockState.from_dict)
 
 
+@pytest.mark.parametrize(
+    ("build", "error", "message"),
+    [
+        pytest.param(
+            lambda: ScheduledAction(-1, _Pulse(1), 0, 1),
+            ValueError,
+            "action_id must be non-negative",
+            id="negative-action-id",
+        ),
+        pytest.param(
+            lambda: ScheduledAction(0, _Pulse(1), cast("int", object()), 1),
+            TypeError,
+            "start_time must be an integer",
+            id="boolean-start-time",
+        ),
+        pytest.param(
+            lambda: ScheduledAction(0, _Pulse(1), 0, -1),
+            ValueError,
+            "duration must be non-negative",
+            id="negative-duration",
+        ),
+        pytest.param(
+            lambda: ScheduledAction(0, _Pulse(1), 0, 1, cast("str", 3)),
+            TypeError,
+            "processing_zone_id must be a string",
+            id="zone-type",
+        ),
+        pytest.param(
+            lambda: ScheduledAction(0, _Pulse(1), 0, 1, ""),
+            ValueError,
+            "processing_zone_id must be non-empty",
+            id="empty-zone",
+        ),
+    ],
+)
+def test_scheduled_action_rejects_invalid_public_values(
+    build: Callable[[], object],
+    error: type[Exception],
+    message: str,
+) -> None:
+    """Reject malformed identity, timing, and resource values."""
+    with pytest.raises(error, match=message):
+        build()
+
+
+@pytest.mark.parametrize(
+    ("actions", "end_time", "error", "message"),
+    [
+        pytest.param((cast("ScheduledAction", object()),), 1, TypeError, "ScheduledAction values", id="item-type"),
+        pytest.param(
+            (ScheduledAction(0, _Pulse(1), 0, 1), ScheduledAction(0, _Pulse(2), 1, 1)),
+            2,
+            ValueError,
+            "identifiers must be unique",
+            id="duplicate-id",
+        ),
+        pytest.param(
+            (ScheduledAction(0, _Pulse(1), 1, 1), ScheduledAction(1, _Pulse(2), 0, 1)),
+            2,
+            ValueError,
+            "start times must be nondecreasing",
+            id="decreasing-time",
+        ),
+        pytest.param((), -1, ValueError, "end_time must be non-negative", id="negative-end"),
+        pytest.param(
+            (ScheduledAction(0, _Pulse(1), 1, 2),),
+            2,
+            ValueError,
+            "finish within end_time",
+            id="action-overrun",
+        ),
+    ],
+)
+def test_schedule_rejects_invalid_public_values(
+    actions: tuple[ScheduledAction, ...],
+    end_time: int,
+    error: type[Exception],
+    message: str,
+) -> None:
+    """Reject malformed action collections and schedule bounds."""
+    with pytest.raises(error, match=message):
+        Schedule(actions, end_time, _ClockState())
+
+
+def test_schedule_rejects_malformed_processing_zone_json() -> None:
+    """Require serialized processing-zone identifiers to be strings or null."""
+    data = _schedule().to_dict()
+    cast("list[dict[str, object]]", data["actions"])[0]["processing_zone_id"] = 3
+
+    with pytest.raises(ValueError, match="processing_zone_id must be a string or null"):
+        Schedule.from_dict(data, decode_action=_DECODE_PULSE, decode_state=_ClockState.from_dict)
+
+
+def test_schedule_end_time_cannot_precede_initial_state() -> None:
+    """Keep the schedule time range non-negative."""
+    with pytest.raises(ValueError, match="end_time must not precede start_time"):
+        Schedule((), 0, _ClockState(time=1))
+
+
+def test_schedule_save_adds_json_suffix_and_creates_parent(tmp_path: Path) -> None:
+    """Persist a schedule to a new directory through the shared boundary."""
+    output = _schedule().save(tmp_path / "nested" / "schedule")
+
+    assert output == tmp_path / "nested" / "schedule.json"
+    assert output.is_file()
+
+
 def test_scheduled_actions_contain_only_actions() -> None:
     """Keep compiler bookkeeping such as time advances out of public schedules."""
 
@@ -156,7 +267,65 @@ def test_result_round_trips_with_explicit_decoders() -> None:
     assert restored == result
     assert restored.wall_clock_s == result.wall_clock_s
     assert result.to_dict()["diagnostics"] == {"attempts": 3}
+    assert result.start_time == 0
+    assert result.duration == 4
     restored.validate()
+
+
+@pytest.mark.parametrize(
+    ("changes", "error", "message"),
+    [
+        pytest.param({"status": "success"}, TypeError, "status must be a CompilationStatus", id="status"),
+        pytest.param({"schedule": object()}, TypeError, "schedule must be a Schedule", id="schedule"),
+        pytest.param({"wall_clock_s": True}, TypeError, "wall_clock_s must be numeric", id="boolean-runtime"),
+        pytest.param({"wall_clock_s": float("inf")}, ValueError, "finite and non-negative", id="infinite-runtime"),
+        pytest.param({"wall_clock_s": -1.0}, ValueError, "finite and non-negative", id="negative-runtime"),
+    ],
+)
+def test_result_rejects_invalid_common_fields(
+    changes: dict[str, object],
+    error: type[Exception],
+    message: str,
+) -> None:
+    """Validate shared result fields before architecture-specific use."""
+    arguments: dict[str, object] = {
+        "status": CompilationStatus.SUCCESS,
+        "schedule": _schedule(),
+        "architecture": _ClockArchitecture(),
+        "final_state": _ClockState(4),
+    }
+    arguments.update(changes)
+
+    with pytest.raises(error, match=message):
+        CompilationResult(**arguments)  # ty: ignore[invalid-argument-type] - Deliberately malformed runtime inputs.
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("version", 1, "unsupported compilation result schema or version"),
+        ("status", "cancelled", "unknown compilation status"),
+    ],
+)
+def test_result_rejects_malformed_envelope(field: str, value: object, message: str) -> None:
+    """Reject incompatible schemas and unknown status values."""
+    result = CompilationResult(
+        status=CompilationStatus.SUCCESS,
+        schedule=_schedule(),
+        architecture=_ClockArchitecture(),
+        final_state=_ClockState(4),
+    )
+    data = result.to_dict()
+    data[field] = value
+
+    with pytest.raises(ValueError, match=message):
+        CompilationResult.from_dict(
+            data,
+            decode_architecture=_ClockArchitecture.from_dict,
+            decode_action=_DECODE_PULSE,
+            decode_state=_ClockState.from_dict,
+            decode_diagnostics=_Counts.from_dict,
+        )
 
 
 def test_result_equality_ignores_wall_clock_time() -> None:

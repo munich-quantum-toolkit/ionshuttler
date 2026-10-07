@@ -40,6 +40,22 @@ def test_gate_timing_rejects_malformed_serialized_durations() -> None:
         GateTiming.from_dict([1, 2])
 
 
+def test_gate_timing_rejects_unsupported_queries_and_malformed_virtual_gates() -> None:
+    """Validate direct timing queries and virtual-gate collections."""
+    timing = GateTiming()
+
+    with pytest.raises(ValueError, match="unsupported gate name"):
+        timing.duration_for("cx")
+    with pytest.raises(ValueError, match="single-qubit gates"):
+        timing.is_virtual("rzz")
+    with pytest.raises(TypeError, match="duration for gate 'rx' must be an integer"):
+        GateTiming(rx=cast("int", 1.5))
+    with pytest.raises(TypeError, match="must be a collection"):
+        GateTiming(virtual_single_qubit_gates=cast("frozenset[str]", "rx"))
+    with pytest.raises(TypeError, match="contain only strings"):
+        GateTiming(virtual_single_qubit_gates=cast("frozenset[str]", frozenset({1})))
+
+
 @pytest.mark.parametrize("field_name", ["Rzz", "rzz_duration"])
 def test_gate_timing_rejects_unknown_serialized_fields(field_name: str) -> None:
     """Refuse a misspelled duration instead of using the default duration."""
@@ -160,6 +176,15 @@ def test_gate_equality_ignores_gate_id_and_serialization_keeps_it() -> None:
     assert gate == Rx(ion=0, theta=pi)
     assert hash(gate) == hash(Rx(ion=0, theta=pi))
     assert restored.gate_id == 3
+
+
+@pytest.mark.parametrize("gate_id", [-1, True, 1.5])
+def test_gate_ids_must_be_non_negative_in_memory_and_json(gate_id: object) -> None:
+    """Apply the same gate-identity contract at construction and decoding boundaries."""
+    with pytest.raises(ValueError, match="gate_id must be a non-negative integer"):
+        Rx(ion=0, theta=pi, gate_id=cast("int", gate_id))
+    with pytest.raises(ValueError, match="gate_id must be a non-negative integer"):
+        decode_action({"type": "gate.rx", "ion": 0, "theta": pi, "gate_id": gate_id}, GATE_TYPES)
 
 
 def test_gates_reject_non_finite_serialized_parameters() -> None:

@@ -84,3 +84,5 @@ def test_decoding_uses_only_the_supplied_action_types() -> None:
         decode_action(data, index_action_types((_Marker,)))
     with pytest.raises(ValueError, match=r"action\.type must be a string"):
         decode_action({"label": "probe"}, index_action_types((_Marker,)))
+    with pytest.raises(ValueError, match="invalid serialized _Marker action"):
+        decode_action({"type": "test.marker"}, index_action_types((_Marker,)))
