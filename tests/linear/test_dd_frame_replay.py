@@ -10,10 +10,12 @@
 from __future__ import annotations
 
 from math import pi
+from typing import TYPE_CHECKING
 
 import pytest
 
-from mqt.ionshuttler.linear.actions import GlobalGate, Rx, Ry, Rz, Shuttle
+from mqt.ionshuttler.core.gates import GlobalGate, Rx, Ry, Rz
+from mqt.ionshuttler.linear.actions import Shuttle
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.dd import GateSpec
 from mqt.ionshuttler.linear.dd.frame_replay import (
@@ -29,9 +31,12 @@ from mqt.ionshuttler.linear.dd.frame_replay import (
     global_pulse_timesteps,
 )
 from mqt.ionshuttler.linear.field_profile import FieldProfile
-from mqt.ionshuttler.linear.schedule import Schedule, schedule_from_path
+from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 from mqt.ionshuttler.linear.timeline import build_timeline
+
+if TYPE_CHECKING:
+    from mqt.ionshuttler.core.schedule import Schedule
 
 _ARCHITECTURE = LinearArchitecture(num_sites=2, processing_zones={"pz": [0, 1]})
 _GLOBAL_X = GlobalGate(gate_name="rx", theta=pi, ions=(0,))

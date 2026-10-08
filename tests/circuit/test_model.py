@@ -15,7 +15,7 @@ import pytest
 
 from mqt.ionshuttler.circuit import Circuit
 from mqt.ionshuttler.circuit.parser import parse_circuit
-from mqt.ionshuttler.linear.actions import Rx, Rxx
+from mqt.ionshuttler.core.gates import Rx, Rxx
 
 if TYPE_CHECKING:
     from collections.abc import Callable

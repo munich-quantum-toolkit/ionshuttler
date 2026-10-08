@@ -15,14 +15,14 @@ from itertools import count
 from math import isclose, isfinite, pi
 from typing import TYPE_CHECKING, ClassVar, cast
 
-from mqt.ionshuttler.linear.actions import GlobalGate
+from mqt.ionshuttler.core.gates import GlobalGate
+from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.linear.dd.critical_segments import CriticalSegmentResult, compute_critical_segments
 from mqt.ionshuttler.linear.dd.frame_replay import frame_operation_for_gate_spec, global_pulse_timesteps
 from mqt.ionshuttler.linear.dd.result import DDPassResult
 from mqt.ionshuttler.linear.dd.schedule_transform import rebuild_schedule
 from mqt.ionshuttler.linear.dd.schemes import GateSpec
 from mqt.ionshuttler.linear.replay import replay_schedule
-from mqt.ionshuttler.linear.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.linear.timeline import build_timeline
 
 from ..._json_utils import require_int, require_int_list, require_number, require_str
@@ -151,7 +151,7 @@ def apply_periodic_global_dd(
 ) -> DDPassResult[GlobalDDReport]:
     """Insert periodic global X pulses, optionally shifting them by phase cost.
 
-    Each pulse is a :class:`~mqt.ionshuttler.linear.actions.GlobalGate` whose
+    Each pulse is a :class:`~mqt.ionshuttler.core.gates.GlobalGate` whose
     targets are all ions of the schedule. Global pulses are placed before all
     existing actions at the same schedule boundary and may overlap local gates
     or transport under the global-frame abstraction.

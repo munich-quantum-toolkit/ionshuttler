@@ -12,8 +12,8 @@ from __future__ import annotations
 import pytest
 
 from mqt.ionshuttler.circuit import Circuit
+from mqt.ionshuttler.core.gates import Rzz
 from mqt.ionshuttler.linear import partition_bias
-from mqt.ionshuttler.linear.actions import Rzz
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 
 

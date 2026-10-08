@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from math import pi
 from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
+from mqt.ionshuttler.core.schedule import ScheduledAction
 from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
 from mqt.ionshuttler.linear.dd.schedule_transform import (
     insert_action_at_time,
@@ -21,15 +22,14 @@ from mqt.ionshuttler.linear.dd.schedule_transform import (
 from mqt.ionshuttler.linear.dd.schemes import MIDPOINT_ONLY_HAHN, GateSpec
 from mqt.ionshuttler.linear.dd.windows import find_idle_windows
 from mqt.ionshuttler.linear.replay import is_schedule_valid, replay_schedule
-from mqt.ionshuttler.linear.schedule import ScheduledAction
 from mqt.ionshuttler.linear.timeline import build_timeline
 
 from ..._json_utils import require_int, require_int_list, require_list, require_mapping, require_str
 
 if TYPE_CHECKING:
-    from mqt.ionshuttler.linear.actions import Rx
+    from mqt.ionshuttler.core.gates import Rx
+    from mqt.ionshuttler.core.schedule import Schedule
     from mqt.ionshuttler.linear.architecture import LinearArchitecture
-    from mqt.ionshuttler.linear.schedule import Schedule
     from mqt.ionshuttler.linear.timeline import CompiledTimeline
 
 NearestHahnStatus = Literal["exact", "shifted", "skipped"]

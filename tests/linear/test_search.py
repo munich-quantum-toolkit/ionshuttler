@@ -20,13 +20,15 @@ import pytest
 
 import mqt.ionshuttler.linear.search as search_module
 from mqt.ionshuttler.circuit import Circuit, parse_circuit
+from mqt.ionshuttler.core.gates import GateAction, Rx, Ry, Rzz
+from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.linear import GateTiming
-from mqt.ionshuttler.linear.actions import Rx, Ry, Rzz, Shuttle
+from mqt.ionshuttler.linear.actions import Shuttle
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.config import LinearCompilerConfig, SearchConfig
 from mqt.ionshuttler.linear.cost import zero_heuristic
 from mqt.ionshuttler.linear.expand import GenerationMode
-from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus, LinearDiagnostics
+from mqt.ionshuttler.linear.result import LinearDiagnostics
 from mqt.ionshuttler.linear.schedule import (
     LinearMachineState,
 )
@@ -35,7 +37,6 @@ from mqt.ionshuttler.linear.state import State, create_initial_state
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from mqt.ionshuttler.linear.actions import GateAction
     from mqt.ionshuttler.linear.cost import HeuristicFn
     from mqt.ionshuttler.linear.state import SearchTransition
 

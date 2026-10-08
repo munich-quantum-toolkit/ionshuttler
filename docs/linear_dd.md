@@ -49,7 +49,8 @@ from dataclasses import replace
 from qiskit import QuantumCircuit
 
 from mqt.ionshuttler.linear import LinearArchitecture, LinearCompiler
-from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES, GlobalGate
+from mqt.ionshuttler.core.gates import GlobalGate
+from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES
 from mqt.ionshuttler.linear.dd import compute_critical_segments
 from mqt.ionshuttler.linear.field_profile import FieldProfile
 

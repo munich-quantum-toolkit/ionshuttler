@@ -14,7 +14,8 @@ from time import perf_counter
 from typing import TYPE_CHECKING
 
 from mqt.ionshuttler.circuit import parse_circuit
-from mqt.ionshuttler.linear.actions import Action, GateAction
+from mqt.ionshuttler.core.actions import Action
+from mqt.ionshuttler.core.gates import GateAction
 from mqt.ionshuttler.linear.config import LinearCompilerConfig
 from mqt.ionshuttler.linear.partition_bias import compute_gate_zone_assignment, zone_site_pairs
 from mqt.ionshuttler.linear.search import search

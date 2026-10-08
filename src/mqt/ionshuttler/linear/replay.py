@@ -18,8 +18,8 @@ from mqt.ionshuttler.linear.validation import is_transport_layer_valid, is_trans
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
     from mqt.ionshuttler.linear.architecture import LinearArchitecture
-    from mqt.ionshuttler.linear.schedule import Schedule, ScheduledAction
     from mqt.ionshuttler.linear.state import State
 
 

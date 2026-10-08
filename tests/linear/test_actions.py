@@ -15,24 +15,15 @@ from typing import ClassVar
 
 import pytest
 
+from mqt.ionshuttler.core.actions import Action
+from mqt.ionshuttler.core.gates import GateAction, GlobalGate, Rx, Rxx, Ry, Ryy, Rz, Rzz, SingleQubitGate, TwoQubitGate
 from mqt.ionshuttler.linear import GateTiming, TransportTiming
 from mqt.ionshuttler.linear.actions import (
     DEFAULT_ACTION_TYPES,
     LINEAR_ACTION_TYPES,
-    Action,
-    GateAction,
-    GlobalGate,
     PhysicalSwap,
-    Rx,
-    Rxx,
-    Ry,
-    Ryy,
-    Rz,
-    Rzz,
     Shuttle,
-    SingleQubitGate,
     TransportAction,
-    TwoQubitGate,
     decode_linear_action,
 )
 from mqt.ionshuttler.linear.architecture import LinearArchitecture

@@ -18,6 +18,9 @@ import pytest
 
 import mqt.ionshuttler.visualization as visualization_module
 from mqt.ionshuttler import visualize
+from mqt.ionshuttler.core.gates import GlobalGate, Rx, Rz, Rzz
+from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
+from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.linear import (
     DEFAULT_ACTION_TYPES,
     load_result,
@@ -27,11 +30,11 @@ from mqt.ionshuttler.linear import (
     schedule_from_dict,
     schedule_from_json,
 )
-from mqt.ionshuttler.linear.actions import GlobalGate, Rx, Rz, Rzz, Shuttle
+from mqt.ionshuttler.linear.actions import Shuttle
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.replay import replay_schedule
-from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus, LinearDiagnostics
-from mqt.ionshuttler.linear.schedule import LinearMachineState, Schedule, ScheduledAction, schedule_from_path
+from mqt.ionshuttler.linear.result import LinearDiagnostics
+from mqt.ionshuttler.linear.schedule import LinearMachineState, schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 from mqt.ionshuttler.visualization import LinearVisualizer, Visualizer
 

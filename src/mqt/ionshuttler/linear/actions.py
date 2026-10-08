@@ -5,27 +5,16 @@
 #
 # Licensed under the MIT License
 
-"""Linear transport actions, their timing, and shared gate imports."""
+"""Linear transport actions and their timing."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, cast
 
-from mqt.ionshuttler.core.actions import Action, decode_action, index_action_types
-from mqt.ionshuttler.core.gates import (
-    BUILTIN_GATE_TYPES,
-    GateAction,
-    GlobalGate,
-    Rx,
-    Rxx,
-    Ry,
-    Ryy,
-    Rz,
-    Rzz,
-    SingleQubitGate,
-    TwoQubitGate,
-)
+import mqt.ionshuttler.core.gates as core_gates
+from mqt.ionshuttler.core.actions import Action as _Action
+from mqt.ionshuttler.core.actions import decode_action, index_action_types
 
 from .._json_utils import require_int
 
@@ -78,7 +67,7 @@ class TransportTiming:
 
 
 @dataclass(frozen=True)
-class TransportAction(Action):
+class TransportAction(_Action):
     """A Linear hardware operation that moves ions between sites."""
 
     if TYPE_CHECKING:
@@ -104,7 +93,7 @@ class Shuttle(TransportAction):
         return (self.ion,)
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, object]) -> Action:
+    def from_dict(cls, data: Mapping[str, object]) -> _Action:
         """Restore a shuttle from serialized fields.
 
         Returns:
@@ -133,7 +122,7 @@ class PhysicalSwap(TransportAction):
         return (self.ion_a, self.ion_b)
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, object]) -> Action:
+    def from_dict(cls, data: Mapping[str, object]) -> _Action:
         """Restore a physical swap from serialized fields.
 
         Returns:
@@ -147,11 +136,22 @@ class PhysicalSwap(TransportAction):
         )
 
 
-DEFAULT_ACTION_TYPES: tuple[type[Action], ...] = (PhysicalSwap, Shuttle, Rx, Ry, Rz, Rzz)
-LINEAR_ACTION_TYPES: Mapping[str, type[Action]] = index_action_types((*BUILTIN_GATE_TYPES, Shuttle, PhysicalSwap))
+DEFAULT_ACTION_TYPES: tuple[type[_Action], ...] = (
+    PhysicalSwap,
+    Shuttle,
+    core_gates.Rx,
+    core_gates.Ry,
+    core_gates.Rz,
+    core_gates.Rzz,
+)
+LINEAR_ACTION_TYPES: Mapping[str, type[_Action]] = index_action_types((
+    *core_gates.BUILTIN_GATE_TYPES,
+    Shuttle,
+    PhysicalSwap,
+))
 
 
-def decode_linear_action(data: object) -> Action:
+def decode_linear_action(data: object) -> _Action:
     """Restore one serialized action implemented by Linear architectures.
 
     Returns:
@@ -182,21 +182,10 @@ def _mapping_duration(mapping: Mapping[str, object], name: str, default: int) ->
 __all__ = [
     "DEFAULT_ACTION_TYPES",
     "LINEAR_ACTION_TYPES",
-    "Action",
-    "GateAction",
-    "GlobalGate",
     "PhysicalSwap",
-    "Rx",
-    "Rxx",
-    "Ry",
-    "Ryy",
-    "Rz",
-    "Rzz",
     "Shuttle",
-    "SingleQubitGate",
     "TransportAction",
     "TransportTiming",
-    "TwoQubitGate",
     "decode_linear_action",
     "is_adjacent",
 ]

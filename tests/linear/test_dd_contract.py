@@ -15,7 +15,9 @@ from typing import cast
 
 import pytest
 
-from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES, GlobalGate, Rx, SingleQubitGate
+from mqt.ionshuttler.core.gates import GlobalGate, Rx, SingleQubitGate
+from mqt.ionshuttler.core.schedule import Schedule
+from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.dd import (
     GlobalDDConfig,
@@ -33,7 +35,7 @@ from mqt.ionshuttler.linear.dd.frame_replay import build_frame_history, framed_a
 from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
 from mqt.ionshuttler.linear.dd.windows import find_idle_windows
 from mqt.ionshuttler.linear.field_profile import FieldProfile
-from mqt.ionshuttler.linear.schedule import Schedule, schedule_from_path
+from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 from mqt.ionshuttler.linear.timeline import build_timeline
 

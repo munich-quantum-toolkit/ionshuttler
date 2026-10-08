@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TypeAlias
 
 from mqt.ionshuttler.core.actions import Action
-from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
+from mqt.ionshuttler.core.result import CompilationResult as _CompilationResult
 from mqt.ionshuttler.linear.actions import decode_linear_action
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.schedule import LinearMachineState
@@ -105,7 +105,7 @@ class LinearDiagnostics:
         )
 
 
-LinearCompilationResult: TypeAlias = CompilationResult[
+LinearCompilationResult: TypeAlias = _CompilationResult[
     LinearArchitecture, Action, LinearMachineState, LinearDiagnostics
 ]
 
@@ -116,7 +116,7 @@ def result_from_dict(data: object) -> LinearCompilationResult:
     Returns:
         The restored compilation result.
     """
-    return CompilationResult.from_dict(
+    return _CompilationResult.from_dict(
         data,
         decode_architecture=LinearArchitecture.from_dict,
         decode_action=decode_linear_action,
@@ -144,8 +144,6 @@ def load_result(filename: str | Path) -> LinearCompilationResult:
 
 
 __all__ = [
-    "CompilationResult",
-    "CompilationStatus",
     "LinearCompilationResult",
     "LinearDiagnostics",
     "load_result",

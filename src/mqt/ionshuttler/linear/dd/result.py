@@ -14,8 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Generic, Protocol, TypeVar, cast
 
+from mqt.ionshuttler.core.schedule import Schedule
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
-from mqt.ionshuttler.linear.schedule import Schedule, schedule_from_dict
+from mqt.ionshuttler.linear.schedule import schedule_from_dict
 
 from ..._json_utils import (
     require_int,

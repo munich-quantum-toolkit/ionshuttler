@@ -15,19 +15,17 @@ from typing import ClassVar
 import numpy as np
 import pytest
 
+from mqt.ionshuttler.core.gates import GlobalGate, Rx, Rz, Rzz
 from mqt.ionshuttler.linear import GateTiming
 from mqt.ionshuttler.linear.actions import (
-    GlobalGate,
     PhysicalSwap,
-    Rx,
-    Rz,
-    Rzz,
     Shuttle,
     TransportAction,
+    is_adjacent,
 )
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.state import State, has_pending_timed_work
-from mqt.ionshuttler.linear.validation import is_adjacent, is_transport_layer_valid, is_transport_valid_in_layer
+from mqt.ionshuttler.linear.validation import is_transport_layer_valid, is_transport_valid_in_layer
 
 
 @dataclass(frozen=True)

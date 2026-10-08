@@ -13,11 +13,13 @@ from dataclasses import replace
 
 import pytest
 
+from mqt.ionshuttler.core.gates import Rx
+from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.linear import GateTiming
-from mqt.ionshuttler.linear.actions import Rx, Shuttle
+from mqt.ionshuttler.linear.actions import Shuttle
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.replay import is_schedule_valid, replay_schedule
-from mqt.ionshuttler.linear.schedule import LinearMachineState, Schedule, ScheduledAction, schedule_from_path
+from mqt.ionshuttler.linear.schedule import LinearMachineState, schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 
 

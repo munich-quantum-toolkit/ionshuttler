@@ -17,11 +17,12 @@ from itertools import count
 from time import perf_counter
 from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES, Action
+from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
+from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES
 from mqt.ionshuttler.linear.config import LinearCompilerConfig
 from mqt.ionshuttler.linear.cost import cost, heuristic, zero_heuristic
 from mqt.ionshuttler.linear.expand import ExpansionOptions, GenerationMode, expand, replay_path
-from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus, LinearDiagnostics
+from mqt.ionshuttler.linear.result import LinearDiagnostics
 from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, State, normalize_initial_state
 
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from mqt.ionshuttler.circuit import Circuit
+    from mqt.ionshuttler.core.actions import Action
     from mqt.ionshuttler.linear.architecture import LinearArchitecture
     from mqt.ionshuttler.linear.config import SearchConfig
     from mqt.ionshuttler.linear.cost import HeuristicFn

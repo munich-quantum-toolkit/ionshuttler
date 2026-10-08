@@ -10,13 +10,13 @@
 from typing import TYPE_CHECKING
 
 from mqt.ionshuttler.core.gates import GateTiming
+from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
+from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES, TransportTiming
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.config import LinearCompilerConfig, SearchConfig
 from mqt.ionshuttler.linear.cost import HeuristicFn, zero_heuristic
 from mqt.ionshuttler.linear.result import (
-    CompilationResult,
-    CompilationStatus,
     LinearCompilationResult,
     LinearDiagnostics,
     load_result,
@@ -25,8 +25,6 @@ from mqt.ionshuttler.linear.result import (
 )
 from mqt.ionshuttler.linear.schedule import (
     LinearMachineState,
-    Schedule,
-    ScheduledAction,
     load_schedule,
     schedule_from_dict,
     schedule_from_json,

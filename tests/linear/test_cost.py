@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import mqt.ionshuttler.linear.cost as linear_cost
 from mqt.ionshuttler.circuit import Circuit
-from mqt.ionshuttler.linear.actions import GateAction, GlobalGate, Rx, Rzz
+from mqt.ionshuttler.core.gates import GateAction, GlobalGate, Rx, Rzz
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.cost import cost, heuristic, min_distance_to_valid_pair, zero_heuristic
 from mqt.ionshuttler.linear.state import State

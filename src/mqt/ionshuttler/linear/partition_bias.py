@@ -12,7 +12,7 @@ from __future__ import annotations
 from itertools import combinations
 from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.linear.actions import SingleQubitGate, TwoQubitGate
+from mqt.ionshuttler.core.gates import SingleQubitGate, TwoQubitGate
 from mqt.ionshuttler.partitioning import GateInfo, compute_fine_grained_gate_partition
 
 if TYPE_CHECKING:

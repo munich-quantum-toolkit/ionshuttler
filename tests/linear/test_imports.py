@@ -85,11 +85,39 @@ def test_removed_validation_and_timeline_forwarders_are_absent() -> None:
     assert importlib.util.find_spec("mqt.ionshuttler.linear.dd.timeline") is None
 
 
+def test_shared_types_are_not_reexported_from_linear_submodules() -> None:
+    """Expose shared values through their defining modules or the curated package API."""
+    actions = importlib.import_module("mqt.ionshuttler.linear.actions")
+    schedule = importlib.import_module("mqt.ionshuttler.linear.schedule")
+    result = importlib.import_module("mqt.ionshuttler.linear.result")
+    validation = importlib.import_module("mqt.ionshuttler.linear.validation")
+
+    for name in (
+        "Action",
+        "GateAction",
+        "GlobalGate",
+        "Rx",
+        "Rxx",
+        "Ry",
+        "Ryy",
+        "Rz",
+        "Rzz",
+        "SingleQubitGate",
+        "TwoQubitGate",
+    ):
+        assert not hasattr(actions, name)
+    for name in ("Schedule", "ScheduledAction"):
+        assert not hasattr(schedule, name)
+    for name in ("CompilationResult", "CompilationStatus"):
+        assert not hasattr(result, name)
+    assert not hasattr(validation, "is_adjacent")
+
+
 def test_schedule_import_does_not_load_compiler_search() -> None:
     """Keep the execution boundary independent of compiler implementation modules."""
     command = (
         "import sys; "
-        "from mqt.ionshuttler.linear.schedule import Schedule; "
+        "from mqt.ionshuttler.linear.schedule import LinearMachineState; "
         "assert 'mqt.ionshuttler.linear.search' not in sys.modules"
     )
     completed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - Fixed interpreter command.

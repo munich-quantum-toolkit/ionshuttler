@@ -13,15 +13,15 @@ from dataclasses import dataclass
 from itertools import count
 from typing import TYPE_CHECKING, ClassVar
 
+from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
 from mqt.ionshuttler.linear.dd.schedule_transform import local_gate_for_spec, rebuild_schedule
 from mqt.ionshuttler.linear.dd.schemes import HAHN_ECHO, MIDPOINT_ONLY_HAHN, DDScheme, get_dd_scheme
 from mqt.ionshuttler.linear.dd.windows import find_idle_windows
-from mqt.ionshuttler.linear.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.linear.timeline import CompiledTimeline, build_timeline
 
 if TYPE_CHECKING:
-    from mqt.ionshuttler.linear.actions import Action
+    from mqt.ionshuttler.core.actions import Action
     from mqt.ionshuttler.linear.architecture import LinearArchitecture
 
 

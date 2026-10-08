@@ -14,8 +14,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from mqt.ionshuttler.core.gates import Rx, Ry, Rz, Rzz
 from mqt.ionshuttler.linear import TransportTiming
-from mqt.ionshuttler.linear.actions import Rx, Ry, Rz, Rzz, Shuttle
+from mqt.ionshuttler.linear.actions import Shuttle
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.dd import NearestHahnConfig, NearestHahnReport, run_nearest_hahn
 from mqt.ionshuttler.linear.dd import nearest_hahn as nearest_hahn_module
@@ -23,11 +24,12 @@ from mqt.ionshuttler.linear.dd import schedule_transform as schedule_transform_m
 from mqt.ionshuttler.linear.dd.frame_replay import PauliFrame, build_frame_history
 from mqt.ionshuttler.linear.dd.result import DDPassResult
 from mqt.ionshuttler.linear.replay import is_schedule_valid
-from mqt.ionshuttler.linear.schedule import Schedule, schedule_from_path
+from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 from mqt.ionshuttler.linear.timeline import CompiledTimeline, build_timeline
 
 if TYPE_CHECKING:
+    from mqt.ionshuttler.core.schedule import Schedule
     from mqt.ionshuttler.linear.state import SearchTransition
 
 

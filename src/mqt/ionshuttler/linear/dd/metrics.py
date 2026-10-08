@@ -24,9 +24,9 @@ from mqt.ionshuttler.linear.timeline import CompiledTimeline, build_timeline
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from mqt.ionshuttler.core.schedule import Schedule
     from mqt.ionshuttler.linear.architecture import LinearArchitecture
     from mqt.ionshuttler.linear.dd.result import LocalDDSequence
-    from mqt.ionshuttler.linear.schedule import Schedule
 
 
 @dataclass(frozen=True)

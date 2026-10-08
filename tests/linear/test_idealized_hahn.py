@@ -14,17 +14,19 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from mqt.ionshuttler.linear.actions import Rx, Ry, Rz, Shuttle
+from mqt.ionshuttler.core.gates import Rx, Ry, Rz
+from mqt.ionshuttler.linear.actions import Shuttle
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.dd import IdealizedHahnConfig, IdealizedHahnReport, apply_idealized_hahn
 from mqt.ionshuttler.linear.dd.frame_replay import PauliFrame, build_frame_history, framed_action_events
 from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
 from mqt.ionshuttler.linear.dd.schemes import DDScheme, GateSpec
-from mqt.ionshuttler.linear.schedule import Schedule, schedule_from_path
+from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 from mqt.ionshuttler.linear.timeline import build_timeline
 
 if TYPE_CHECKING:
+    from mqt.ionshuttler.core.schedule import Schedule
     from mqt.ionshuttler.linear.state import SearchTransition
 
 

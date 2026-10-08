@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from mqt.ionshuttler.linear.actions import GlobalGate, Ry
+from mqt.ionshuttler.core.gates import GlobalGate, Ry
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.dd.metrics import (
     decoupling_ratio,
@@ -38,7 +38,7 @@ from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from mqt.ionshuttler.linear.schedule import Schedule
+    from mqt.ionshuttler.core.schedule import Schedule
     from mqt.ionshuttler.linear.state import SearchTransition
 
 _GLOBAL_X = GlobalGate(gate_name="rx", theta=pi, ions=(0,))

@@ -14,11 +14,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from mqt.ionshuttler.core.gates import GlobalGate, Rz, Rzz
+from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.linear import GateTiming, TransportTiming
-from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES, GlobalGate, PhysicalSwap, Rz, Rzz, Shuttle
+from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES, PhysicalSwap, Shuttle
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.dd.schedule_transform import insert_action_at_time
-from mqt.ionshuttler.linear.schedule import Schedule, ScheduledAction, schedule_from_path
+from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, State, create_initial_state
 from mqt.ionshuttler.linear.timeline import build_timeline
 

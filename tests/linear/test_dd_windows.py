@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from mqt.ionshuttler.core.gates import Rx
 from mqt.ionshuttler.linear import GateTiming
-from mqt.ionshuttler.linear.actions import Rx, Shuttle
+from mqt.ionshuttler.linear.actions import Shuttle
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.dd.windows import find_idle_windows
 from mqt.ionshuttler.linear.schedule import schedule_from_path

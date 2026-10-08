@@ -13,7 +13,7 @@ import json
 import subprocess
 import sys
 from dataclasses import FrozenInstanceError
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -31,8 +31,11 @@ from mqt.ionshuttler.linear.dd import (
     SADDReport,
     sadd_solver,
 )
-from mqt.ionshuttler.linear.schedule import Schedule, schedule_from_path
+from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import create_initial_state
+
+if TYPE_CHECKING:
+    from mqt.ionshuttler.core.schedule import Schedule
 
 _ARCHITECTURE = LinearArchitecture(num_sites=1)
 

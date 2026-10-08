@@ -14,8 +14,10 @@ from typing import cast
 
 import pytest
 
+from mqt.ionshuttler.core.gates import Rx
+from mqt.ionshuttler.core.schedule import Schedule
 from mqt.ionshuttler.linear import GateTiming, TransportTiming
-from mqt.ionshuttler.linear.actions import PhysicalSwap, Rx, Shuttle
+from mqt.ionshuttler.linear.actions import PhysicalSwap, Shuttle
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.dd import sadd_solver as sadd_solver_module
 from mqt.ionshuttler.linear.dd.sadd_solver import (
@@ -24,7 +26,7 @@ from mqt.ionshuttler.linear.dd.sadd_solver import (
     solve_sadd_problem,
 )
 from mqt.ionshuttler.linear.field_profile import FieldProfile
-from mqt.ionshuttler.linear.schedule import Schedule, schedule_from_path
+from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 from mqt.ionshuttler.linear.timeline import build_timeline
 

@@ -14,13 +14,10 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from mqt.ionshuttler.core.gates import GlobalGate, Rx, Rz, Rzz
 from mqt.ionshuttler.linear import GateTiming, TransportTiming
 from mqt.ionshuttler.linear.actions import (
     DEFAULT_ACTION_TYPES,
-    GlobalGate,
-    Rx,
-    Rz,
-    Rzz,
     Shuttle,
 )
 from mqt.ionshuttler.linear.architecture import IMPLICIT_PROCESSING_ZONE, LinearArchitecture
@@ -31,7 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from mqt.ionshuttler.linear.actions import Action
+    from mqt.ionshuttler.core.actions import Action
 
 
 def test_processing_zones_are_validated_and_normalized() -> None:

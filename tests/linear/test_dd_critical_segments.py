@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from mqt.ionshuttler.linear.actions import Rx, Rxx, Ry, Rz, Rzz, Shuttle
+from mqt.ionshuttler.core.gates import Rx, Rxx, Ry, Rz, Rzz
+from mqt.ionshuttler.linear.actions import Shuttle
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.dd.critical_segments import (
     SegmentationMode,
@@ -29,7 +30,7 @@ from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from mqt.ionshuttler.linear.schedule import Schedule
+    from mqt.ionshuttler.core.schedule import Schedule
     from mqt.ionshuttler.linear.state import SearchTransition
 
 _ARCHITECTURE = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})

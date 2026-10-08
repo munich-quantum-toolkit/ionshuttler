@@ -18,6 +18,8 @@ from qiskit import QuantumCircuit
 import mqt.ionshuttler.linear.compiler as compiler_module
 import mqt.ionshuttler.linear.search as search_module
 from mqt.ionshuttler.circuit import parse_circuit
+from mqt.ionshuttler.core.gates import GateAction, Rx, Rxx, Ry, Rz, Rzz
+from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.linear import (
     DEFAULT_ACTION_TYPES,
     GateTiming,
@@ -25,24 +27,15 @@ from mqt.ionshuttler.linear import (
     LinearCompiler,
     result_from_json,
 )
-from mqt.ionshuttler.linear.actions import (
-    Action,
-    GateAction,
-    PhysicalSwap,
-    Rx,
-    Rxx,
-    Ry,
-    Rz,
-    Rzz,
-    Shuttle,
-)
+from mqt.ionshuttler.linear.actions import PhysicalSwap, Shuttle
 from mqt.ionshuttler.linear.config import LinearCompilerConfig, SearchConfig
-from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import create_initial_state
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from mqt.ionshuttler.core.actions import Action
 
 
 def test_compiler_produces_a_compact_replayable_schedule() -> None:

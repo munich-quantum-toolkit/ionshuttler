@@ -16,11 +16,10 @@ from typing import TYPE_CHECKING
 import pytest
 from qiskit import QuantumCircuit
 
+from mqt.ionshuttler.core.gates import GlobalGate, Rx
 from mqt.ionshuttler.linear import GateTiming, LinearCompiler
 from mqt.ionshuttler.linear.actions import (
     DEFAULT_ACTION_TYPES,
-    GlobalGate,
-    Rx,
     Shuttle,
 )
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
@@ -35,11 +34,12 @@ from mqt.ionshuttler.linear.dd.frame_replay import PauliFrame, build_frame_histo
 from mqt.ionshuttler.linear.dd.result import DDPassResult
 from mqt.ionshuttler.linear.field_profile import FieldProfile
 from mqt.ionshuttler.linear.replay import replay_schedule
-from mqt.ionshuttler.linear.schedule import Schedule, schedule_from_path
+from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 from mqt.ionshuttler.linear.timeline import build_timeline
 
 if TYPE_CHECKING:
+    from mqt.ionshuttler.core.schedule import Schedule
     from mqt.ionshuttler.linear.state import SearchTransition
 
 _GLOBAL_X = GlobalGate(gate_name="rx", theta=pi, ions=(0,))

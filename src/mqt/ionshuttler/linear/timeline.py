@@ -13,20 +13,17 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.linear.actions import (
-    Action,
-    GateAction,
-    SingleQubitGate,
-    TransportAction,
-)
+from mqt.ionshuttler.core.gates import GateAction, SingleQubitGate
+from mqt.ionshuttler.linear.actions import TransportAction
 from mqt.ionshuttler.linear.replay import apply_schedule
 from mqt.ionshuttler.linear.state import State, to_dict
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from mqt.ionshuttler.core.actions import Action
+    from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
     from mqt.ionshuttler.linear.architecture import LinearArchitecture
-    from mqt.ionshuttler.linear.schedule import Schedule, ScheduledAction
 
 
 @dataclass(frozen=True)

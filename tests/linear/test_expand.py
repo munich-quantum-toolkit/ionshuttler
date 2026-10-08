@@ -14,16 +14,11 @@ from dataclasses import replace
 import pytest
 
 from mqt.ionshuttler.circuit import Circuit
+from mqt.ionshuttler.core.gates import GateAction, GlobalGate, Rx, Ry, Rz, Rzz
 from mqt.ionshuttler.linear import GateTiming, TransportTiming
 from mqt.ionshuttler.linear.actions import (
     DEFAULT_ACTION_TYPES,
-    GateAction,
-    GlobalGate,
     PhysicalSwap,
-    Rx,
-    Ry,
-    Rz,
-    Rzz,
     Shuttle,
 )
 from mqt.ionshuttler.linear.architecture import LinearArchitecture

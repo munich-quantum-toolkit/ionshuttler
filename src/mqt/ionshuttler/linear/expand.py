@@ -14,14 +14,11 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from mqt.ionshuttler.core.gates import GateAction, SingleQubitGate, TwoQubitGate
 from mqt.ionshuttler.linear.actions import (
     DEFAULT_ACTION_TYPES,
-    Action,
-    GateAction,
     PhysicalSwap,
     Shuttle,
-    SingleQubitGate,
-    TwoQubitGate,
     is_adjacent,
 )
 from mqt.ionshuttler.linear.state import (
@@ -36,6 +33,7 @@ from mqt.ionshuttler.linear.state import (
 
 if TYPE_CHECKING:
     from mqt.ionshuttler.circuit import Circuit
+    from mqt.ionshuttler.core.actions import Action
     from mqt.ionshuttler.linear.architecture import LinearArchitecture
 
 Predecessors = Sequence[frozenset[int]]

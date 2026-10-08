@@ -14,7 +14,7 @@ from math import ceil
 from sys import maxsize
 from typing import TYPE_CHECKING, Protocol
 
-from mqt.ionshuttler.linear.actions import SingleQubitGate, TwoQubitGate
+from mqt.ionshuttler.core.gates import SingleQubitGate, TwoQubitGate
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

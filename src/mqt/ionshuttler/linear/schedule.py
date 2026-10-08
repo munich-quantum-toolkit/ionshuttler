@@ -14,8 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
-from mqt.ionshuttler.linear.actions import Action, decode_linear_action
+from mqt.ionshuttler.core.schedule import Schedule as _Schedule
+from mqt.ionshuttler.core.schedule import ScheduledAction as _ScheduledAction
+from mqt.ionshuttler.linear.actions import decode_linear_action
 from mqt.ionshuttler.linear.state import AdvanceTime, State, advance_time
 
 from .._json_utils import require_int, require_int_pairs, require_mapping, require_str_int_pairs
@@ -23,6 +24,7 @@ from .._json_utils import require_int, require_int_pairs, require_mapping, requi
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from mqt.ionshuttler.core.actions import Action
     from mqt.ionshuttler.linear.architecture import LinearArchitecture
     from mqt.ionshuttler.linear.state import SearchTransition
 
@@ -125,7 +127,7 @@ def schedule_from_path(
     path: Sequence[SearchTransition],
     initial_state: State | LinearMachineState,
     architecture: LinearArchitecture,
-) -> Schedule[Action, LinearMachineState]:
+) -> _Schedule[Action, LinearMachineState]:
     """Convert a Linear search path to the shared explicit timeline.
 
     Each :class:`~mqt.ionshuttler.linear.state.AdvanceTime` transition moves
@@ -141,13 +143,13 @@ def schedule_from_path(
         else LinearMachineState.from_compiler_state(initial_state)
     )
     replay_state = machine_state.to_replay_state()
-    scheduled_actions: list[ScheduledAction[Action]] = []
+    scheduled_actions: list[_ScheduledAction[Action]] = []
     for transition in path:
         if isinstance(transition, AdvanceTime):
             replay_state = advance_time(replay_state)
             continue
         scheduled_actions.append(
-            ScheduledAction(
+            _ScheduledAction(
                 action_id=len(scheduled_actions),
                 action=transition,
                 start_time=replay_state.time,
@@ -157,23 +159,23 @@ def schedule_from_path(
         )
         replay_state = architecture.apply_action(replay_state, transition)
     end_time = max([replay_state.time, *(item.end_time for item in scheduled_actions)])
-    return Schedule(tuple(scheduled_actions), end_time, machine_state)
+    return _Schedule(tuple(scheduled_actions), end_time, machine_state)
 
 
-def schedule_from_dict(data: object) -> Schedule[Action, LinearMachineState]:
+def schedule_from_dict(data: object) -> _Schedule[Action, LinearMachineState]:
     """Restore a Linear schedule from its versioned JSON representation.
 
     Returns:
         The restored schedule.
     """
-    return Schedule.from_dict(
+    return _Schedule.from_dict(
         data,
         decode_action=decode_linear_action,
         decode_state=LinearMachineState.from_dict,
     )
 
 
-def schedule_from_json(raw: str) -> Schedule[Action, LinearMachineState]:
+def schedule_from_json(raw: str) -> _Schedule[Action, LinearMachineState]:
     """Restore a Linear schedule from JSON text.
 
     Returns:
@@ -182,7 +184,7 @@ def schedule_from_json(raw: str) -> Schedule[Action, LinearMachineState]:
     return schedule_from_dict(json.loads(raw))
 
 
-def load_schedule(filename: str | Path) -> Schedule[Action, LinearMachineState]:
+def load_schedule(filename: str | Path) -> _Schedule[Action, LinearMachineState]:
     """Load a Linear schedule from a UTF-8 JSON file.
 
     Returns:
@@ -199,8 +201,6 @@ def _require_unique_keys(values: Sequence[tuple[object, object]], label: str) ->
 
 __all__ = [
     "LinearMachineState",
-    "Schedule",
-    "ScheduledAction",
     "load_schedule",
     "schedule_from_dict",
     "schedule_from_json",

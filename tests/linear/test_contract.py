@@ -13,10 +13,10 @@ from dataclasses import replace
 
 import pytest
 
+from mqt.ionshuttler.core.gates import Rx
+from mqt.ionshuttler.core.result import CompilationStatus
 from mqt.ionshuttler.linear import LinearArchitecture, LinearCompiler, LinearCompilerConfig
-from mqt.ionshuttler.linear.actions import Rx
 from mqt.ionshuttler.linear.replay import replay_schedule
-from mqt.ionshuttler.linear.result import CompilationStatus
 
 
 def test_production_defaults_are_explicit() -> None:

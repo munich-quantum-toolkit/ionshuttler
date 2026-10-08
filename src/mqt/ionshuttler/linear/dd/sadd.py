@@ -20,17 +20,19 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
-from mqt.ionshuttler.linear.actions import PhysicalSwap, Rx, Shuttle, TransportAction
+from mqt.ionshuttler.core.gates import Rx
+from mqt.ionshuttler.core.result import CompilationResult
+from mqt.ionshuttler.linear.actions import PhysicalSwap, Shuttle, TransportAction
 from mqt.ionshuttler.linear.dd.critical_segments import CriticalSegment, compute_critical_segments
 from mqt.ionshuttler.linear.dd.result import LocalDDSequence
 from mqt.ionshuttler.linear.dd.sadd_solver import build_sadd_problem, solve_sadd_problem
 from mqt.ionshuttler.linear.replay import replay_schedule
-from mqt.ionshuttler.linear.result import CompilationResult, result_from_dict
+from mqt.ionshuttler.linear.result import result_from_dict
 from mqt.ionshuttler.linear.timeline import CompiledTimeline, build_timeline
 
 if TYPE_CHECKING:
+    from mqt.ionshuttler.core.schedule import Schedule
     from mqt.ionshuttler.linear.architecture import LinearArchitecture
-    from mqt.ionshuttler.linear.schedule import Schedule
 
 IonFloatMapping = Mapping[int, float]
 IonTimestepsMapping = Mapping[int, tuple[int, ...]]

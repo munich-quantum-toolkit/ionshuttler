@@ -15,11 +15,8 @@ from typing import ClassVar, cast
 import pytest
 
 from mqt.ionshuttler.core import Action
-from mqt.ionshuttler.core import Rx as SharedRx
 from mqt.ionshuttler.core.actions import decode_action, index_action_types
-from mqt.ionshuttler.core.gates import GATE_TYPES, Rzz
-from mqt.ionshuttler.linear.actions import Action as LinearAction
-from mqt.ionshuttler.linear.actions import Rx
+from mqt.ionshuttler.core.gates import GATE_TYPES, Rx, Rzz
 
 
 @dataclass(frozen=True)
@@ -44,11 +41,9 @@ def test_actions_are_value_data_without_architecture_rules() -> None:
         assert not hasattr(action, name)
 
 
-def test_linear_actions_use_shared_action_base() -> None:
-    """Linear action imports use the shared runtime classes."""
-    assert LinearAction is Action
+def test_gate_actions_use_shared_action_base() -> None:
+    """Gate actions use the shared runtime base class."""
     assert isinstance(Rx(ion=0, theta=0.25), Action)
-    assert Rx is SharedRx
 
 
 def test_actions_serialize_with_their_stable_serialized_type() -> None:

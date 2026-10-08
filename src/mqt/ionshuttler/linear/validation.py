@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.linear.actions import PhysicalSwap, Shuttle, TransportAction, is_adjacent
+from mqt.ionshuttler.linear.actions import PhysicalSwap, Shuttle, TransportAction
 from mqt.ionshuttler.linear.state import State, to_dict
 
 if TYPE_CHECKING:
@@ -119,4 +119,4 @@ def _unsupported_transport_message(action: TransportAction) -> str:
     return f"Linear transport layers contain only shuttles and physical swaps, not {type(action).__name__}"
 
 
-__all__ = ["is_adjacent", "is_transport_layer_valid", "is_transport_valid_in_layer"]
+__all__ = ["is_transport_layer_valid", "is_transport_valid_in_layer"]

@@ -14,29 +14,27 @@ from math import isclose, pi
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, cast
 
-from mqt.ionshuttler.linear.actions import (
-    Action,
+from mqt.ionshuttler.core.gates import (
     GateAction,
     GlobalGate,
-    PhysicalSwap,
     Rx,
     Rxx,
     Ry,
     Ryy,
     Rz,
     Rzz,
-    Shuttle,
-    TransportAction,
 )
+from mqt.ionshuttler.linear.actions import PhysicalSwap, Shuttle, TransportAction
 from mqt.ionshuttler.linear.dd.schemes import GateSpec
 from mqt.ionshuttler.linear.timeline import CompiledTimeline, build_timeline
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from mqt.ionshuttler.core.actions import Action
+    from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
     from mqt.ionshuttler.linear.architecture import LinearArchitecture
     from mqt.ionshuttler.linear.field_profile import FieldProfile
-    from mqt.ionshuttler.linear.schedule import Schedule, ScheduledAction
 
 FrameActionKind = Literal[
     "global_dd_pulse",

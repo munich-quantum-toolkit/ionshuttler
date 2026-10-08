@@ -17,6 +17,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
+from mqt.ionshuttler.core.actions import Action
 from mqt.ionshuttler.core.gates import (
     GATE_NAMES,
     SINGLE_QUBIT_GATE_NAMES,
@@ -29,7 +30,6 @@ from mqt.ionshuttler.core.gates import (
 from mqt.ionshuttler.linear.actions import (
     DEFAULT_ACTION_TYPES,
     LINEAR_ACTION_TYPES,
-    Action,
     PhysicalSwap,
     Shuttle,
     TransportTiming,

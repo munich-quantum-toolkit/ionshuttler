@@ -14,14 +14,12 @@ from math import pi
 
 import pytest
 
+from mqt.ionshuttler.core.gates import GlobalGate, Rx, Ry, Rz
+from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.linear import GateTiming, schedule_from_json
 from mqt.ionshuttler.linear.actions import (
     DEFAULT_ACTION_TYPES,
-    GlobalGate,
     PhysicalSwap,
-    Rx,
-    Ry,
-    Rz,
     Shuttle,
 )
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
@@ -32,7 +30,7 @@ from mqt.ionshuttler.linear.dd.schedule_transform import (
     rebuild_schedule,
 )
 from mqt.ionshuttler.linear.replay import is_schedule_valid, replay_schedule
-from mqt.ionshuttler.linear.schedule import Schedule, ScheduledAction, schedule_from_path
+from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 
 

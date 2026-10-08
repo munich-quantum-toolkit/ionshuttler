@@ -16,24 +16,22 @@ from itertools import count
 from math import pi
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
+from mqt.ionshuttler.core.gates import Rx, SingleQubitGate, TwoQubitGate
+from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.linear.actions import (
-    Action,
     PhysicalSwap,
-    Rx,
     Shuttle,
-    SingleQubitGate,
     TransportAction,
-    TwoQubitGate,
 )
 from mqt.ionshuttler.linear.dd.critical_segments import CriticalSegment, compute_critical_segments
 from mqt.ionshuttler.linear.dd.schedule_transform import rebuild_schedule
 from mqt.ionshuttler.linear.replay import is_schedule_valid
-from mqt.ionshuttler.linear.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.linear.timeline import CompiledTimeline, build_timeline
 
 if TYPE_CHECKING:
     from types import ModuleType
 
+    from mqt.ionshuttler.core.actions import Action
     from mqt.ionshuttler.linear.architecture import LinearArchitecture
 
 _MISSING_OR_TOOLS_MESSAGE = "OR-Tools is required for SADD optimization; install IonShuttler with the 'dd' extra"

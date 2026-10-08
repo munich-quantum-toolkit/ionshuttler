@@ -17,8 +17,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from mqt.ionshuttler import visualize
+from mqt.ionshuttler.core.gates import Rx
+from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
+from mqt.ionshuttler.core.schedule import Schedule
 from mqt.ionshuttler.linear import GateTiming, TransportTiming
-from mqt.ionshuttler.linear.actions import Rx, Shuttle
+from mqt.ionshuttler.linear.actions import Shuttle
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.dd import SADDConfig, SADDMethod, SADDReport, SADDResult, run_sadd
 from mqt.ionshuttler.linear.dd import sadd as sadd_module
@@ -30,8 +33,7 @@ from mqt.ionshuttler.linear.dd.sadd_solver import (
 )
 from mqt.ionshuttler.linear.dd.schedule_transform import insert_action_at_time
 from mqt.ionshuttler.linear.field_profile import FieldProfile
-from mqt.ionshuttler.linear.result import CompilationResult, CompilationStatus
-from mqt.ionshuttler.linear.schedule import Schedule, schedule_from_path
+from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 
 if TYPE_CHECKING:
