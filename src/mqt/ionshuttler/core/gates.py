@@ -166,7 +166,8 @@ class GateAction(Action):
     @property
     def ions(self) -> tuple[int, ...]:
         """The gate's ordered ion operands."""
-        raise NotImplementedError("...")
+        msg = "..."
+        raise NotImplementedError(msg)
 
     def __post_init__(self) -> None:
         """Validate the optional circuit gate identifier and the parameters."""
