@@ -5,51 +5,40 @@
 #
 # Licensed under the MIT License
 
-"""Checks for actions and groups of transports in a Linear schedule."""
+"""Checks for groups of transports that start together in a Linear schedule."""
 
 from __future__ import annotations
 
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.linear.actions import (
-    Action,
-    PhysicalSwap,
-    Shuttle,
-    TransportAction,
-    is_adjacent,
-)
+from mqt.ionshuttler.linear.actions import PhysicalSwap, Shuttle, TransportAction
 from mqt.ionshuttler.linear.state import State, to_dict
 
 if TYPE_CHECKING:
-    from mqt.ionshuttler.linear.architecture import Architecture
+    from collections.abc import Sequence
 
-
-def is_action_valid(state: State, action: Action, architecture: Architecture) -> bool:
-    """Return whether an action can start in the current state.
-
-    This asks the action to check its own requirements. Use
-    :func:`is_transport_layer_valid` when several transports start together.
-    """
-    return action.is_valid(state, architecture)
+    from mqt.ionshuttler.linear.architecture import LinearArchitecture
 
 
 def is_transport_layer_valid(
     state: State,
-    actions: tuple[TransportAction, ...],
-    architecture: Architecture,
+    actions: Sequence[TransportAction],
+    architecture: LinearArchitecture,
 ) -> bool:
     """Return whether several transports can safely happen together.
 
     An ion may enter a site that another ion leaves in the same group, provided
-    every ion ends at a different valid site.
+    every ion ends at a different valid site. Two shuttles may not exchange
+    their sites; a physical swap describes that operation.
+
+    Raises:
+        TypeError: If an action is not a Linear shuttle or physical swap.
     """
     if not actions:
         return True
 
-    positions = to_dict(state)
-    final_positions = dict(positions)
-    action_positions: list[dict[int, int]] = []
+    final_positions = to_dict(state)
     acted_ions: set[int] = set()
     shuttle_edges: set[tuple[int, int]] = set()
 
@@ -64,35 +53,70 @@ def is_transport_layer_valid(
                 return False
             updated_positions = {action.ion_a: action.pos_b, action.ion_b: action.pos_a}
         else:
-            if not action.is_valid(state, architecture):
-                return False
-            updated_positions = to_dict(action.apply(state, architecture))
-            if set(updated_positions) != set(positions):
-                return False
-            updated_positions = {
-                ion: updated_positions[ion] for ion, position in positions.items() if updated_positions[ion] != position
-            }
+            msg = _unsupported_transport_message(action)
+            raise TypeError(msg)
         if set(updated_positions) & acted_ions:
             return False
         acted_ions.update(updated_positions)
-        action_positions.append(updated_positions)
-
-    for action in actions:
-        validation_state = state
-        if isinstance(action, Shuttle):
-            layer_positions = tuple(
-                (ion, position) for ion, position in state.positions if ion == action.ion or ion not in acted_ions
-            )
-            validation_state = replace(state, positions=layer_positions)
-        if isinstance(action, Shuttle | PhysicalSwap) and not action.is_valid(validation_state, architecture):
-            return False
-
-    for updated_positions in action_positions:
         final_positions.update(updated_positions)
+
+    if not all(_is_valid_in_layer(state, action, acted_ions, architecture) for action in actions):
+        return False
 
     return all(0 <= position < architecture.num_sites for position in final_positions.values()) and len(
         set(final_positions.values())
     ) == len(final_positions)
 
 
-__all__ = ["is_action_valid", "is_adjacent", "is_transport_layer_valid"]
+def is_transport_valid_in_layer(
+    state: State,
+    action: TransportAction,
+    actions: Sequence[TransportAction],
+    architecture: LinearArchitecture,
+) -> bool:
+    """Return whether one transport of a layer can start in a state.
+
+    The other ions that act in the layer do not block the transport, so it may
+    enter a site that one of these ions leaves. Use
+    :func:`is_transport_layer_valid` to check the layer as a whole.
+
+    Args:
+        state: State in which the transport starts.
+        action: Transport to check.
+        actions: Every transport of the layer, including ``action``.
+        architecture: Hardware model that defines the transport rules.
+
+    Returns:
+        Whether the transport can start.
+    """
+    acted_ions = {ion for layer_action in actions for ion in _transport_ions(layer_action)}
+    return _is_valid_in_layer(state, action, acted_ions, architecture)
+
+
+def _is_valid_in_layer(
+    state: State,
+    action: TransportAction,
+    acted_ions: set[int],
+    architecture: LinearArchitecture,
+) -> bool:
+    own_ions = _transport_ions(action)
+    layer_positions = tuple(
+        (ion, position) for ion, position in state.positions if ion in own_ions or ion not in acted_ions
+    )
+    return architecture.is_action_valid(replace(state, positions=layer_positions), action)
+
+
+def _transport_ions(action: TransportAction) -> frozenset[int]:
+    if isinstance(action, Shuttle):
+        return frozenset({action.ion})
+    if isinstance(action, PhysicalSwap):
+        return frozenset({action.ion_a, action.ion_b})
+    msg = _unsupported_transport_message(action)
+    raise TypeError(msg)
+
+
+def _unsupported_transport_message(action: TransportAction) -> str:
+    return f"Linear transport layers contain only shuttles and physical swaps, not {type(action).__name__}"
+
+
+__all__ = ["is_transport_layer_valid", "is_transport_valid_in_layer"]

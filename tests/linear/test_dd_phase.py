@@ -13,24 +13,27 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from mqt.ionshuttler.linear.actions import Action, AdvanceTime, Shuttle
-from mqt.ionshuttler.linear.architecture import Architecture
+from mqt.ionshuttler.linear.actions import Shuttle
+from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.dd.phase import accumulated_phase
-from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
 from mqt.ionshuttler.linear.field_profile import FieldProfile
-from mqt.ionshuttler.linear.schedule import ActionSchedule
-from mqt.ionshuttler.linear.state import create_initial_state
+from mqt.ionshuttler.linear.schedule import schedule_from_path
+from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
+from mqt.ionshuttler.linear.timeline import CompiledTimeline, build_timeline
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from mqt.ionshuttler.linear.state import SearchTransition
 
-def _timeline(path: Sequence[Action]) -> CompiledTimeline:
-    architecture = Architecture(num_sites=3)
+
+def _timeline(path: Sequence[SearchTransition]) -> CompiledTimeline:
+    architecture = LinearArchitecture(num_sites=3)
     return build_timeline(
-        ActionSchedule.from_actions(
+        schedule_from_path(
             path,
             create_initial_state(1, architecture, initial_positions=[0]),
+            architecture,
         ),
         architecture,
     )

@@ -13,9 +13,10 @@ from dataclasses import dataclass, field, replace
 from time import perf_counter
 from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.linear.actions import Action, GateAction
+from mqt.ionshuttler.circuit import parse_circuit
+from mqt.ionshuttler.core.actions import Action
+from mqt.ionshuttler.core.gates import GateAction
 from mqt.ionshuttler.linear.config import LinearCompilerConfig
-from mqt.ionshuttler.linear.parser import parse_circuit
 from mqt.ionshuttler.linear.partition_bias import compute_gate_zone_assignment, zone_site_pairs
 from mqt.ionshuttler.linear.search import search
 from mqt.ionshuttler.linear.state import create_initial_state
@@ -23,9 +24,9 @@ from mqt.ionshuttler.linear.state import create_initial_state
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from mqt.ionshuttler.linear.architecture import Architecture
-    from mqt.ionshuttler.linear.parser import CircuitInput
-    from mqt.ionshuttler.linear.result import CompilationResult
+    from mqt.ionshuttler.circuit import CircuitInput
+    from mqt.ionshuttler.linear.architecture import LinearArchitecture
+    from mqt.ionshuttler.linear.result import LinearCompilationResult
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,7 @@ class LinearCompiler:
     advancement remains an internal part of scheduling.
     """
 
-    architecture: Architecture
+    architecture: LinearArchitecture
     config: LinearCompilerConfig = field(default_factory=LinearCompilerConfig)
     action_types: tuple[type[Action], ...] | None = None
 
@@ -46,7 +47,7 @@ class LinearCompiler:
 
         Raises:
             TypeError: If an entry is not an ``Action`` subclass.
-            ValueError: If two entries have the same serialized name.
+            ValueError: If an entry is repeated or unsupported by the architecture.
         """
         action_types = (
             self.architecture.supported_action_types if self.action_types is None else tuple(self.action_types)
@@ -56,9 +57,8 @@ class LinearCompiler:
             if not isinstance(action_type, type) or not issubclass(action_type, Action):
                 msg = "action_types must contain Action subclasses"
                 raise TypeError(msg)
-        serialized_names = [action_type.__name__ for action_type in action_types]
-        if len(set(serialized_names)) != len(serialized_names):
-            msg = "action_types must have unique class names"
+        if len(set(action_types)) != len(action_types):
+            msg = "action_types must not contain duplicates"
             raise ValueError(msg)
         unsupported = [
             action_type.__name__ for action_type in action_types if not self.architecture.supports(action_type)
@@ -71,44 +71,40 @@ class LinearCompiler:
         self,
         circuit: CircuitInput,
         *,
-        initial_positions: Sequence[int] | None = None,
+        initial_placement: Sequence[int] | None = None,
         pre_partition: bool = False,
-    ) -> CompilationResult:
+    ) -> LinearCompilationResult:
         """Compile a circuit from QASM text, a QASM file, or Qiskit.
 
         Args:
             circuit: Circuit to compile.
-            initial_positions: Optional starting site for each circuit qubit.
+            initial_placement: Optional starting site for each circuit ion.
             pre_partition: Bias multi-zone search toward a fine-grained gate partition.
                 Partitioning consumes the compile time budget but is not interrupted
                 when the budget expires.
 
         Returns:
             The resulting schedule and completion status.
+
         """
         action_types = self.action_types
         assert action_types is not None  # Normalized during initialization.
-        num_qubits, gate_list, predecessors, _ = parse_circuit(
+        parsed_circuit = parse_circuit(
             circuit,
-            use_dependencies=self.config.search.use_dependencies,
-            gate_timing=self.config.hardware_timing.gates,
             gate_types=tuple(action_type for action_type in action_types if issubclass(action_type, GateAction)),
         )
         initial_state = create_initial_state(
-            num_qubits,
+            parsed_circuit.num_ions,
             self.architecture,
-            initial_positions=None if initial_positions is None else tuple(initial_positions),
+            initial_positions=None if initial_placement is None else tuple(initial_placement),
         )
-        gate_order = list(range(len(gate_list)))
-        gates = dict(zip(gate_order, gate_list, strict=True))
         gate_zone: dict[int, str] = {}
         preferred_zone_site_pairs: dict[str, tuple[tuple[int, int], ...]] = {}
         started = None
         if pre_partition and len(self.architecture.processing_zones or {}) >= 2:
             started = perf_counter()
             gate_zone = compute_gate_zone_assignment(
-                gate_order,
-                gates,
+                parsed_circuit,
                 self.architecture,
                 config=self.config.search.pre_partition_config,
             )
@@ -125,15 +121,21 @@ class LinearCompiler:
             )
         result = search(
             initial_state,
-            gate_order,
-            gates,
+            parsed_circuit,
             self.architecture,
-            predecessors,
             config,
             action_types=action_types,
             gate_zone=gate_zone,
             zone_site_pairs=preferred_zone_site_pairs,
         )
+        if result.diagnostics is not None and gate_zone:
+            result = replace(
+                result,
+                diagnostics=replace(
+                    result.diagnostics,
+                    preferred_gate_zones=tuple(gate_zone.items()),
+                ),
+            )
         return result if started is None else replace(result, wall_clock_s=perf_counter() - started)
 
 

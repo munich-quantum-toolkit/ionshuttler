@@ -9,11 +9,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
-from mqt.ionshuttler.linear import Architecture, LinearCompiler, LinearCompilerConfig
-from mqt.ionshuttler.linear.actions import AdvanceTime
-from mqt.ionshuttler.linear.result import CompilationStatus
+from mqt.ionshuttler.core.gates import Rx
+from mqt.ionshuttler.core.result import CompilationStatus
+from mqt.ionshuttler.linear import LinearArchitecture, LinearCompiler, LinearCompilerConfig
+from mqt.ionshuttler.linear.replay import replay_schedule
 
 
 def test_production_defaults_are_explicit() -> None:
@@ -30,14 +33,59 @@ def test_production_defaults_are_explicit() -> None:
 
 def test_compilation_stops_advancing_after_pending_work_finishes() -> None:
     """Advance time only while an operation or dependency remains pending."""
-    architecture = Architecture(num_sites=5, processing_zones={"pz": [2, 3]})
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2, 3]})
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.1) q[0];\n'
 
     result = LinearCompiler(architecture).compile(qasm)
 
     assert result.status is CompilationStatus.SUCCESS
-    assert isinstance(result.path[-1], AdvanceTime)
-    assert sum(isinstance(action, AdvanceTime) for action in result.path) == result.num_timesteps
+    assert result.schedule.scheduled_actions[-1].end_time == result.end_time
     assert result.final_state is not None
-    assert result.final_state.time == result.num_timesteps
-    assert all(free_time <= result.num_timesteps for _ion, free_time in result.final_state.ions_busy_until)
+    assert result.final_state.time == result.end_time
+    assert all(free_time <= result.end_time for _ion, free_time in result.final_state.ions_busy_until)
+    result.validate()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("duration", 7, "scheduled duration"),
+        ("processing_zone_id", "other", "scheduled processing zone"),
+        ("processing_zone_id", None, "scheduled processing zone"),
+    ],
+)
+def test_schedule_validation_checks_explicit_execution_choices(field: str, value: object, message: str) -> None:
+    """Reject schedule metadata that disagrees with Linear execution."""
+    architecture = LinearArchitecture(num_sites=2, processing_zones={"pz": [0, 1]})
+    qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.1) q[0];\n'
+    result = LinearCompiler(architecture).compile(qasm, initial_placement=[0])
+    gate_index = next(
+        index for index, item in enumerate(result.schedule.scheduled_actions) if isinstance(item.action, Rx)
+    )
+    changed = replace(result.schedule.scheduled_actions[gate_index], **{field: value})
+    scheduled_actions = list(result.schedule.scheduled_actions)
+    scheduled_actions[gate_index] = changed
+    invalid_schedule = replace(
+        result.schedule,
+        scheduled_actions=tuple(scheduled_actions),
+        end_time=max(result.end_time, changed.end_time),
+    )
+
+    with pytest.raises(ValueError, match=message):
+        replay_schedule(invalid_schedule, architecture)
+
+
+def test_schedule_validation_rejects_a_gate_on_an_absent_ion() -> None:
+    """Report an unschedulable action before inspecting its metadata."""
+    architecture = LinearArchitecture(num_sites=2, processing_zones={"pz": [0, 1]})
+    qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.1) q[0];\n'
+    result = LinearCompiler(architecture).compile(qasm, initial_placement=[0])
+    gate_index = next(
+        index for index, item in enumerate(result.schedule.scheduled_actions) if isinstance(item.action, Rx)
+    )
+    scheduled_actions = list(result.schedule.scheduled_actions)
+    scheduled_actions[gate_index] = replace(scheduled_actions[gate_index], action=Rx(ion=7, theta=0.1))
+    invalid_schedule = replace(result.schedule, scheduled_actions=tuple(scheduled_actions))
+
+    with pytest.raises(ValueError, match="is not valid at time"):
+        replay_schedule(invalid_schedule, architecture)

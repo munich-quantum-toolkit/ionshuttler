@@ -10,42 +10,49 @@
 from __future__ import annotations
 
 from math import pi
+from typing import TYPE_CHECKING
 
 import pytest
 
-from mqt.ionshuttler.linear.actions import Action, AdvanceTime, GateSpec, Rx, Ry, Rz, Shuttle
-from mqt.ionshuttler.linear.architecture import Architecture
+from mqt.ionshuttler.core.gates import Rx, Ry, Rz
+from mqt.ionshuttler.linear.actions import Shuttle
+from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.dd import IdealizedHahnConfig, IdealizedHahnReport, apply_idealized_hahn
 from mqt.ionshuttler.linear.dd.frame_replay import PauliFrame, build_frame_history, framed_action_events
 from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
-from mqt.ionshuttler.linear.dd.schemes import DDScheme
-from mqt.ionshuttler.linear.dd.timeline import build_timeline
-from mqt.ionshuttler.linear.schedule import ActionSchedule
-from mqt.ionshuttler.linear.state import create_initial_state
+from mqt.ionshuttler.linear.dd.schemes import DDScheme, GateSpec
+from mqt.ionshuttler.linear.schedule import schedule_from_path
+from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
+from mqt.ionshuttler.linear.timeline import build_timeline
+
+if TYPE_CHECKING:
+    from mqt.ionshuttler.core.schedule import Schedule
+    from mqt.ionshuttler.linear.state import SearchTransition
 
 
 def _result(
-    architecture: Architecture,
-    path: list[Action],
+    architecture: LinearArchitecture,
+    path: list[SearchTransition],
     *,
-    num_timesteps: int,
+    end_time: int,
     positions: list[int],
-) -> ActionSchedule:
-    program = ActionSchedule.from_actions(
+) -> Schedule:
+    program = schedule_from_path(
         path,
         create_initial_state(len(positions), architecture, initial_positions=positions),
+        architecture,
     )
-    assert program.num_timesteps == num_timesteps
+    assert program.end_time == end_time
     return program
 
 
 def test_idealized_hahn_inserts_before_transport_and_at_terminal_boundary() -> None:
     """Preserve the source comparator's overlapping and closing-pulse order."""
-    architecture = Architecture(num_sites=3, processing_zones={"remote": [2]})
+    architecture = LinearArchitecture(num_sites=3, processing_zones={"remote": [2]})
     original = _result(
         architecture,
         [Shuttle(ion=0, src=0, dst=1), AdvanceTime(), AdvanceTime()],
-        num_timesteps=2,
+        end_time=2,
         positions=[0],
     )
 
@@ -60,26 +67,26 @@ def test_idealized_hahn_inserts_before_transport_and_at_terminal_boundary() -> N
         window=(0, 2),
         scheme_name="IdealizedHahn",
         pulse_timesteps=(1, 2),
-        action_ids=(3, 4),
+        action_ids=(1, 2),
     )
 
     assert output.report.sequences == (expected_record,)
     assert output.report.sequences[0].action_ids == tuple(
         item.action_id for item in output.schedule.scheduled_actions if isinstance(item.action, Rx)
     )
-    assert timeline.action_at(0) == (Shuttle(ion=0, src=0, dst=1), AdvanceTime())
-    assert timeline.action_at(1) == (Rx(ion=0, theta=pi), AdvanceTime())
+    assert timeline.action_at(0) == (Shuttle(ion=0, src=0, dst=1),)
+    assert timeline.action_at(1) == (Rx(ion=0, theta=pi),)
     assert timeline.action_at(2) == (Rx(ion=0, theta=pi),)
     assert set(output.report.sequences[0].action_ids).isdisjoint(item.action_id for item in original.scheduled_actions)
 
 
 def test_idealized_hahn_orders_terminal_pulses_before_logical_gates() -> None:
     """Insert all local terminal pulses before an existing logical gate."""
-    architecture = Architecture(num_sites=2, processing_zones={"pz": [0, 1]})
+    architecture = LinearArchitecture(num_sites=2, processing_zones={"pz": [0, 1]})
     original = _result(
         architecture,
         [AdvanceTime(), AdvanceTime(), Ry(ion=1, theta=0.25)],
-        num_timesteps=2,
+        end_time=3,
         positions=[0, 1],
     )
 
@@ -101,18 +108,18 @@ def test_idealized_hahn_orders_terminal_pulses_before_logical_gates() -> None:
     )
     assert [event.kind for event in events[-3:]] == [
         "local_dd_pulse",
-        "local_dd_pulse",
         "algorithmic_gate",
+        "local_dd_pulse",
     ]
 
 
 def test_idealized_hahn_rounds_clamps_and_deduplicates_in_sequence_order() -> None:
     """Retain the first pulse when rounded scheme positions share a boundary."""
-    architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
+    architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
     original = _result(
         architecture,
         [AdvanceTime() for _ in range(4)],
-        num_timesteps=4,
+        end_time=4,
         positions=[0],
     )
     scheme = DDScheme(
@@ -128,17 +135,17 @@ def test_idealized_hahn_rounds_clamps_and_deduplicates_in_sequence_order() -> No
     )
 
     assert output.report.sequences[0].pulse_timesteps == (0, 1, 4)
-    assert [type(action) for action in output.schedule.path[:2]] == [Rx, AdvanceTime]
+    assert [type(action) for action in output.schedule.path[:2]] == [Rx, Ry]
     assert build_timeline(output.schedule, architecture).action_at(4) == (Rx(ion=0, theta=pi),)
 
 
 def test_idealized_hahn_honors_explicit_scheme_named_hahn() -> None:
     """Do not replace an explicitly supplied scheme based only on its name."""
-    architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
+    architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
     original = _result(
         architecture,
         [AdvanceTime() for _ in range(4)],
-        num_timesteps=4,
+        end_time=4,
         positions=[0],
     )
     scheme = DDScheme(
@@ -155,11 +162,11 @@ def test_idealized_hahn_honors_explicit_scheme_named_hahn() -> None:
 
 def test_idealized_hahn_replays_frames_and_round_trips_result_json() -> None:
     """Leave one midpoint pulse and a persistent frame, and serialize losslessly."""
-    architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
+    architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
     original = _result(
         architecture,
         [AdvanceTime() for _ in range(4)],
-        num_timesteps=4,
+        end_time=4,
         positions=[0],
     )
 
@@ -177,11 +184,11 @@ def test_idealized_hahn_replays_frames_and_round_trips_result_json() -> None:
 
 def test_idealized_hahn_restores_the_identity_frame_with_a_terminating_pulse() -> None:
     """Reproduce the closing-pulse comparator when it is explicitly requested."""
-    architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
+    architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
     original = _result(
         architecture,
         [AdvanceTime() for _ in range(4)],
-        num_timesteps=4,
+        end_time=4,
         positions=[0],
     )
 
@@ -194,14 +201,15 @@ def test_idealized_hahn_restores_the_identity_frame_with_a_terminating_pulse() -
     history = build_frame_history(build_timeline(output.schedule, architecture), local_pulse_action_ids)
 
     assert output.report.sequences[0].pulse_timesteps == (2, 4)
+    assert output.schedule.end_time == original.end_time
     assert history.frame_for_ion(0, 4) == PauliFrame("I")
 
 
 def test_idealized_hahn_skips_windows_too_short_for_an_interior_midpoint() -> None:
     """Require two idle timesteps so a pulse cannot land on the window start."""
-    architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
-    single = _result(architecture, [AdvanceTime()], num_timesteps=1, positions=[0])
-    paired = _result(architecture, [AdvanceTime(), AdvanceTime()], num_timesteps=2, positions=[0])
+    architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
+    single = _result(architecture, [AdvanceTime()], end_time=1, positions=[0])
+    paired = _result(architecture, [AdvanceTime(), AdvanceTime()], end_time=2, positions=[0])
 
     assert apply_idealized_hahn(single, architecture).report.sequences == ()
     assert apply_idealized_hahn(paired, architecture).report.sequences[0].pulse_timesteps == (1,)
@@ -209,11 +217,11 @@ def test_idealized_hahn_skips_windows_too_short_for_an_interior_midpoint() -> No
 
 def test_idealized_hahn_pulse_is_unaffected_by_a_cotimed_virtual_rz() -> None:
     """Identify pulses by action id, never by matching co-timed rotations."""
-    architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
+    architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
     original = _result(
         architecture,
-        [AdvanceTime(), Rz(ion=0, theta=0.2, virtual=True), AdvanceTime()],
-        num_timesteps=2,
+        [AdvanceTime(), Rz(ion=0, theta=0.2), AdvanceTime()],
+        end_time=2,
         positions=[0],
     )
 
@@ -228,8 +236,8 @@ def test_idealized_hahn_pulse_is_unaffected_by_a_cotimed_virtual_rz() -> None:
 
 def test_idealized_hahn_returns_unchanged_program_without_eligible_windows() -> None:
     """Avoid rebuilding when every idle window is shorter than configured."""
-    architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
-    original = _result(architecture, [AdvanceTime()], num_timesteps=1, positions=[0])
+    architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
+    original = _result(architecture, [AdvanceTime()], end_time=1, positions=[0])
 
     output = apply_idealized_hahn(original, architecture)
 
@@ -239,8 +247,8 @@ def test_idealized_hahn_returns_unchanged_program_without_eligible_windows() -> 
 
 def test_idealized_hahn_rejects_unknown_schemes() -> None:
     """Report unknown scheme names at the pass boundary."""
-    architecture = Architecture(num_sites=1, processing_zones={"pz": [0]})
-    original = _result(architecture, [AdvanceTime()], num_timesteps=1, positions=[0])
+    architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
+    original = _result(architecture, [AdvanceTime()], end_time=1, positions=[0])
 
     with pytest.raises(ValueError, match="unknown DD scheme"):
         apply_idealized_hahn(
@@ -258,3 +266,28 @@ def test_idealized_hahn_config_rejects_invalid_values() -> None:
         IdealizedHahnConfig(min_idle_timesteps=0)
     with pytest.raises(ValueError, match="label"):
         IdealizedHahnConfig(label="")
+
+
+def test_inserted_pulses_record_the_architecture_processing_zone() -> None:
+    """Record the ion's zone for physical pulses and none for virtual pulses."""
+    architecture = LinearArchitecture(num_sites=3, processing_zones={"pz": [0, 1, 2]})
+    original = _result(
+        architecture,
+        [AdvanceTime(), AdvanceTime()],
+        end_time=2,
+        positions=[0],
+    )
+
+    physical = apply_idealized_hahn(
+        original,
+        architecture,
+        config=IdealizedHahnConfig(scheme=DDScheme("x", relative_gate_times=(0.5,), gate_specs=(GateSpec("Rx", pi),))),
+    )
+    virtual = apply_idealized_hahn(
+        original,
+        architecture,
+        config=IdealizedHahnConfig(scheme=DDScheme("z", relative_gate_times=(0.5,), gate_specs=(GateSpec("Rz", pi),))),
+    )
+
+    assert [item.processing_zone_id for item in physical.schedule.scheduled_actions] == ["pz"]
+    assert [item.processing_zone_id for item in virtual.schedule.scheduled_actions] == [None]

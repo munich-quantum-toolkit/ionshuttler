@@ -13,13 +13,9 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from mqt.ionshuttler.linear.config import (
-    GateTiming,
-    HardwareTiming,
-    LinearCompilerConfig,
-    SearchConfig,
-    TransportTiming,
-)
+from mqt.ionshuttler.linear import GateTiming, TransportTiming
+from mqt.ionshuttler.linear.architecture import LinearArchitecture
+from mqt.ionshuttler.linear.config import LinearCompilerConfig, SearchConfig
 from mqt.ionshuttler.linear.cost import zero_heuristic
 
 if TYPE_CHECKING:
@@ -28,14 +24,14 @@ if TYPE_CHECKING:
     from mqt.ionshuttler.linear.cost import HeuristicFn
 
 
-def test_compiler_config_uses_ready_to_run_defaults() -> None:
-    """Provide ready-to-use timing and search settings."""
+def test_architecture_and_compiler_config_use_ready_to_run_defaults() -> None:
+    """Keep hardware data on the architecture and policy in compiler config."""
     config = LinearCompilerConfig()
+    architecture = LinearArchitecture(num_sites=1)
 
-    assert config.hardware_timing == HardwareTiming(
-        transport=TransportTiming(shuttle=1, swap=3),
-        gates=GateTiming(rx=1, ry=1, rz=0, rxx=2, ryy=2, rzz=2),
-    )
+    assert architecture.gate_timing == GateTiming(rx=1, ry=1, rz=0, rxx=2, ryy=2, rzz=2)
+    assert architecture.gate_timing.virtual_single_qubit_gates == frozenset({"rz"})
+    assert architecture.transport_timing == TransportTiming(shuttle=1, swap=3)
     assert config.search == SearchConfig(
         horizon=3,
         committed_gates=2,
@@ -90,6 +86,20 @@ def test_transport_timing_requires_positive_integer_durations(value: object) -> 
     """Reject transport durations that cannot occupy a positive timestep count."""
     with pytest.raises(ValueError, match="integer >= 1"):
         TransportTiming(swap=cast("int", value))
+
+
+def test_transport_timing_round_trips_and_rejects_malformed_data() -> None:
+    """Restore transport timing and use defaults for missing fields."""
+    timing = TransportTiming(shuttle=2, swap=5)
+
+    assert TransportTiming.from_dict(timing.to_dict()) == timing
+    assert TransportTiming.from_dict({"swap": 4}) == TransportTiming(shuttle=1, swap=4)
+    with pytest.raises(TypeError, match="shuttle duration must be an integer"):
+        TransportTiming.from_dict({"shuttle": "1"})
+    with pytest.raises(TypeError, match="transport_timing must be a JSON object"):
+        TransportTiming.from_dict(None)
+    with pytest.raises(ValueError, match="unknown transport_timing fields: shutle"):
+        TransportTiming.from_dict({"shutle": 2})
 
 
 @pytest.mark.parametrize(

@@ -14,12 +14,13 @@ from math import ceil
 from sys import maxsize
 from typing import TYPE_CHECKING, Protocol
 
-from mqt.ionshuttler.linear.actions import GateAction, SingleQubitGate, TwoQubitGate
+from mqt.ionshuttler.core.gates import SingleQubitGate, TwoQubitGate
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from mqt.ionshuttler.linear.architecture import Architecture
+    from mqt.ionshuttler.circuit import Circuit
+    from mqt.ionshuttler.linear.architecture import LinearArchitecture
     from mqt.ionshuttler.linear.state import State
 
 
@@ -28,31 +29,37 @@ class HeuristicFn(Protocol):
 
     A custom heuristic supplied through
     :attr:`~mqt.ionshuttler.linear.SearchConfig.heuristic` must accept these
-    arguments. The search always passes them positionally, so an
-    implementation may name its parameters freely. The built-in
-    :func:`heuristic` additionally accepts optional caching arguments, which
-    the search passes only to that default.
+    arguments. The search passes the circuit inputs positionally and the
+    optional pre-partition data by keyword. The built-in :func:`heuristic`
+    additionally accepts a cache, which the search passes only to that default.
     """
 
     def __call__(
         self,
         state: State,
-        architecture: Architecture,
-        gate_order: Sequence[int],
-        gates: Mapping[int, GateAction],
-        predecessors: Mapping[int, frozenset[int]] | None = None,
+        architecture: LinearArchitecture,
+        circuit: Circuit,
+        active_gate_ids: Sequence[int],
+        predecessors: Sequence[frozenset[int]],
         /,
+        *,
+        use_dependencies: bool = True,
+        gate_zone: Mapping[int, str] | None = None,
+        zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
     ) -> int:
         """Estimate the work still needed to finish the requested gates.
 
         Args:
             state: Search state to score.
             architecture: Hardware layout the schedule targets.
-            gate_order: Gates to schedule, including completed and running
+            circuit: Circuit whose gates are being scheduled.
+            active_gate_ids: Gates to schedule, including completed and running
                 ones; filter with ``state.completed_gates`` and
                 ``state.in_progress_gates``.
-            gates: Gate actions indexed by identifier.
-            predecessors: Optional map of which gates must precede others.
+            predecessors: Effective direct predecessors indexed by gate ID.
+            use_dependencies: Whether the estimate follows the dependency DAG.
+            gate_zone: Optional preferred processing zone for each gate.
+            zone_site_pairs: Optional valid two-ion site pairs for each zone.
 
         Returns:
             A nonnegative estimate of the remaining schedule time.
@@ -67,11 +74,15 @@ def cost(state: State) -> int:
 
 def zero_heuristic(
     state: State,
-    architecture: Architecture,
-    gate_order: Sequence[int],
-    gates: Mapping[int, GateAction],
-    predecessors: Mapping[int, frozenset[int]] | None = None,
+    architecture: LinearArchitecture,
+    circuit: Circuit,
+    active_gate_ids: Sequence[int],
+    predecessors: Sequence[frozenset[int]],
     /,
+    *,
+    use_dependencies: bool = True,
+    gate_zone: Mapping[int, str] | None = None,
+    zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
 ) -> int:
     """Estimate nothing about the work left to finish the requested gates.
 
@@ -83,14 +94,17 @@ def zero_heuristic(
     Args:
         state: Search state to score.
         architecture: Hardware layout the schedule targets.
-        gate_order: Gates to schedule, including completed and running ones.
-        gates: Gate actions indexed by identifier.
-        predecessors: Optional map of which gates must precede others.
+        circuit: Circuit whose gates are being scheduled.
+        active_gate_ids: Gates to schedule, including completed and running ones.
+        predecessors: Effective direct predecessors indexed by gate ID.
+        use_dependencies: Whether the estimate follows the dependency DAG.
+        gate_zone: Optional preferred processing zone for each gate.
+        zone_site_pairs: Optional valid two-ion site pairs for each zone.
 
     Returns:
         Always ``0``.
     """
-    del state, architecture, gate_order, gates, predecessors
+    del state, architecture, circuit, active_gate_ids, predecessors, use_dependencies, gate_zone, zone_site_pairs
     return 0
 
 
@@ -125,11 +139,12 @@ def min_distance_to_valid_pair(
 
 def heuristic(
     state: State,
-    architecture: Architecture,
-    gate_order: Sequence[int],
-    gates: Mapping[int, GateAction],
-    predecessors: Mapping[int, frozenset[int]] | None = None,
+    architecture: LinearArchitecture,
+    circuit: Circuit,
+    active_gate_ids: Sequence[int],
+    predecessors: Sequence[frozenset[int]],
     *,
+    use_dependencies: bool = True,
     critical_path_cache: dict[tuple[int, ...], int] | None = None,
     gate_zone: Mapping[int, str] | None = None,
     zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
@@ -147,14 +162,16 @@ def heuristic(
         A nonnegative estimate combining ion movement and remaining gate depth.
     """
     running = {gate_id for gate_id, _ in state.in_progress_gates}
-    remaining = [gate_id for gate_id in gate_order if gate_id not in state.completed_gates and gate_id not in running]
+    remaining = [
+        gate_id for gate_id in active_gate_ids if gate_id not in state.completed_gates and gate_id not in running
+    ]
     if not remaining:
         return 0
 
     positions = dict(state.positions)
     routing_estimate = 0
     for gate_id in remaining:
-        gate = gates[gate_id]
+        gate = circuit.gates[gate_id]
         if isinstance(gate, SingleQubitGate):
             continue
         if isinstance(gate, TwoQubitGate):
@@ -169,7 +186,7 @@ def heuristic(
         else:
             routing_estimate += 1
 
-    if predecessors is None:
+    if not use_dependencies:
         return routing_estimate + ceil(len(remaining) / len(architecture.processing_zones or {}))
     if critical_path_cache is None:
         return routing_estimate + _critical_path_length(remaining, predecessors)
@@ -183,14 +200,14 @@ def heuristic(
 
 def _critical_path_length(
     remaining_gate_ids: Sequence[int],
-    predecessors: Mapping[int, frozenset[int]],
+    predecessors: Sequence[frozenset[int]],
 ) -> int:
     if not remaining_gate_ids:
         return 0
 
     remaining = set(remaining_gate_ids)
     direct_predecessors = {
-        gate_id: [predecessor for predecessor in predecessors.get(gate_id, frozenset()) if predecessor in remaining]
+        gate_id: [predecessor for predecessor in predecessors[gate_id] if predecessor in remaining]
         for gate_id in remaining_gate_ids
     }
     successors: dict[int, list[int]] = {gate_id: [] for gate_id in remaining_gate_ids}

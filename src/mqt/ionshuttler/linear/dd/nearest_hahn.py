@@ -13,25 +13,24 @@ from dataclasses import dataclass
 from math import pi
 from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
-from mqt.ionshuttler.linear.actions import GateSpec, Rx
+from mqt.ionshuttler.core.schedule import ScheduledAction
 from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
 from mqt.ionshuttler.linear.dd.schedule_transform import (
     insert_action_at_time,
     local_gate_for_spec,
-    validate_rebuilt_schedule,
-    validate_schedule_compatibility,
 )
-from mqt.ionshuttler.linear.dd.schemes import MIDPOINT_ONLY_HAHN
-from mqt.ionshuttler.linear.dd.timeline import build_timeline
+from mqt.ionshuttler.linear.dd.schemes import MIDPOINT_ONLY_HAHN, GateSpec
 from mqt.ionshuttler.linear.dd.windows import find_idle_windows
-from mqt.ionshuttler.linear.schedule import ScheduledAction
+from mqt.ionshuttler.linear.replay import is_schedule_valid, replay_schedule
+from mqt.ionshuttler.linear.timeline import build_timeline
 
 from ..._json_utils import require_int, require_int_list, require_list, require_mapping, require_str
 
 if TYPE_CHECKING:
-    from mqt.ionshuttler.linear.architecture import Architecture
-    from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline
-    from mqt.ionshuttler.linear.schedule import ActionSchedule
+    from mqt.ionshuttler.core.gates import Rx
+    from mqt.ionshuttler.core.schedule import Schedule
+    from mqt.ionshuttler.linear.architecture import LinearArchitecture
+    from mqt.ionshuttler.linear.timeline import CompiledTimeline
 
 NearestHahnStatus = Literal["exact", "shifted", "skipped"]
 NearestHahnSkipReason = Literal[
@@ -228,8 +227,8 @@ class _Opportunity:
 
 
 def run_nearest_hahn(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
     config: NearestHahnConfig | None = None,
 ) -> DDPassResult[NearestHahnReport]:
     """Place one X pulse as near each eligible idle-window midpoint as the schedule allows.
@@ -254,7 +253,7 @@ def run_nearest_hahn(
         The augmented schedule and its complete eligible-window audit.
     """
     resolved_config = config or NearestHahnConfig()
-    validate_schedule_compatibility(schedule, architecture)
+    replay_schedule(schedule, architecture)
     base_timeline = build_timeline(schedule, architecture)
     opportunities = _eligible_opportunities(schedule, base_timeline, resolved_config)
 
@@ -264,17 +263,17 @@ def run_nearest_hahn(
         opportunities,
         architecture,
         label=resolved_config.label,
-        expected_makespan=schedule.num_timesteps,
+        expected_end_time=schedule.end_time,
         validate_each=False,
     )
-    if updated is not schedule and not validate_rebuilt_schedule(updated, architecture):
+    if updated is not schedule and not is_schedule_valid(updated, architecture):
         updated, sequences, records = _place_all(
             schedule,
             base_timeline,
             opportunities,
             architecture,
             label=resolved_config.label,
-            expected_makespan=schedule.num_timesteps,
+            expected_end_time=schedule.end_time,
             validate_each=True,
         )
 
@@ -286,15 +285,15 @@ def run_nearest_hahn(
 
 
 def _place_all(
-    schedule: ActionSchedule,
+    schedule: Schedule,
     base_timeline: CompiledTimeline,
     opportunities: tuple[_Opportunity, ...],
-    architecture: Architecture,
+    architecture: LinearArchitecture,
     *,
     label: str,
-    expected_makespan: int,
+    expected_end_time: int,
     validate_each: bool,
-) -> tuple[ActionSchedule, list[LocalDDSequence], list[NearestHahnOpportunityRecord]]:
+) -> tuple[Schedule, list[LocalDDSequence], list[NearestHahnOpportunityRecord]]:
     updated = schedule
     timeline = base_timeline
     sequences: list[LocalDDSequence] = []
@@ -306,7 +305,7 @@ def _place_all(
             architecture,
             opportunity,
             label=label,
-            expected_makespan=expected_makespan,
+            expected_end_time=expected_end_time,
             validate=validate_each,
         )
         if sequence is not None:
@@ -316,7 +315,7 @@ def _place_all(
 
 
 def _eligible_opportunities(
-    schedule: ActionSchedule,
+    schedule: Schedule,
     timeline: CompiledTimeline,
     config: NearestHahnConfig,
 ) -> tuple[_Opportunity, ...]:
@@ -340,15 +339,15 @@ def _ideal_midpoint(window: tuple[int, int]) -> int:
 
 
 def _place_opportunity(
-    schedule: ActionSchedule,
+    schedule: Schedule,
     timeline: CompiledTimeline,
-    architecture: Architecture,
+    architecture: LinearArchitecture,
     opportunity: _Opportunity,
     *,
     label: str,
-    expected_makespan: int,
+    expected_end_time: int,
     validate: bool,
-) -> tuple[ActionSchedule, CompiledTimeline, LocalDDSequence | None, NearestHahnOpportunityRecord]:
+) -> tuple[Schedule, CompiledTimeline, LocalDDSequence | None, NearestHahnOpportunityRecord]:
     start, end = opportunity.window
     candidates = sorted(range(start, end), key=lambda timestep: (abs(timestep - opportunity.ideal_midpoint), timestep))
 
@@ -362,7 +361,7 @@ def _place_opportunity(
             continue
         saw_zone = True
         gate = local_gate_for_spec(_X_PI, opportunity.ion)
-        duration = cast("Rx", gate).duration
+        duration = architecture.action_duration(cast("Rx", gate))
         occupied = range(timestep, timestep + duration)
         if timestep + duration > end or any(timeline.ion_busy(opportunity.ion, busy_t) for busy_t in occupied):
             continue
@@ -370,15 +369,21 @@ def _place_opportunity(
         if any(timeline.pz_busy(zone, busy_t) for busy_t in occupied):
             continue
         saw_free_zone = True
-        inserted = ScheduledAction(schedule.next_action_id, gate)
+        inserted = ScheduledAction(
+            schedule.next_action_id,
+            gate,
+            start_time=timestep,
+            duration=duration,
+            processing_zone_id=zone,
+        )
         patched_timeline = timeline.with_inserted_single_qubit_gate(inserted, zone, timestep)
         try:
             patched = insert_action_at_time(schedule, architecture, timestep, gate, timeline=timeline)
         except ValueError:
             continue
-        if patched.num_timesteps != expected_makespan:
+        if patched.end_time != expected_end_time:
             continue
-        if validate and not validate_rebuilt_schedule(patched, architecture):
+        if validate and not is_schedule_valid(patched, architecture):
             continue
         displacement = timestep - opportunity.ideal_midpoint
         sequence = LocalDDSequence(

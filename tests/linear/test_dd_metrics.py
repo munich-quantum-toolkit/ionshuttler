@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from mqt.ionshuttler.linear.actions import Action, AdvanceTime, GateSpec, GlobalPulse, Ry
-from mqt.ionshuttler.linear.architecture import Architecture
+from mqt.ionshuttler.core.gates import GlobalGate, Ry
+from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.dd.metrics import (
     decoupling_ratio,
     phase_reduction_per_gate,
@@ -32,31 +32,33 @@ from mqt.ionshuttler.linear.dd.metrics import (
 )
 from mqt.ionshuttler.linear.dd.result import LocalDDSequence
 from mqt.ionshuttler.linear.field_profile import FieldProfile
-from mqt.ionshuttler.linear.schedule import ActionSchedule
-from mqt.ionshuttler.linear.state import create_initial_state
+from mqt.ionshuttler.linear.schedule import schedule_from_path
+from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from mqt.ionshuttler.core.schedule import Schedule
+    from mqt.ionshuttler.linear.state import SearchTransition
+
+_GLOBAL_X = GlobalGate(gate_name="rx", theta=pi, ions=(0,))
+
 
 def _result(
-    path: Sequence[Action],
+    path: Sequence[SearchTransition],
     timesteps: int,
     *,
     num_ions: int = 1,
     fields: tuple[float, ...] | None = None,
-) -> tuple[ActionSchedule, Architecture]:
+) -> tuple[Schedule, LinearArchitecture]:
     field_values = fields or tuple(1.0 for _ in range(num_ions))
-    architecture = Architecture(
+    architecture = LinearArchitecture(
         num_sites=num_ions,
         processing_zones={"pz": list(range(num_ions))},
         field_profile=FieldProfile(num_ions, tuple(enumerate(field_values))),
     )
-    program = ActionSchedule.from_actions(
-        path,
-        create_initial_state(num_ions, architecture),
-    )
-    assert program.num_timesteps == timesteps
+    program = schedule_from_path(path, create_initial_state(num_ions, architecture), architecture)
+    assert program.end_time == timesteps
     return program, architecture
 
 
@@ -114,10 +116,10 @@ def test_global_pulses_refocus_schedule_end_metrics() -> None:
     refocused, refocused_architecture = _result(
         [
             AdvanceTime(),
-            GlobalPulse(GateSpec("Rx", pi)),
+            _GLOBAL_X,
             AdvanceTime(),
             AdvanceTime(),
-            GlobalPulse(GateSpec("Rx", pi)),
+            _GLOBAL_X,
             AdvanceTime(),
         ],
         4,
@@ -139,7 +141,7 @@ def test_window_and_prefix_metrics_distinguish_inherited_phase() -> None:
             Ry(ion=0, theta=0.25),
             AdvanceTime(),
             AdvanceTime(),
-            GlobalPulse(GateSpec("Rx", pi)),
+            _GLOBAL_X,
             AdvanceTime(),
             AdvanceTime(),
         ],
@@ -156,7 +158,7 @@ def test_window_end_reduction_and_ranking_are_deterministic() -> None:
     """Compare endpoint magnitudes and rank equal-phase ions by identifier."""
     before, architecture = _result([AdvanceTime(), AdvanceTime()], 2, num_ions=2, fields=(1.0, 2.0))
     after, _ = _result(
-        [AdvanceTime(), GlobalPulse(GateSpec("Rx", pi)), AdvanceTime()],
+        [AdvanceTime(), GlobalGate(gate_name="rx", theta=pi, ions=(0, 1)), AdvanceTime()],
         2,
         num_ions=2,
         fields=(1.0, 2.0),
