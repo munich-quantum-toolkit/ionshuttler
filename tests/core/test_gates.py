@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from mqt.ionshuttler.core.actions import decode_action
-from mqt.ionshuttler.core.gates import GATE_TYPES, GateTiming, GlobalGate, Rx, Rxx, Ry, Ryy, Rz, Rzz
+from mqt.ionshuttler.core.gates import GATE_TYPES, GateAction, GateTiming, GlobalGate, Rx, Rxx, Ry, Ryy, Rz, Rzz
 from mqt.ionshuttler.linear import GateTiming as LinearGateTiming
 
 if TYPE_CHECKING:
@@ -81,9 +81,15 @@ def test_global_gate_stores_explicit_targets_in_ascending_order() -> None:
     gate = GlobalGate(gate_name="ry", theta=pi, ions=(3, 0, 2))
 
     assert gate.ions == (0, 2, 3)
+    assert _gate_ions(gate) == (0, 2, 3)
     assert gate == GlobalGate(gate_name="ry", theta=pi, ions=(2, 3, 0))
     assert gate.to_dict() == {"type": "gate.global", "gate_name": "ry", "theta": pi, "ions": [0, 2, 3]}
     assert decode_action(gate.to_dict(), GATE_TYPES) == gate
+
+
+def _gate_ions(gate: GateAction) -> tuple[int, ...]:
+    """Read targets through the common gate contract."""
+    return gate.ions
 
 
 @pytest.mark.parametrize(
