@@ -120,7 +120,7 @@ def test_schedule_round_trips_with_explicit_decoders() -> None:
 def test_schedule_rejects_unsupported_versions() -> None:
     """Refuse a schedule document from another format version."""
     data = _schedule().to_dict()
-    data["version"] = 1
+    data["version"] = 2
 
     with pytest.raises(ValueError, match="unsupported schedule schema or version"):
         Schedule.from_dict(data, decode_action=_DECODE_PULSE, decode_state=_ClockState.from_dict)
@@ -303,7 +303,7 @@ def test_result_rejects_invalid_common_fields(
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
-        ("version", 1, "unsupported compilation result schema or version"),
+        ("version", 2, "unsupported compilation result schema or version"),
         ("status", "cancelled", "unknown compilation status"),
     ],
 )

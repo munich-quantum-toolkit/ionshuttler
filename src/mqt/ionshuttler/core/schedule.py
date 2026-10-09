@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
 SCHEDULE_SCHEMA = "mqt.ionshuttler.schedule"
-SCHEDULE_VERSION = 4
+SCHEDULE_VERSION = 1
 
 
 class MachineState(Protocol):

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
 RESULT_SCHEMA = "mqt.ionshuttler.compilation_result"
-RESULT_VERSION = 4
+RESULT_VERSION = 1
 
 
 class CompilationStatus(StrEnum):

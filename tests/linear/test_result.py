@@ -160,7 +160,7 @@ def test_schedule_round_trips_identity_and_machine_metadata() -> None:
     assert "architecture" not in serialized
     assert "action_types" not in serialized
     assert serialized["schema"] == "mqt.ionshuttler.schedule"
-    assert serialized["version"] == 4
+    assert serialized["version"] == 1
 
 
 def test_machine_state_strips_compiler_progress_and_canonicalizes_availability() -> None:
@@ -212,7 +212,7 @@ def test_compilation_result_round_trips_only_compiler_diagnostics() -> None:
         "preferred_gate_zones": [[2, "pz"]],
     }
     assert serialized["schema"] == "mqt.ionshuttler.compilation_result"
-    assert serialized["version"] == 4
+    assert serialized["version"] == 1
     assert "dd_insertions" not in serialized
 
 
