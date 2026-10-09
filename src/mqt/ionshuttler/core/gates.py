@@ -163,12 +163,10 @@ class GateAction(Action):
     circuit_name: ClassVar[str | None] = None
     parameter_names: ClassVar[tuple[str, ...]] = ()
 
-    if TYPE_CHECKING:
-
-        @property
-        def ions(self) -> tuple[int, ...]:
-            """The gate's ordered ion operands."""
-            ...
+    @property
+    def ions(self) -> tuple[int, ...]:
+        """The gate's ordered ion operands."""
+        raise NotImplementedError("...")
 
     def __post_init__(self) -> None:
         """Validate the optional circuit gate identifier and the parameters."""
