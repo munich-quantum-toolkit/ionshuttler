@@ -8,6 +8,17 @@
 """Visualize compilation results without showing or saving them."""
 
 from mqt.ionshuttler.visualization.api import Visualizer, visualize
+from mqt.ionshuttler.visualization.grid import GridView, GridVisualizer, IonColor, JunctionCoordinates
 from mqt.ionshuttler.visualization.linear import LinearVisualizer
+from mqt.ionshuttler.visualization.viewer import open_viewer
 
-__all__ = ["LinearVisualizer", "Visualizer", "visualize"]
+__all__ = [
+    "GridView",
+    "GridVisualizer",
+    "IonColor",
+    "JunctionCoordinates",
+    "LinearVisualizer",
+    "Visualizer",
+    "open_viewer",
+    "visualize",
+]

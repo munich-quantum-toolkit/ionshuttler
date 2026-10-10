@@ -659,7 +659,16 @@ def test_linear_visualizer_is_available_as_a_concrete_adapter() -> None:
 
 def test_visualization_package_exports_its_supported_api() -> None:
     """Keep the visualization extension surface explicit."""
-    assert visualization_module.__all__ == ["LinearVisualizer", "Visualizer", "visualize"]
+    assert visualization_module.__all__ == [
+        "GridView",
+        "GridVisualizer",
+        "IonColor",
+        "JunctionCoordinates",
+        "LinearVisualizer",
+        "Visualizer",
+        "open_viewer",
+        "visualize",
+    ]
 
 
 def test_visualization_rejects_an_unsupported_architecture() -> None:

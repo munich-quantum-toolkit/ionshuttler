@@ -211,6 +211,7 @@ docstring-code-format = true
   "ERA001",
   "FLY002",
   "PLC0415",
+  "PLC2701", # Tests check private modules that renderers share, as with SLF001.
   "PLR6301",
   "SLF001",
 ]

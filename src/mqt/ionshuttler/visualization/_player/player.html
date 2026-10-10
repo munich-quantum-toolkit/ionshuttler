@@ -1,0 +1,197 @@
+<main class="player" data-theme="dark">
+  <div class="player-stage">
+    <canvas
+      class="player-canvas"
+      role="img"
+      aria-label="Schedule drawing"
+    ></canvas>
+    <div class="player-edit-bar" hidden>
+      <span class="player-edit-hint"
+        >Drag junctions. Click an ion or processing zone to color it.</span
+      >
+      <button type="button" class="player-button player-copy">
+        Copy settings
+      </button>
+      <button type="button" class="player-button player-reset">Reset</button>
+      <button type="button" class="player-button player-primary player-done">
+        Done
+      </button>
+    </div>
+    <div class="player-paint" role="dialog" aria-label="Colors" hidden>
+      <div class="player-paint-head">
+        <strong class="player-paint-title"></strong>
+        <button
+          type="button"
+          class="player-icon player-paint-close"
+          aria-label="Close"
+          title="Close"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4z"
+            />
+          </svg>
+        </button>
+      </div>
+      <div class="player-paint-fields"></div>
+      <button type="button" class="player-button player-paint-reset">
+        Use original colors
+      </button>
+    </div>
+  </div>
+  <div class="player-dock">
+    <div class="player-transport">
+      <button
+        type="button"
+        class="player-icon player-previous"
+        aria-label="Previous layer"
+        title="Previous layer"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 5h2v14H6zM20 5v14L9 12z" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="player-icon player-play"
+        aria-label="Play"
+        title="Play"
+      >
+        <svg class="player-play-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 5v14l11-7z" />
+        </svg>
+        <svg
+          class="player-pause-icon"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+          hidden
+        >
+          <path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="player-icon player-next"
+        aria-label="Next layer"
+        title="Next layer"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M16 5h2v14h-2zM4 5v14l11-7z" />
+        </svg>
+      </button>
+      <input
+        type="range"
+        class="player-time"
+        step="any"
+        aria-label="Schedule time"
+      />
+      <output class="player-time-label"></output>
+    </div>
+    <div class="player-tools">
+      <label class="player-field">
+        <span>Speed</span>
+        <input type="number" class="player-speed" min="0.01" step="any" />
+        <span class="player-unit">steps/s</span>
+      </label>
+      <div
+        class="player-segmented player-icons-only"
+        role="radiogroup"
+        aria-label="Theme"
+      >
+        <label title="Follow the system">
+          <input type="radio" name="theme" value="auto" />
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3a9 9 0 1 0 0 18zm0 2a7 7 0 0 1 0 14z" />
+          </svg>
+          <span>Auto</span>
+        </label>
+        <label title="Light">
+          <input type="radio" name="theme" value="light" />
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM11 1h2v3h-2zm0 19h2v3h-2zM1 11h3v2H1zm19 0h3v2h-3zM4.2 5.6l1.4-1.4 2.1 2.1-1.4 1.4zm12.1 12.1 1.4-1.4 2.1 2.1-1.4 1.4zM4.2 18.4l2.1-2.1 1.4 1.4-2.1 2.1zM16.3 6.3l2.1-2.1 1.4 1.4-2.1 2.1z"
+            />
+          </svg>
+          <span>Light</span>
+        </label>
+        <label title="Dark">
+          <input type="radio" name="theme" value="dark" />
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z" />
+          </svg>
+          <span>Dark</span>
+        </label>
+      </div>
+      <div class="player-choices"></div>
+      <div class="player-chips" role="group" aria-label="Labels"></div>
+      <span class="player-spacer"></span>
+      <button
+        type="button"
+        class="player-button player-edit-toggle"
+        aria-pressed="false"
+        hidden
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M4 17.3V20h2.7L17.8 8.9l-2.7-2.7zM20.7 6a1 1 0 0 0 0-1.4l-1.3-1.3a1 1 0 0 0-1.4 0l-1.5 1.5 2.7 2.7z"
+          />
+        </svg>
+        Edit layout
+      </button>
+      <button
+        type="button"
+        class="player-button player-export-toggle"
+        aria-expanded="false"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M11 4h2v9l3.5-3.5 1.4 1.4L12 16.8 6.1 10.9l1.4-1.4L11 13zM5 18h14v2H5z"
+          />
+        </svg>
+        Export video
+      </button>
+    </div>
+    <section class="player-export" hidden aria-label="Video export">
+      <div class="player-export-head">
+        <strong>Export video</strong>
+        <output class="player-range-label"></output>
+      </div>
+      <div class="player-range">
+        <div class="player-range-track">
+          <div class="player-range-fill"></div>
+        </div>
+        <input
+          type="range"
+          class="player-range-start"
+          step="1"
+          aria-label="Video start timestep"
+        />
+        <input
+          type="range"
+          class="player-range-end"
+          step="1"
+          aria-label="Video end timestep"
+        />
+      </div>
+      <div class="player-export-row">
+        <label class="player-field">
+          <span>Frames per second</span>
+          <input type="number" class="player-fps" min="1" max="240" step="1" />
+        </label>
+        <output class="player-duration"></output>
+        <span class="player-spacer"></span>
+        <progress class="player-progress" hidden></progress>
+        <span class="player-export-message" role="status"></span>
+        <button type="button" class="player-button player-export-cancel" hidden>
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="player-button player-primary player-export-start"
+        >
+          Export WebM
+        </button>
+      </div>
+    </section>
+  </div>
+</main>

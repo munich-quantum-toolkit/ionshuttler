@@ -184,10 +184,18 @@ compiler.
 supported result. An explicit
 {py:class}`~mqt.ionshuttler.visualization.Visualizer` instead provides its own
 `visualize` method. The concrete
-{py:class}`~mqt.ionshuttler.visualization.LinearVisualizer` implements that
+{py:class}`~mqt.ionshuttler.visualization.LinearVisualizer` and
+{py:class}`~mqt.ionshuttler.visualization.GridVisualizer` classes implement that
 contract. Backend loaders, such as
 {py:func}`mqt.ionshuttler.linear.load_result`, restore persisted artifacts with
 explicit backend knowledge.
+
+Each backend keeps its visualization code in its own subpackage of
+`mqt.ionshuttler.visualization`. Interactive views share one browser player. The
+player owns the page, playback controls, time slider, video range, and video
+export. A backend supplies the drawing data and one script that draws a given
+schedule time. Python replays the schedule and validates it; the browser only
+interpolates between the replayed positions.
 
 ## See also
 

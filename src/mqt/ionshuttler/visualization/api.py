@@ -33,9 +33,9 @@ class Visualizer(Protocol):
 def visualize(result: CompilationResult) -> object:
     """Return a visual view of a compilation result.
 
-    The built-in Linear visualizer shows ion trajectories and gate applications.
-    Matplotlib is loaded only when that view is drawn. Use a concrete visualizer
-    directly to select it explicitly.
+    The built-in visualizers show Linear results as Matplotlib trajectory
+    plots and Grid results as interactive HTML views. Use a concrete visualizer
+    directly to configure it.
 
     Args:
         result: Compilation result to visualize.
@@ -60,10 +60,19 @@ def _default_visualizer(result: CompilationResult) -> Visualizer | None:
         The matching visualizer, or ``None`` if the architecture is unsupported.
     """
     from mqt.ionshuttler.linear.architecture import LinearArchitecture  # ruff: ignore[import-outside-top-level]
-    from mqt.ionshuttler.visualization.linear import LinearVisualizer  # ruff: ignore[import-outside-top-level]
+    from mqt.ionshuttler.visualization.linear.visualizer import (  # ruff: ignore[import-outside-top-level]
+        LinearVisualizer,
+    )
 
     if isinstance(result.architecture, LinearArchitecture):
         return LinearVisualizer()
+    from mqt.ionshuttler.grid.architecture import GridArchitecture  # ruff: ignore[import-outside-top-level]
+    from mqt.ionshuttler.visualization.grid.visualizer import (  # ruff: ignore[import-outside-top-level]
+        GridVisualizer,
+    )
+
+    if isinstance(result.architecture, GridArchitecture):
+        return GridVisualizer()
     return None
 
 
