@@ -7,7 +7,8 @@
 
 """Internal circuit data used by compiler frontends."""
 
+from mqt.ionshuttler.circuit.dependencies import with_commutation_aware_dependencies
 from mqt.ionshuttler.circuit.model import Circuit
 from mqt.ionshuttler.circuit.parser import CircuitInput, parse_circuit
 
-__all__ = ["Circuit", "CircuitInput", "parse_circuit"]
+__all__ = ["Circuit", "CircuitInput", "parse_circuit", "with_commutation_aware_dependencies"]

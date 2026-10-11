@@ -1,29 +1,25 @@
 # Grid Compilers
 
-Grid compilers route ions through graph-based segments, junctions, and
-processing zones. The new `GridCompiler` provides a small common-contract
-compiler. The established exact and heuristic command-line tools remain
-available during the migration.
-
-Use the {doc}`Linear compiler <linear_compiler>` when the compilation task must
-resolve individual sites and local transport within a trap segment. The
-{doc}`hardware model overview <hardware_models>` compares the two abstraction
+Grid compilers route ions between processing and memory segments, connected by
+junctions. Use the {doc}`Linear compiler <linear_compiler>` when compilation
+must resolve individual sites and local transport within a segment. The
+{doc}`hardware model overview <hardware_models>` compares both abstraction
 levels.
 
-## Common-contract compiler
+## Grid compiler API
 
-{py:class}`mqt.ionshuttler.grid.GridCompiler` accepts a shared circuit input and
-returns a shared {py:class}`mqt.ionshuttler.core.result.CompilationResult` with
-a replayable Grid schedule and Grid-specific diagnostics.
+{py:class}`mqt.ionshuttler.grid.GridCompiler` implements the shared compiler
+contract. It accepts a supported circuit input and returns a replayable
+{py:class}`mqt.ionshuttler.core.result.CompilationResult`.
 
 ```python
 from mqt.ionshuttler.grid import GridArchitecture, GridCompiler, Junction, ProcessingZone, Segment
 
 memory = Segment("memory", capacity=2)
-processor = Segment("processor", capacity=2, processing_zones=(ProcessingZone("pz"),))
+processing = Segment("processing", capacity=2, processing_zones=(ProcessingZone("pz"),))
 architecture = GridArchitecture(
-    segments=(memory, processor),
-    junctions=(Junction("memory-processor", (memory.end, processor.start)),),
+    segments=(memory, processing),
+    junctions=(Junction("memory-processing", (memory.end, processing.start)),),
 )
 circuit = """OPENQASM 2.0;
 include "qelib1.inc";
@@ -38,78 +34,88 @@ result = GridCompiler(architecture).compile(
 result.validate()
 ```
 
-The default strategy uses deterministic breadth-first routing. It can move
-ordered ion chains and can rotate ions simultaneously around a full cycle. It
-schedules ready gates together when they use independent ions and processing
-zones. Search is bounded by {py:class}`mqt.ionshuttler.grid.GridCompilerConfig`.
-A routing failure returns a validated `FAILED` result with the completed
-schedule prefix.
+The default strategy is a deterministic greedy scheduler. It looks ahead over
+upcoming gates, routes several ions concurrently, and uses cycles to clear
+blocked paths. Independent gates and transport actions can overlap when they use
+different resources.
 
-Alternatively, the greedy strategy uses a short dependency horizon to select one
-nearby gate for each processing zone. It builds an ion priority from those gates
-and later circuit gates. Several ions can advance toward the same processing
-zone in one timestep. Each transport candidate requests the next segment of a
-shortest route. If that segment is full, the router completes the requested
-junction crossing with a topology cycle or clears the blocked path from its free
-end. The scheduler then accepts compatible transport candidates in priority
-order.
+By default, the compiler also:
 
-Independent gates and transport actions can share a timestep. Transport on
-unrelated resources can also continue while a longer gate remains active. The
-greedy strategy assigns each gate to the nearest reachable processing zone that
-supports it. A two-ion gate keeps this assignment while its operands move. The
-greedy scheduler retains operands that are already at the processing zone for a
-selected gate. Other ions on the processing-zone segment can leave while a gate
-runs.
+- uses commutation-aware circuit dependencies;
+- partitions gates between suitable processing zones before scheduling;
+- runs ten lookahead rounds, each selecting at most one gate per target
+  processing-zone segment, and prioritizes the ions used by those gates.
+
+Set `pre_partition=False` in `compile()` to select processing zones while
+scheduling. Use `gate_to_processing_zone` to assign individual gate IDs to
+processing-zone IDs explicitly. An explicit mapping replaces pre-partitioning,
+even when `pre_partition=True`. Unassigned gates select a processing zone while
+scheduling.
+
+### Configuration
+
+{py:class}`mqt.ionshuttler.grid.GridCompilerConfig` provides the main compiler
+settings:
+
+- `GridCompilerStrategy.GREEDY` is the default and suits larger inputs.
+- `GridCompilerStrategy.BREADTH_FIRST` performs bounded routing search and is
+  intended for small architectures.
+- `GridDependencyMode.CONSERVATIVE` preserves the dependencies produced by the
+  shared circuit parser instead of reordering commuting gates.
+- `allowed_junction_crossings` can restrict routing to selected directed segment
+  pairs without changing the hardware topology.
+- `greedy_lookahead_rounds` controls how much future work the greedy strategy
+  considers. Larger values can increase both congestion and compilation time.
 
 ```python
 from mqt.ionshuttler.grid import GridCompilerConfig, GridCompilerStrategy
 
-compiler = GridCompiler(
-    architecture,
-    GridCompilerConfig(
-        strategy=GridCompilerStrategy.GREEDY,
-        allowed_junction_crossings=frozenset({("memory", "processor")}),
-    ),
+config = GridCompilerConfig(
+    strategy=GridCompilerStrategy.BREADTH_FIRST,
+    max_routing_states=1_000,
 )
-result = compiler.compile(
-    circuit,
-    initial_placement={"memory": (0, 1)},
-)
+result = GridCompiler(architecture, config).compile(circuit)
 ```
 
-`allowed_junction_crossings` is an optional routing policy. It can describe
-one-way circulation without making transport direction a property of the Grid
-hardware model.
+### Planning trace
 
-The breadth-first strategy favors complete search on small architectures. The
-greedy strategy favors bounded local work and concurrent transport. It does not
-yet provide the path, hybrid, partitioning, or path-cache policies available in
-the established heuristic tools. The hardware model accepts simultaneous cycles
-with mixed ion-chain sizes, but the greedy router generates cycles from one-ion
-moves to keep its candidate set bounded. The compiler façade delegates to
-separate breadth-first and greedy schedulers, so a new strategy does not add
-another branch to the scheduling loop.
+Set `record_planning_trace=True` to inspect failed or slow compilations. The
+compiler stores one snapshot per scheduling decision in
+`result.diagnostics.planning_trace`. Each snapshot summarizes the selected
+gates, target segments, ion priorities, transport actions, and any reason for
+making no progress.
 
-## Exact compilation
+```python
+config = GridCompilerConfig(record_planning_trace=True)
+result = GridCompiler(architecture, config).compile(circuit)
+for snapshot in result.diagnostics.planning_trace or ():
+    print(snapshot.time, snapshot.selected_gates, snapshot.idle_reason)
+```
 
-The exact compiler targets small architectures with one processing zone. It
-searches for a minimum-cost shuttling solution and is most useful as a reference
-for compact instances.
+Tracing is disabled by default because long compilations can produce many
+snapshots. The schedule remains the authoritative record of executed actions.
+
+## Established command-line compilers
+
+The established exact and heuristic compilers remain available during the
+migration to the shared API.
+
+### Exact compilation
+
+The exact compiler searches for a minimum-cost solution on small architectures
+with one processing zone.
 
 ```console
 mqt-ionshuttler-exact --help
 mqt-ionshuttler-exact inputs/algorithms_exact/qft_06.json
 ```
 
-Pass `--plot` to visualize the result. Example architecture and algorithm files
-are available in
+Example inputs are available in
 [`inputs/algorithms_exact`](https://github.com/munich-quantum-toolkit/ionshuttler/tree/main/inputs/algorithms_exact).
 
-## Heuristic compilation
+### Heuristic compilation
 
-The heuristic compiler scales to larger circuits and supports one or several
-processing zones. It trades an optimality guarantee for practical runtime.
+The heuristic compiler supports larger circuits and multiple processing zones.
 
 ```console
 mqt-ionshuttler-heuristic --help
@@ -119,19 +125,10 @@ mqt-ionshuttler-heuristic inputs/algorithms_heuristic/qft_60_4pzs.json
 Example inputs are available in
 [`inputs/algorithms_heuristic`](https://github.com/munich-quantum-toolkit/ionshuttler/tree/main/inputs/algorithms_heuristic).
 
-The optional dependency-aware mode can schedule ready gates according to the
-current ion positions instead of following one fixed gate sequence. The shared
-fine-grained tabu partitioner is available from
-{py:mod}`mqt.ionshuttler.partitioning`.
-
-## Interface status
-
-The established tools keep their command-line and JSON interfaces. The common
-Grid compiler is a separate API. It does not adapt into the old mutable run
-loop. Existing grid workflows remain available while their policies move to the
-new compiler.
+These tools retain their existing command-line and JSON interfaces. They are
+separate from the common `GridCompiler` API.
 
 ## See also
 
-- {doc}`hardware_models` — compare the Linear and grid abstractions
+- {doc}`hardware_models` — compare the Linear and Grid abstractions
 - {doc}`references` — publications describing the exact and heuristic methods

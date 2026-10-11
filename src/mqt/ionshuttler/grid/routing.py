@@ -5,11 +5,12 @@
 #
 # Licensed under the MIT License
 
-"""Bounded movement search for the minimal Grid compiler."""
+"""Bounded movement search for Grid compilation."""
 
 from __future__ import annotations
 
 from collections import deque
+from functools import lru_cache
 from itertools import combinations, pairwise
 from typing import TYPE_CHECKING
 
@@ -134,30 +135,28 @@ def route_junction_crossing_greedy_cycle(
                 pass
             else:
                 return candidate_actions, explored
-    path_clearing_moves, clearing_paths_explored = _clear_blocked_path(
+    path_clearing_moves, clearing_paths_explored = clear_blocked_path(
         architecture,
         state,
         ion,
-        source_segment_id,
         destination_segment_id,
-        moves,
         max_states=max_states - explored,
+        moves=moves,
         allowed_crossings=allowed_crossings,
         ion_priorities=ion_priorities,
     )
     return path_clearing_moves, explored + clearing_paths_explored
 
 
-def _clear_blocked_path(
+def clear_blocked_path(
     architecture: GridArchitecture,
     state: GridMachineState,
-    requested_ion: int,
-    source_segment_id: str,
-    blocked_segment_id: str,
-    moves: Sequence[JunctionMove],
+    ion: int,
+    destination_segment_id: str,
     *,
     max_states: int,
-    allowed_crossings: JunctionCrossings,
+    moves: Sequence[JunctionMove],
+    allowed_crossings: JunctionCrossings = None,
     ion_priorities: Mapping[int, int],
 ) -> tuple[tuple[JunctionMove, ...] | None, int]:
     """Clear a blocked path from its free-capacity end.
@@ -165,9 +164,10 @@ def _clear_blocked_path(
     Returns:
         The legal path-clearing moves and number of segment paths examined.
     """
+    source_segment_id = state.ion_segment(ion)
     adjacency = _segment_adjacency(architecture, allowed_crossings)
-    queue: deque[tuple[str, ...]] = deque([(blocked_segment_id,)])
-    visited_segments = {source_segment_id, blocked_segment_id}
+    queue: deque[tuple[str, ...]] = deque([(destination_segment_id,)])
+    visited_segments = {source_segment_id, destination_segment_id}
     explored = 0
     while queue and explored < max_states:
         clearing_path = queue.popleft()
@@ -177,7 +177,7 @@ def _clear_blocked_path(
         if len(state.occupants(final_segment_id)) < final_segment.capacity:
             path_clearing_moves = _moves_to_clear_path(
                 state,
-                requested_ion,
+                ion,
                 (source_segment_id, *clearing_path),
                 moves,
                 ion_priorities=ion_priorities,
@@ -534,6 +534,7 @@ def _gate_is_placed(state: GridMachineState, gate: GateAction, target_segment_id
     )
 
 
+@lru_cache(maxsize=1024)
 def _segment_distances(
     architecture: GridArchitecture,
     start_segment_id: str,
@@ -575,6 +576,7 @@ def _shortest_segment_path(
     return None
 
 
+@lru_cache(maxsize=128)
 def _segment_adjacency(
     architecture: GridArchitecture,
     allowed_crossings: JunctionCrossings = None,
@@ -599,6 +601,7 @@ def _occupancy_key(state: GridMachineState) -> OccupancyKey:
 
 
 __all__ = [
+    "clear_blocked_path",
     "junction_moves",
     "movement_candidates",
     "next_segment_toward",

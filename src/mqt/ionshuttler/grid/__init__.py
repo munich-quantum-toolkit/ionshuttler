@@ -15,7 +15,7 @@ from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 
 from .actions import Cycle, JunctionMove
 from .architecture import GridArchitecture
-from .config import GridCompilerConfig, GridCompilerStrategy
+from .config import GridCompilerConfig, GridCompilerStrategy, GridDependencyMode
 from .model import (
     Junction,
     ProcessingZone,
@@ -24,7 +24,14 @@ from .model import (
     SegmentOccupancy,
     TransportTiming,
 )
-from .result import GridCompilationResult, GridDiagnostics, load_result, result_from_dict, result_from_json
+from .result import (
+    GridCompilationResult,
+    GridDiagnostics,
+    GridStopReason,
+    load_result,
+    result_from_dict,
+    result_from_json,
+)
 from .schedule import load_schedule, schedule_from_dict, schedule_from_json
 from .state import GridMachineState
 
@@ -59,8 +66,10 @@ __all__ = [
     "GridCompiler",
     "GridCompilerConfig",
     "GridCompilerStrategy",
+    "GridDependencyMode",
     "GridDiagnostics",
     "GridMachineState",
+    "GridStopReason",
     "Junction",
     "JunctionMove",
     "ProcessingZone",
