@@ -14,6 +14,29 @@ from mqt.ionshuttler.grid import GridArchitecture, Junction, Segment
 from mqt.ionshuttler.grid.routing import route_gate_bfs
 
 
+def test_route_gate_bfs_returns_direct_placement_at_state_limit() -> None:
+    """Return a legal one-move route without spending work on cycle discovery."""
+    source = Segment("source")
+    target = Segment("target")
+    architecture = GridArchitecture(
+        (source, target),
+        (Junction("junction", (source.end, target.start)),),
+    )
+    state = architecture.initial_state({"source": (0,), "target": ()})
+
+    route, explored = route_gate_bfs(
+        architecture,
+        state,
+        Rx(ion=0, theta=0.5),
+        frozenset({"target"}),
+        max_states=1,
+    )
+
+    assert route is not None
+    assert len(route) == 1
+    assert explored == 1
+
+
 def test_route_gate_bfs_counts_bounded_cycle_search_work() -> None:
     """Charge cycle enumeration to the shared routing work limit."""
     first = Segment("first")

@@ -53,14 +53,20 @@ def route_gate_bfs(
         explored += 1
         if _gate_is_placed(current, gate, target_segment_ids):
             return path, explored
-        candidates, cycle_work = movement_candidates(
-            architecture,
-            current,
-            max_cycle_work=max_states - explored,
-            allowed_crossings=allowed_crossings,
-        )
+        moves = junction_moves(architecture, current, allowed_crossings=allowed_crossings)
+        for move in moves:
+            if move.destination.segment_id not in target_segment_ids or not any(ion in move.ions for ion in gate.ions):
+                continue
+            timed_move = ScheduledAction(0, move, current.time, architecture.action_duration(move))
+            try:
+                following = architecture.apply_layer(current, (timed_move,)).at_time(timed_move.end_time)
+            except ValueError:
+                continue
+            if _gate_is_placed(following, gate, target_segment_ids):
+                return (*path, move), explored
+        cycles, cycle_work = _cycle_candidates(architecture, current, moves, max_work=max_states - explored)
         explored += cycle_work
-        for action in candidates:
+        for action in (*moves, *cycles):
             duration = architecture.action_duration(action)
             timed_action = ScheduledAction(0, action, current.time, duration)
             try:
