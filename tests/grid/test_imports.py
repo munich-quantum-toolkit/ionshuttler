@@ -39,12 +39,17 @@ def test_package_exports_the_hardware_model() -> None:
         "SegmentEndpoint",
         "SegmentOccupancy",
         "TransportTiming",
+        "from_networkx",
+        "hexagonal_grid",
         "load_result",
         "load_schedule",
+        "rectangular_grid",
         "result_from_dict",
         "result_from_json",
         "schedule_from_dict",
         "schedule_from_json",
+        "square_grid",
     ]
 
     assert package.GridCompiler.__name__ == "GridCompiler"
+    assert package.square_grid.__name__ == "square_grid"

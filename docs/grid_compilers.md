@@ -10,7 +10,9 @@ levels.
 
 {py:class}`mqt.ionshuttler.grid.GridCompiler` implements the shared compiler
 contract. It accepts a supported circuit input and returns a replayable
-{py:class}`mqt.ionshuttler.core.result.CompilationResult`.
+{py:class}`mqt.ionshuttler.core.result.CompilationResult`. Use `square_grid`,
+`rectangular_grid`, `hexagonal_grid`, or `from_networkx` from
+`mqt.ionshuttler.grid` to construct common layouts.
 
 ```python
 from mqt.ionshuttler.grid import GridArchitecture, GridCompiler, Junction, ProcessingZone, Segment
@@ -76,6 +78,16 @@ config = GridCompilerConfig(
 )
 result = GridCompiler(architecture, config).compile(circuit)
 ```
+
+### Model limits
+
+- The Grid model has no segment-reordering action or reordering cost.
+  `UNORDERED` segments leave their internal ion order unspecified, so the Grid
+  model permits reordering without a separate action or duration.
+- The compiler uses bounded heuristics and does not guarantee a minimum
+  makespan. A failed compilation does not prove that the input is infeasible.
+- Grid timing does not include any transport or reordering that a future
+  refinement to a Linear architecture might require.
 
 ### Planning trace
 

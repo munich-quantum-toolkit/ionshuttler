@@ -16,6 +16,7 @@ from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 from .actions import Cycle, JunctionMove
 from .architecture import GridArchitecture
 from .config import GridCompilerConfig, GridCompilerStrategy, GridDependencyMode
+from .layouts import from_networkx, hexagonal_grid, rectangular_grid, square_grid
 from .model import (
     Junction,
     ProcessingZone,
@@ -79,10 +80,14 @@ __all__ = [
     "SegmentEndpoint",
     "SegmentOccupancy",
     "TransportTiming",
+    "from_networkx",
+    "hexagonal_grid",
     "load_result",
     "load_schedule",
+    "rectangular_grid",
     "result_from_dict",
     "result_from_json",
     "schedule_from_dict",
     "schedule_from_json",
+    "square_grid",
 ]
