@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import pkgutil
 import subprocess
 import sys
@@ -30,28 +31,93 @@ def test_package_exports_only_the_supported_facade() -> None:
 
     assert package.__all__ == [
         "DEFAULT_ACTION_TYPES",
-        "ActionSchedule",
-        "Architecture",
         "CompilationResult",
         "CompilationStatus",
         "GateTiming",
-        "HardwareTiming",
         "HeuristicFn",
+        "LinearArchitecture",
+        "LinearCompilationResult",
         "LinearCompiler",
         "LinearCompilerConfig",
-        "MachineState",
+        "LinearDiagnostics",
+        "LinearMachineState",
+        "Schedule",
         "ScheduledAction",
         "SearchConfig",
         "TransportTiming",
+        "load_result",
+        "load_schedule",
+        "result_from_dict",
+        "result_from_json",
+        "schedule_from_dict",
+        "schedule_from_json",
         "zero_heuristic",
     ]
+    assert not hasattr(package, "MachineState")
 
 
-def test_action_schedule_import_does_not_load_compiler_search() -> None:
+def test_linear_timing_types_belong_to_their_owners() -> None:
+    """Gate timing is shared; transport timing lives beside Linear transport actions."""
+    from mqt.ionshuttler.core.gates import GateTiming as SharedGateTiming
+    from mqt.ionshuttler.linear import GateTiming, TransportTiming
+    from mqt.ionshuttler.linear.actions import TransportTiming as ActionTransportTiming
+
+    assert GateTiming is SharedGateTiming
+    assert TransportTiming is ActionTransportTiming
+
+
+def test_linear_architecture_has_only_its_explicit_name() -> None:
+    """Expose the Linear architecture without a level-ambiguous alias."""
+    from mqt.ionshuttler.linear import LinearArchitecture
+
+    assert LinearArchitecture.__name__ == "LinearArchitecture"
+    assert not hasattr(importlib.import_module("mqt.ionshuttler.linear"), "Architecture")
+
+
+def test_removed_validation_and_timeline_forwarders_are_absent() -> None:
+    """Do not retain duplicate validation entry points or the old timeline module."""
+    from mqt.ionshuttler.linear import LinearArchitecture
+
+    replay = importlib.import_module("mqt.ionshuttler.linear.replay")
+
+    assert not hasattr(replay, "validate_schedule")
+    assert not hasattr(LinearArchitecture, "validate_schedule")
+    assert importlib.util.find_spec("mqt.ionshuttler.linear.dd.timeline") is None
+
+
+def test_shared_types_are_not_reexported_from_linear_submodules() -> None:
+    """Expose shared values through their defining modules or the curated package API."""
+    actions = importlib.import_module("mqt.ionshuttler.linear.actions")
+    schedule = importlib.import_module("mqt.ionshuttler.linear.schedule")
+    result = importlib.import_module("mqt.ionshuttler.linear.result")
+    validation = importlib.import_module("mqt.ionshuttler.linear.validation")
+
+    for name in (
+        "Action",
+        "GateAction",
+        "GlobalGate",
+        "Rx",
+        "Rxx",
+        "Ry",
+        "Ryy",
+        "Rz",
+        "Rzz",
+        "SingleQubitGate",
+        "TwoQubitGate",
+    ):
+        assert not hasattr(actions, name)
+    for name in ("Schedule", "ScheduledAction"):
+        assert not hasattr(schedule, name)
+    for name in ("CompilationResult", "CompilationStatus"):
+        assert not hasattr(result, name)
+    assert not hasattr(validation, "is_adjacent")
+
+
+def test_schedule_import_does_not_load_compiler_search() -> None:
     """Keep the execution boundary independent of compiler implementation modules."""
     command = (
         "import sys; "
-        "from mqt.ionshuttler.linear.schedule import ActionSchedule; "
+        "from mqt.ionshuttler.linear.schedule import LinearMachineState; "
         "assert 'mqt.ionshuttler.linear.search' not in sys.modules"
     )
     completed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - Fixed interpreter command.

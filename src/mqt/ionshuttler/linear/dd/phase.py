@@ -12,8 +12,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline
     from mqt.ionshuttler.linear.field_profile import FieldProfile
+    from mqt.ionshuttler.linear.timeline import CompiledTimeline
 
 
 def accumulated_phase(
@@ -38,8 +38,8 @@ def accumulated_phase(
     Raises:
         ValueError: If the requested interval lies outside the timeline.
     """
-    if not 0 <= t_start <= t_end <= timeline.makespan:
-        msg = f"expected 0 <= t_start <= t_end <= {timeline.makespan}"
+    if not timeline.start_time <= t_start <= t_end <= timeline.end_time:
+        msg = f"expected {timeline.start_time} <= t_start <= t_end <= {timeline.end_time}"
         raise ValueError(msg)
     if field_profile is None:
         return 0.0

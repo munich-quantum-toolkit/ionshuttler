@@ -5,15 +5,17 @@
 #
 # Licensed under the MIT License
 
-"""Ion placement, hardware availability, and circuit progress."""
+"""Ion placement, hardware availability, circuit progress, and search time."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, TypeAlias, TypeVar
+
+from mqt.ionshuttler.core.actions import Action
 
 if TYPE_CHECKING:
-    from mqt.ionshuttler.linear.architecture import Architecture
+    from mqt.ionshuttler.linear.architecture import LinearArchitecture
 
 _K = TypeVar("_K", int, str)
 
@@ -41,6 +43,41 @@ class State:
         object.__setattr__(self, "in_progress_gates", _ordered(self.in_progress_gates))
         object.__setattr__(self, "ions_busy_until", _ordered(self.ions_busy_until))
         object.__setattr__(self, "pzs_busy_until", _ordered(self.pzs_busy_until))
+
+
+@dataclass(frozen=True)
+class AdvanceTime:
+    """Advance the Linear search clock by one timestep.
+
+    Time advances are search transitions, not hardware actions. They complete
+    running circuit gates and never appear in a public schedule, where idle
+    time is a gap between explicit action intervals.
+    """
+
+
+SearchTransition: TypeAlias = Action | AdvanceTime
+
+
+def advance_time(state: State) -> State:
+    """Advance a state by one timestep and complete gates that finish.
+
+    Returns:
+        The state at the next timestep.
+    """
+    next_time = state.time + 1
+    completed_gates = set(state.completed_gates)
+    remaining_in_progress: list[tuple[int, int]] = []
+    for gate_id, finish_time in state.in_progress_gates:
+        if finish_time <= next_time:
+            completed_gates.add(gate_id)
+        else:
+            remaining_in_progress.append((gate_id, finish_time))
+    return replace(
+        state,
+        completed_gates=frozenset(completed_gates),
+        in_progress_gates=tuple(remaining_in_progress),
+        time=next_time,
+    )
 
 
 def _ordered(entries: tuple[tuple[_K, int], ...]) -> tuple[tuple[_K, int], ...]:
@@ -92,43 +129,16 @@ def has_pending_timed_work(state: State) -> bool:
     )
 
 
-def to_site_occupancy(state: State, num_sites: int) -> list[int | None]:
-    """Convert ion positions to a site-indexed occupancy list.
-
-    Args:
-        state: State to convert.
-        num_sites: Length of the architecture.
-
-    Returns:
-        Ion identifiers indexed by site, with ``None`` for empty sites.
-
-    Raises:
-        ValueError: If an ion position is outside the requested site range.
-    """
-    site_occupancy: list[int | None] = [None] * num_sites
-    for ion, position in state.positions:
-        if not 0 <= position < num_sites:
-            msg = f"ion {ion} occupies invalid site {position}; expected a site within [0, {num_sites - 1}]"
-            raise ValueError(msg)
-        site_occupancy[position] = ion
-    return site_occupancy
-
-
-def to_metadata_dict(state: State, num_sites: int) -> dict[str, object]:
-    """Return the JSON-compatible initial-state metadata."""
-    return {"site_occupancy": to_site_occupancy(state, num_sites)}
-
-
 def create_initial_state(
     num_ions: int,
-    architecture: Architecture,
+    architecture: LinearArchitecture,
     initial_positions: list[int] | tuple[int, ...] | None = None,
 ) -> State:
     """Create a starting state with centered or explicitly placed ions.
 
     Args:
         num_ions: Number of logical ions to place.
-        architecture: Architecture providing sites and processing zones.
+        architecture: LinearArchitecture providing sites and processing zones.
         initial_positions: Optional site for each ion, ordered by ion identifier.
             Defaults to ``None``, which uses the centered-placement formula.
 
@@ -172,7 +182,7 @@ def create_initial_state(
     )
 
 
-def normalize_initial_state(state: State, architecture: Architecture) -> State:
+def normalize_initial_state(state: State, architecture: LinearArchitecture) -> State:
     """Check a starting state against the hardware model and fill in missing zones.
 
     Args:
@@ -210,7 +220,10 @@ def normalize_initial_state(state: State, architecture: Architecture) -> State:
 
 
 __all__ = [
+    "AdvanceTime",
+    "SearchTransition",
     "State",
+    "advance_time",
     "create_initial_state",
     "has_pending_timed_work",
     "in_progress_dict",
@@ -218,6 +231,4 @@ __all__ = [
     "normalize_initial_state",
     "pzs_busy_dict",
     "to_dict",
-    "to_metadata_dict",
-    "to_site_occupancy",
 ]

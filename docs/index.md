@@ -1,77 +1,69 @@
 # MQT IonShuttler
 
-The MQT IonShuttler is a tool for generating shuttling schedules for trapped-ion
-quantum computers with a grid-type Memory Zone based on the Quantum Charge
-Coupled Device (QCCD) architecture. It is developed as part of the
-_{doc}`Munich Quantum Toolkit (MQT) <mqt:index>`_.
+MQT IonShuttler compiles quantum circuits into ion movements and gate schedules
+for quantum charge-coupled devices (QCCDs). Use it to explore how architecture,
+routing, and control choices affect trapped-ion execution.
 
-We recommend you to start with the
-{doc}`installation instructions <installation>`. Then proceed with the sections
-below. If you are interested in the theory behind the MQT IonShuttler, have a
-look at the publications in the {doc}`publication list <references>`.
+It is part of the {doc}`Munich Quantum Toolkit (MQT) <mqt:index>`.
 
-To compile a Qiskit or QASM circuit for a one-dimensional hardware layout from
-Python, see the {doc}`Linear compiler guide <linear_compiler>`.
+## Choose a workflow
 
-We appreciate any feedback and contributions to the project. If you want to
-contribute, you can find more information in the
-{doc}`contribution guide <contributing>`. If you are having trouble with the
-installation or the usage of MQT IonShuttler, please let us know on our
-{doc}`support page <support>`.
+::::{grid} 1 1 2 2
+:gutter: 3
 
-## Overview
+:::{grid-item-card} Grid compilers
+:link: grid_compilers
+:link-type: doc
 
-The MQT IonShuttler supports
+Route ions through networks of trap segments. Use exact compilation for small
+single-zone instances or heuristic compilation for larger multi-zone devices.
+:::
 
-- **exact shuttling schedules** for small architectures with
-  **a single processing zone (PZ)**, and
-- **heuristic shuttling schedules** for larger devices with
-  **one _or_ multiple processing zones**.
+:::{grid-item-card} Linear compiler
+:link: linear_compiler
+:link-type: doc
+
+Compile Qiskit or QASM circuits for an ordered array of sites. Configure
+processing zones and operation timing, inspect explicit schedules, visualize ion
+trajectories, and apply dynamical decoupling.
+:::
+
+::::
+
+Start with the {doc}`installation guide <installation>`, then choose the
+abstraction and compiler that match your task. The
+{doc}`hardware model overview <hardware_models>` explains how both workflows
+represent a QCCD.
+
+## What you can study
+
+- ion placement, transport, and gate scheduling;
+- one or several processing zones;
+- exact and heuristic compilation methods;
+- schedule cost, makespan, and transport overhead; and
+- dynamical decoupling for Linear schedules.
 
 <p align="center">
   <a href="_static/qccd_device.pdf">
-  <img src="_static/qccd_device.png" width="63%" alt="(a) Potential QCCD device with four processing zones">
+  <img src="_static/qccd_device.png" width="63%" alt="QCCD device with four processing zones">
   </a>
   <a href="_static/graph.pdf">
-  <img src="_static/graph.png" width="33%" alt="(b) Corresponding interaction graph">
+  <img src="_static/graph.png" width="33%" alt="Graph abstraction of the QCCD device">
   </a>
 </p>
-<p align="center">
-<b>Figure 1:</b> (<b>a</b>) Potential QCCD device with four processing zones; (<b>b</b>) corresponding graph abstraction.</p>
+<p align="center"><b>QCCD layout and its scheduling abstraction.</b></p>
 
-The exact solution guarantees optimality but is limited to a single PZ, while
-the heuristic method scales to many qubits and PZs. In the heuristic workflow,
-an optional **compilation** feature (`use_dag`) allows for dynamic rescheduling
-of gates based on the current ion positions and dependencies, potentially
-reducing shuttling overhead compared to executing a fixed sequence.
+## Learn more
 
-## Usage
+- {doc}`Grid compilers <grid_compilers>` — run the exact and heuristic tools
+- {doc}`Linear compiler <linear_compiler>` — build and inspect Linear schedules
+- {doc}`Dynamical decoupling <linear_dd>` — add DD to Linear schedules
+- {doc}`Compiler design <design>` — understand and extend the software
+- {doc}`References <references>` — cite the relevant methods
 
-### Exact Solution (single PZ)
-
-```console
-mqt-ionshuttler-exact --help
-mqt-ionshuttler-exact inputs/algorithms_exact/qft_06.json
-```
-
-The script supports an additional `--plot` argument to visualise the result.
-Architectures and algorithms are specified in JSON files. For examples, see
-[`inputs/algorithms_exact`](https://github.com/munich-quantum-toolkit/ionshuttler/blob/main/inputs/algorithms_exact/).
-
-### Heuristic Solution (single & multiple PZs)
-
-```console
-mqt-ionshuttler-heuristic --help
-mqt-ionshuttler-heuristic inputs/algorithms_heuristic/qft_60_4pzs.json
-```
-
-Architectures and algorithms are specified in JSON files. For examples, see
-[`inputs/algorithms_heuristic`](https://github.com/munich-quantum-toolkit/ionshuttler/blob/main/inputs/algorithms_heuristic/).
-
-The fine-grained tabu partitioner used by this backend is available from the
-shared {py:mod}`mqt.ionshuttler.partitioning` package. Code that previously
-imported `mqt.ionshuttler.multi_shuttler.gate_partitioning_tabu` should use the
-shared package instead.
+We welcome feedback and contributions. See the
+{doc}`contribution guide <contributing>` or visit the
+{doc}`support page <support>` if you need help.
 
 ```{toctree}
 :hidden:
@@ -86,9 +78,10 @@ self
 :maxdepth: 1
 
 installation
+hardware_models
+grid_compilers
 linear_compiler
 linear_dd
-linear_hardware_model
 references
 ```
 
@@ -101,7 +94,7 @@ references
 contributing
 ai_usage
 tooling
-linear_design
+design
 support
 ```
 

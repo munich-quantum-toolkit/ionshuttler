@@ -5,7 +5,7 @@
 #
 # Licensed under the MIT License
 
-"""Settings for Linear hardware timing and schedule search."""
+"""Settings for Linear schedule search."""
 
 from __future__ import annotations
 
@@ -15,104 +15,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mqt.ionshuttler.linear.cost import HeuristicFn
     from mqt.ionshuttler.partitioning import FineGrainedTabuConfig
-
-SINGLE_QUBIT_GATE_NAMES = frozenset({"rx", "ry", "rz"})
-TWO_QUBIT_GATE_NAMES = frozenset({"rxx", "ryy", "rzz"})
-GATE_NAMES = SINGLE_QUBIT_GATE_NAMES | TWO_QUBIT_GATE_NAMES
-
-
-@dataclass(frozen=True)
-class TransportTiming:
-    """Configure how many timesteps ion transport operations take."""
-
-    shuttle: int = 1
-    swap: int = 3
-
-    def __post_init__(self) -> None:
-        """Ensure every transport operation takes at least one timestep."""
-        _require_integer_at_least(self.shuttle, "shuttle duration", minimum=1)
-        _require_integer_at_least(self.swap, "swap duration", minimum=1)
-
-
-@dataclass(frozen=True)
-class GateTiming:
-    """Configure gate durations and virtual single-ion rotations.
-
-    Rx and Ry use physical controls by default. Rz defaults to a zero-duration
-    virtual frame update, as is common on trapped-ion hardware.
-    """
-
-    rx: int = 1
-    ry: int = 1
-    rz: int = 0
-    rxx: int = 2
-    ryy: int = 2
-    rzz: int = 2
-    virtual_single_qubit_gates: frozenset[str] = field(default_factory=lambda: frozenset({"rz"}))
-
-    def __post_init__(self) -> None:
-        """Ensure the configured timings describe usable gate implementations.
-
-        Raises:
-            ValueError: If a gate name or duration is invalid.
-        """
-        virtual_gates = _normalize_virtual_gates(self.virtual_single_qubit_gates)
-        object.__setattr__(self, "virtual_single_qubit_gates", virtual_gates)
-
-        for gate_name in SINGLE_QUBIT_GATE_NAMES:
-            duration = self.duration_for(gate_name)
-            _require_integer_at_least(duration, f"{gate_name} duration", minimum=0)
-            if gate_name in virtual_gates and duration != 0:
-                msg = f"duration for virtual gate {gate_name!r} must be 0"
-                raise ValueError(msg)
-        for gate_name in TWO_QUBIT_GATE_NAMES:
-            _require_integer_at_least(
-                self.duration_for(gate_name),
-                f"{gate_name} duration",
-                minimum=1,
-            )
-
-    def duration_for(self, gate_name: str) -> int:
-        """Return how many timesteps a gate takes.
-
-        Raises:
-            TypeError: If the stored duration is not an integer.
-            ValueError: If the hardware does not offer ``gate_name``.
-        """
-        normalized_name = gate_name.lower()
-        if normalized_name not in GATE_NAMES:
-            msg = f"unsupported gate name {gate_name!r}"
-            raise ValueError(msg)
-        value = getattr(self, normalized_name)
-        if not isinstance(value, int):  # Defensive narrowing; construction validates the public fields.
-            msg = f"duration for gate {gate_name!r} must be an integer"
-            raise TypeError(msg)
-        return value
-
-    def is_virtual(self, gate_name: str) -> bool:
-        """Return whether a single-ion rotation is implemented virtually.
-
-        Raises:
-            ValueError: If ``gate_name`` is not a supported single-ion rotation.
-        """
-        normalized_name = gate_name.lower()
-        if normalized_name not in SINGLE_QUBIT_GATE_NAMES:
-            msg = f"virtuality applies only to single-qubit gates, not {gate_name!r}"
-            raise ValueError(msg)
-        return normalized_name in self.virtual_single_qubit_gates
-
-    @property
-    def gate_durations(self) -> dict[str, int]:
-        """Duration of each supported gate, keyed by its lowercase name."""
-        return {gate_name: self.duration_for(gate_name) for gate_name in sorted(GATE_NAMES)}
-
-
-@dataclass(frozen=True)
-class HardwareTiming:
-    """Describe the timing and gate implementations offered by the hardware."""
-
-    transport: TransportTiming = field(default_factory=TransportTiming)
-    gates: GateTiming = field(default_factory=GateTiming)
 
 
 @dataclass(frozen=True)
@@ -180,28 +82,9 @@ class SearchConfig:
 
 @dataclass(frozen=True)
 class LinearCompilerConfig:
-    """Group the hardware timing and schedule-search settings."""
+    """Configure the Linear scheduling method."""
 
-    hardware_timing: HardwareTiming = field(default_factory=HardwareTiming)
     search: SearchConfig = field(default_factory=SearchConfig)
-
-
-def _normalize_virtual_gates(gate_names: object) -> frozenset[str]:
-    if not isinstance(gate_names, frozenset | set | tuple | list):
-        msg = "virtual_single_qubit_gates must be a collection of gate names"
-        raise TypeError(msg)
-    normalized_names: set[str] = set()
-    for gate_name in gate_names:
-        if not isinstance(gate_name, str):
-            msg = "virtual_single_qubit_gates must contain only strings"
-            raise TypeError(msg)
-        normalized_names.add(gate_name.lower())
-    normalized = frozenset(normalized_names)
-    unknown = normalized.difference(SINGLE_QUBIT_GATE_NAMES)
-    if unknown:
-        msg = f"unknown virtual single-qubit gates: {sorted(unknown)}"
-        raise ValueError(msg)
-    return normalized
 
 
 def _require_integer_at_least(value: object, name: str, *, minimum: int) -> None:
@@ -215,13 +98,4 @@ def _require_integer_at_least(value: object, name: str, *, minimum: int) -> None
         raise ValueError(msg)
 
 
-__all__ = [
-    "GATE_NAMES",
-    "SINGLE_QUBIT_GATE_NAMES",
-    "TWO_QUBIT_GATE_NAMES",
-    "GateTiming",
-    "HardwareTiming",
-    "LinearCompilerConfig",
-    "SearchConfig",
-    "TransportTiming",
-]
+__all__ = ["LinearCompilerConfig", "SearchConfig"]

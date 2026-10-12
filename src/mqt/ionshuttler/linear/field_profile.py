@@ -70,7 +70,7 @@ class FieldProfile:
 
         Args:
             data: JSON-style field-profile mapping.
-            num_sites: Architecture size for structured mappings.
+            num_sites: LinearArchitecture size for structured mappings.
 
         Returns:
             A complete field profile covering every site.
@@ -125,7 +125,7 @@ class FieldProfile:
 
         Args:
             raw: Serialized JSON object.
-            num_sites: Architecture size for structured mappings.
+            num_sites: LinearArchitecture size for structured mappings.
 
         Returns:
             A complete field profile covering every site.
@@ -139,7 +139,7 @@ class FieldProfile:
 
         Args:
             filename: File to read.
-            num_sites: Architecture size for structured mappings.
+            num_sites: LinearArchitecture size for structured mappings.
 
         Returns:
             A complete field profile covering every site.

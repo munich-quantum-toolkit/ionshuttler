@@ -12,22 +12,23 @@ from __future__ import annotations
 from itertools import combinations
 from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.linear.actions import SingleQubitGate, TwoQubitGate
+from mqt.ionshuttler.core.gates import SingleQubitGate, TwoQubitGate
 from mqt.ionshuttler.partitioning import GateInfo, compute_fine_grained_gate_partition
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
 
-    from mqt.ionshuttler.linear.actions import GateAction
-    from mqt.ionshuttler.linear.architecture import Architecture
+    from mqt.ionshuttler.circuit import Circuit
+    from mqt.ionshuttler.core.gates import GateAction
+    from mqt.ionshuttler.linear.architecture import LinearArchitecture
     from mqt.ionshuttler.partitioning import FineGrainedTabuConfig
 
 
 def compute_gate_zone_assignment(
-    gate_order: Sequence[int],
-    gates: Mapping[int, GateAction],
-    architecture: Architecture,
+    circuit: Circuit,
+    architecture: LinearArchitecture,
     *,
+    active_gate_ids: Sequence[int] | None = None,
     config: FineGrainedTabuConfig | None = None,
 ) -> dict[int, str]:
     """Assign each gate to a preferred processing zone.
@@ -37,9 +38,9 @@ def compute_gate_zone_assignment(
     need no preference and return immediately without running the partitioner.
 
     Args:
-        gate_order: Stable gate ids in circuit order.
-        gates: Linear gate actions keyed by gate id.
+        circuit: Circuit whose gates receive preferences.
         architecture: Hardware layout whose zones receive the gates.
+        active_gate_ids: Circuit gates to assign. Defaults to all gates.
         config: Optional fine-grained tabu-search settings.
 
     Returns:
@@ -50,15 +51,19 @@ def compute_gate_zone_assignment(
     if len(processing_zones) < 2:
         return {}
 
+    gate_ids = circuit.gate_ids if active_gate_ids is None else active_gate_ids
     gate_info = {
-        gate_id: GateInfo(qubits=_gate_qubits(gates[gate_id]), qasm=type(gates[gate_id]).__name__)
-        for gate_id in gate_order
+        gate_id: GateInfo(
+            qubits=_gate_qubits(circuit.gates[gate_id]),
+            qasm=type(circuit.gates[gate_id]).__name__,
+        )
+        for gate_id in gate_ids
     }
     zone_names = tuple(processing_zones)
     midpoints = [(sites[0] + sites[-1]) / 2 for sites in processing_zones.values()]
     distances = [[abs(source - target) for target in midpoints] for source in midpoints]
     result = compute_fine_grained_gate_partition(
-        gate_order,
+        gate_ids,
         gate_info,
         zone_names,
         distances,
@@ -67,7 +72,7 @@ def compute_gate_zone_assignment(
     return result.gate_assignment
 
 
-def zone_site_pairs(architecture: Architecture) -> dict[str, tuple[tuple[int, int], ...]]:
+def zone_site_pairs(architecture: LinearArchitecture) -> dict[str, tuple[tuple[int, int], ...]]:
     """Return the valid two-ion site pairs belonging to each processing zone."""
     return {
         zone_name: tuple(combinations(sites, 2)) for zone_name, sites in (architecture.processing_zones or {}).items()

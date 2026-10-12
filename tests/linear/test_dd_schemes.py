@@ -13,7 +13,6 @@ from math import pi
 
 import pytest
 
-from mqt.ionshuttler.linear.actions import GateSpec
 from mqt.ionshuttler.linear.dd.schemes import (
     CDD_1,
     CDD_2,
@@ -23,6 +22,7 @@ from mqt.ionshuttler.linear.dd.schemes import (
     XY8,
     XY16,
     DDScheme,
+    GateSpec,
     available_dd_schemes,
     get_dd_scheme,
     make_arbitrary_x_scheme,

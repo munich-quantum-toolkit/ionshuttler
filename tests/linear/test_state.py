@@ -13,7 +13,7 @@ from dataclasses import replace
 
 import pytest
 
-from mqt.ionshuttler.linear.architecture import Architecture
+from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.state import (
     State,
     create_initial_state,
@@ -23,8 +23,6 @@ from mqt.ionshuttler.linear.state import (
     normalize_initial_state,
     pzs_busy_dict,
     to_dict,
-    to_metadata_dict,
-    to_site_occupancy,
 )
 
 
@@ -57,30 +55,6 @@ def test_state_normalizes_tuple_backed_mappings_and_is_hashable() -> None:
     assert pzs_busy_dict(state) == {"pz_0": 0, "pz_1": 2}
 
 
-def test_state_metadata_uses_site_occupancy() -> None:
-    """Represent the starting ion placement site by site."""
-    state = create_initial_state(num_ions=2, architecture=Architecture(num_sites=5))
-
-    assert to_site_occupancy(state, 5) == [None, 0, 1, None, None]
-    assert to_metadata_dict(state, 5) == {"site_occupancy": [None, 0, 1, None, None]}
-
-
-@pytest.mark.parametrize("position", [-1, 5])
-def test_state_metadata_rejects_positions_outside_the_architecture(position: int) -> None:
-    """Report the ion and invalid site instead of indexing outside the array."""
-    state = State(
-        positions=((3, position),),
-        completed_gates=frozenset(),
-        in_progress_gates=(),
-        ions_busy_until=((3, 0),),
-        pzs_busy_until=(),
-        time=0,
-    )
-
-    with pytest.raises(ValueError, match=rf"ion 3 occupies invalid site {position}"):
-        to_site_occupancy(state, 5)
-
-
 @pytest.mark.parametrize(
     ("in_progress_gates", "ions_busy_until", "pzs_busy_until", "expected"),
     [
@@ -111,7 +85,7 @@ def test_pending_timed_work_covers_each_scheduled_resource(
 
 def test_create_initial_state_centers_tightly_packed_ions() -> None:
     """Place ions together at the center of the chain by default."""
-    state = create_initial_state(num_ions=3, architecture=Architecture(num_sites=7))
+    state = create_initial_state(num_ions=3, architecture=LinearArchitecture(num_sites=7))
 
     assert state.positions == ((0, 2), (1, 3), (2, 4))
     assert state.ions_busy_until == ((0, 0), (1, 0), (2, 0))
@@ -121,7 +95,7 @@ def test_create_initial_state_centers_tightly_packed_ions() -> None:
 
 def test_create_initial_state_accepts_explicit_positions_and_zones() -> None:
     """Place ions by ID and initialize all configured processing zones."""
-    architecture = Architecture(num_sites=7, processing_zones={"A": [0, 1], "B": [5, 6]})
+    architecture = LinearArchitecture(num_sites=7, processing_zones={"A": [0, 1], "B": [5, 6]})
     state = create_initial_state(num_ions=3, architecture=architecture, initial_positions=[0, 3, 6])
 
     assert state.positions == ((0, 0), (1, 3), (2, 6))
@@ -130,7 +104,7 @@ def test_create_initial_state_accepts_explicit_positions_and_zones() -> None:
 
 def test_normalize_initial_state_validates_occupancy_and_zone_clocks() -> None:
     """Reject impossible placements and add missing processing-zone availability."""
-    architecture = Architecture(num_sites=4, processing_zones={"A": [0, 1], "B": [2, 3]})
+    architecture = LinearArchitecture(num_sites=4, processing_zones={"A": [0, 1], "B": [2, 3]})
     state = State(
         positions=((0, 0),),
         completed_gates=frozenset(),
@@ -169,6 +143,6 @@ def test_create_initial_state_rejects_invalid_placement(
     with pytest.raises(ValueError, match=message):
         create_initial_state(
             num_ions=num_ions,
-            architecture=Architecture(num_sites=4),
+            architecture=LinearArchitecture(num_sites=4),
             initial_positions=initial_positions,
         )

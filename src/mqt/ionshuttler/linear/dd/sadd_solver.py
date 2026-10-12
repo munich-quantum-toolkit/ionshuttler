@@ -14,61 +14,38 @@ from dataclasses import dataclass
 from importlib import import_module
 from itertools import count
 from math import pi
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
+from mqt.ionshuttler.core.gates import Rx, SingleQubitGate, TwoQubitGate
+from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.linear.actions import (
-    Action,
-    AdvanceTime,
     PhysicalSwap,
-    Rx,
     Shuttle,
-    SingleQubitGate,
     TransportAction,
-    TwoQubitGate,
 )
 from mqt.ionshuttler.linear.dd.critical_segments import CriticalSegment, compute_critical_segments
-from mqt.ionshuttler.linear.dd.schedule_transform import rebuild_schedule, validate_rebuilt_schedule
-from mqt.ionshuttler.linear.dd.timeline import CompiledTimeline, build_timeline
-from mqt.ionshuttler.linear.schedule import ActionSchedule, ScheduledAction
+from mqt.ionshuttler.linear.dd.schedule_transform import rebuild_schedule
+from mqt.ionshuttler.linear.replay import is_schedule_valid
+from mqt.ionshuttler.linear.timeline import CompiledTimeline, build_timeline
 
 if TYPE_CHECKING:
     from types import ModuleType
 
-    from mqt.ionshuttler.linear.architecture import Architecture
+    from mqt.ionshuttler.core.actions import Action
+    from mqt.ionshuttler.linear.architecture import LinearArchitecture
 
 _MISSING_OR_TOOLS_MESSAGE = "OR-Tools is required for SADD optimization; install IonShuttler with the 'dd' extra"
 # Solver expression types cannot be imported while the optional extra is absent.
 SolverObject: TypeAlias = Any
-
-
-class _HasDuration(Protocol):
-    duration: int
-
-
-class _OperationDurations(Protocol):
-    @property
-    def shuttle(self) -> int: ...
-
-    @property
-    def swap(self) -> int: ...
-
-    @property
-    def one_qubit_gate(self) -> int: ...
-
-
-@dataclass(frozen=True)
-class _InferredDurations:
-    shuttle: int
-    swap: int
-    one_qubit_gate: int = 1
+_PI_PULSE = Rx(ion=0, theta=pi)
 
 
 @dataclass(frozen=True)
 class SADDProblem:
     """Contain one bounded control-window CP-SAT problem."""
 
-    schedule: ActionSchedule
-    architecture: Architecture
+    schedule: Schedule
+    architecture: LinearArchitecture
     target_pz: str
     t_start: int
     t_end: int
@@ -104,7 +81,7 @@ class SADDSolution:
     pulse_timesteps: dict[int, tuple[int, ...]]
     pulse_action_ids: dict[int, tuple[int, ...]]
     transport_actions: tuple[tuple[int, Action], ...]
-    schedule: ActionSchedule | None
+    schedule: Schedule | None
     validation_status: str
     validation_error: str | None
     runtime_s: float
@@ -119,31 +96,34 @@ class SADDSolution:
 
 
 def build_sadd_problem(
-    schedule: ActionSchedule,
-    architecture: Architecture,
+    schedule: Schedule,
+    architecture: LinearArchitecture,
     *,
     target_pz: str,
     t_start: int,
     t_end: int,
     participating_ions: tuple[int, ...],
     scale: int = 1000,
-    operation_durations: _OperationDurations | None = None,
     num_search_workers: int = 8,
     local_pulse_action_ids: frozenset[int] = frozenset(),
 ) -> SADDProblem:
     """Build one shuttling-aware dynamical decoupling optimization problem.
 
+    Synthesized shuttles, swaps, and local pulses take the durations defined
+    by the architecture.
+
     Returns:
         The bounded optimization problem.
 
     Raises:
-        ValueError: If schedule metadata or problem bounds are invalid.
+        ValueError: If schedule metadata, problem bounds, or the local pulse
+            duration are invalid.
     """
     if target_pz not in (architecture.processing_zones or {}):
         msg = f"unknown processing zone: {target_pz!r}"
         raise ValueError(msg)
-    if not 0 <= t_start < t_end <= schedule.num_timesteps:
-        msg = f"expected 0 <= t_start < t_end <= {schedule.num_timesteps}"
+    if not schedule.start_time <= t_start < t_end <= schedule.end_time:
+        msg = f"expected {schedule.start_time} <= t_start < t_end <= {schedule.end_time}"
         raise ValueError(msg)
     if not participating_ions:
         msg = "participating_ions must not be empty"
@@ -155,7 +135,10 @@ def build_sadd_problem(
         msg = "num_search_workers must be >= 1"
         raise ValueError(msg)
 
-    durations = operation_durations or _infer_operation_durations(schedule)
+    pulse_duration = architecture.action_duration(_PI_PULSE)
+    if pulse_duration < 1 or architecture.is_virtual_gate(_PI_PULSE):
+        msg = "SADD requires a physical Rx pulse with a positive duration"
+        raise ValueError(msg)
     timeline = build_timeline(schedule, architecture)
     positions_before = _positions_before_timesteps(schedule)
     fixed_positions, fixed_transport_timesteps, fixed_transport_starts = _fixed_positions_for_interval(
@@ -190,9 +173,9 @@ def build_sadd_problem(
         sensitivity_profile=trace.sensitivity_profile,
         objective_before=sum(segment.squared_phase for segment in phase_segments),
         scale=scale,
-        shuttle_duration=durations.shuttle,
-        swap_duration=durations.swap,
-        pulse_duration=durations.one_qubit_gate,
+        shuttle_duration=architecture.transport_timing.shuttle,
+        swap_duration=architecture.transport_timing.swap,
+        pulse_duration=pulse_duration,
         num_search_workers=num_search_workers,
         local_pulse_action_ids=local_pulse_action_ids,
     )
@@ -323,19 +306,6 @@ def _load_cp_model() -> ModuleType:
         raise
 
 
-def _infer_operation_durations(program: ActionSchedule) -> _InferredDurations:
-    shuttle_durations = {action.duration for action in program.path if isinstance(action, Shuttle)}
-    swap_durations = {action.duration for action in program.path if isinstance(action, PhysicalSwap)}
-    return _InferredDurations(
-        shuttle=_single_duration_or_default(shuttle_durations, default=1),
-        swap=_single_duration_or_default(swap_durations, default=3),
-    )
-
-
-def _single_duration_or_default(durations: set[int], *, default: int) -> int:
-    return next(iter(durations)) if len(durations) == 1 else default
-
-
 def _add_unchanged_schedule_hint(
     model: SolverObject,
     problem: SADDProblem,
@@ -397,15 +367,19 @@ def _fixed_positions_for_interval(
     participant_set = set(participating_ions)
     for ion in participating_ions:
         fixed[ion, t_end - 1] = positions_before[t_end][ion]
-    for timestep in range(t_end):
-        for action in timeline.action_at(timestep) or ():
-            for ion in _gate_ions(action):
-                if ion in participant_set and t_start <= timestep < t_end:
-                    fixed[ion, timestep] = timeline.ion_position(ion, timestep)
-            action_ions = _action_ions(action)
-            if not isinstance(action, TransportAction) or not action_ions.intersection(participant_set):
+    for timestep in range(timeline.start_time, t_end):
+        for item in timeline.scheduled_action_at(timestep) or ():
+            action = item.action
+            if isinstance(action, SingleQubitGate | TwoQubitGate):
+                for ion in action.ions:
+                    if ion in participant_set and t_start <= timestep < t_end:
+                        fixed[ion, timestep] = timeline.ion_position(ion, timestep)
+            if not isinstance(action, TransportAction):
                 continue
-            duration = cast("_HasDuration", action).duration
+            action_ions = set(action.ions)
+            if not action_ions.intersection(participant_set):
+                continue
+            duration = item.duration
             rewritable = action_ions.issubset(participant_set) and t_start <= timestep and timestep + duration <= t_end
             if rewritable:
                 continue
@@ -421,39 +395,20 @@ def _fixed_positions_for_interval(
     return fixed, frozenset(fixed_transport), frozenset(fixed_transport_starts)
 
 
-def _positions_before_timesteps(program: ActionSchedule) -> dict[int, dict[int, int]]:
+def _positions_before_timesteps(program: Schedule) -> dict[int, dict[int, int]]:
     positions = dict(program.initial_state.positions)
-    positions_before = {0: dict(positions)}
-    current_time = 0
-    for action in program.path:
-        if isinstance(action, AdvanceTime):
-            current_time += action.timestep_increment
-            positions_before.setdefault(current_time, dict(positions))
-        elif isinstance(action, Shuttle):
-            positions[action.ion] = action.dst
-        elif isinstance(action, PhysicalSwap):
-            positions[action.ion_a], positions[action.ion_b] = positions[action.ion_b], positions[action.ion_a]
+    actions_by_time: dict[int, list[Action]] = {}
+    for item in program.scheduled_actions:
+        actions_by_time.setdefault(item.start_time, []).append(item.action)
+    positions_before: dict[int, dict[int, int]] = {}
+    for timestep in range(program.start_time, program.end_time + 1):
+        positions_before[timestep] = dict(positions)
+        for action in actions_by_time.get(timestep, ()):
+            if isinstance(action, Shuttle):
+                positions[action.ion] = action.dst
+            elif isinstance(action, PhysicalSwap):
+                positions[action.ion_a], positions[action.ion_b] = positions[action.ion_b], positions[action.ion_a]
     return positions_before
-
-
-def _gate_ions(action: Action) -> tuple[int, ...]:
-    if isinstance(action, SingleQubitGate):
-        return (action.ion,)
-    if isinstance(action, TwoQubitGate):
-        return (action.ion_a, action.ion_b)
-    return ()
-
-
-def _action_ions(action: Action) -> set[int]:
-    if isinstance(action, Shuttle):
-        return {action.ion}
-    if isinstance(action, PhysicalSwap):
-        return {action.ion_a, action.ion_b}
-    if isinstance(action, SingleQubitGate):
-        return {action.ion}
-    if isinstance(action, TwoQubitGate):
-        return {action.ion_a, action.ion_b}
-    return set()
 
 
 def _add_position_and_movement_constraints(
@@ -883,8 +838,6 @@ def _decode_transport_actions(
                 t_action,
                 {ion: site for ion, site in previous.items() if ion not in fixed_transport_ions},
                 {ion: site for ion, site in target.items() if ion not in fixed_transport_ions},
-                shuttle_duration=problem.shuttle_duration,
-                swap_duration=problem.swap_duration,
             )
         )
         previous = dict(target)
@@ -895,9 +848,6 @@ def _ordered_transport_actions_for_transition(
     t_action: int,
     previous: dict[int, int],
     target: dict[int, int],
-    *,
-    shuttle_duration: int = 1,
-    swap_duration: int = 1,
 ) -> list[tuple[int, Action]]:
     current = dict(previous)
     moves = {ion: (previous[ion], target[ion]) for ion in previous if previous[ion] != target[ion]}
@@ -908,10 +858,7 @@ def _ordered_transport_actions_for_transition(
             ion, other = swap
             src, dst = moves.pop(ion)
             moves.pop(other)
-            actions.append((
-                t_action,
-                PhysicalSwap(ion_a=ion, ion_b=other, pos_a=src, pos_b=dst, duration=swap_duration),
-            ))
+            actions.append((t_action, PhysicalSwap(ion_a=ion, ion_b=other, pos_a=src, pos_b=dst)))
             current[ion], current[other] = current[other], current[ion]
             continue
         occupied = set(current.values())
@@ -922,7 +869,7 @@ def _ordered_transport_actions_for_transition(
             )
             raise ValueError(msg)
         src, dst = moves.pop(shuttle_ion)
-        actions.append((t_action, Shuttle(shuttle_ion, src, dst, duration=shuttle_duration)))
+        actions.append((t_action, Shuttle(shuttle_ion, src, dst)))
         current[shuttle_ion] = dst
     return actions
 
@@ -939,7 +886,7 @@ def _materialize_solution(
     problem: SADDProblem,
     transport_actions: tuple[tuple[int, Action], ...],
     pulse_timesteps: dict[int, tuple[int, ...]],
-) -> tuple[ActionSchedule | None, dict[int, tuple[int, ...]], str, str | None]:
+) -> tuple[Schedule | None, dict[int, tuple[int, ...]], str, str | None]:
     try:
         updated, pulse_action_ids = _materialize_and_validate(problem, transport_actions, pulse_timesteps)
     except Exception as error:  # ruff: ignore[blind-except] - Validation details are part of the solver result.
@@ -951,16 +898,16 @@ def _materialize_and_validate(
     problem: SADDProblem,
     transport_actions: tuple[tuple[int, Action], ...],
     pulse_timesteps: dict[int, tuple[int, ...]],
-) -> tuple[ActionSchedule, dict[int, tuple[int, ...]]]:
+) -> tuple[Schedule, dict[int, tuple[int, ...]]]:
     updated, pulse_action_ids = _rewrite_control_window(problem, transport_actions, pulse_timesteps)
-    if not validate_rebuilt_schedule(updated, problem.architecture):
+    if not is_schedule_valid(updated, problem.architecture):
         msg = "decoded solution fails full schedule replay validation"
         raise ValueError(msg)
     updated_timeline = build_timeline(updated, problem.architecture)
     original_timeline = build_timeline(problem.schedule, problem.architecture)
     if (
-        updated_timeline.state_at(problem.schedule.num_timesteps).positions
-        != original_timeline.state_at(problem.schedule.num_timesteps).positions
+        updated_timeline.state_at(problem.schedule.end_time).positions
+        != original_timeline.state_at(problem.schedule.end_time).positions
     ):
         msg = "decoded solution changes final ion positions"
         raise ValueError(msg)
@@ -971,51 +918,100 @@ def _rewrite_control_window(
     problem: SADDProblem,
     transport_actions: tuple[tuple[int, Action], ...],
     pulse_timesteps: dict[int, tuple[int, ...]],
-) -> tuple[ActionSchedule, dict[int, tuple[int, ...]]]:
+) -> tuple[Schedule, dict[int, tuple[int, ...]]]:
     timeline = build_timeline(problem.schedule, problem.architecture)
-    participant_set = set(problem.participating_ions)
     decoded_transport_by_time: dict[int, list[Action]] = {}
     for timestep, action in transport_actions:
         decoded_transport_by_time.setdefault(timestep, []).append(action)
     pulses_by_time: dict[int, list[Rx]] = {}
     for ion, timesteps in pulse_timesteps.items():
         for timestep in timesteps:
-            pulses_by_time.setdefault(timestep, []).append(Rx(ion=ion, theta=pi, duration=problem.pulse_duration))
+            pulses_by_time.setdefault(timestep, []).append(Rx(ion=ion, theta=pi))
 
-    action_ids = count(problem.schedule.next_action_id)
-    pulse_action_ids: dict[int, list[int]] = {}
-    new_actions: list[ScheduledAction] = []
-    for timestep in range(problem.schedule.num_timesteps + 1):
-        if problem.t_start <= timestep < problem.t_end:
-            new_actions.extend(
-                ScheduledAction(next(action_ids), action) for action in decoded_transport_by_time.get(timestep, ())
-            )
-            for action in pulses_by_time.get(timestep, ()):
-                action_id = next(action_ids)
-                new_actions.append(ScheduledAction(action_id, action))
-                pulse_action_ids.setdefault(action.ion, []).append(action_id)
-        original_at_time = timeline.scheduled_action_at(timestep) or ()
-        for item in original_at_time:
-            action = item.action
-            if isinstance(action, AdvanceTime):
-                continue
-            if (
-                problem.t_start <= timestep < problem.t_end
-                and isinstance(action, TransportAction)
-                and _action_ions(action).intersection(participant_set)
-            ):
-                duration = cast("_HasDuration", action).duration
-                if _action_ions(action).issubset(participant_set) and timestep + duration <= problem.t_end:
-                    continue
-            new_actions.append(item)
-        new_actions.extend(item for item in original_at_time if isinstance(item.action, AdvanceTime))
+    # The decoded transport moves ions, so a pulse occupies the zone of its
+    # rewritten position, not of its position in the input schedule.
+    transport_only, _ = _rewritten_actions(problem, timeline, decoded_transport_by_time, {}, None)
+    rewritten_timeline = build_timeline(
+        rebuild_schedule(problem.schedule, transport_only),
+        problem.architecture,
+    )
+    new_actions, pulse_action_ids = _rewritten_actions(
+        problem,
+        timeline,
+        decoded_transport_by_time,
+        pulses_by_time,
+        rewritten_timeline,
+    )
     return rebuild_schedule(problem.schedule, new_actions), {
         ion: tuple(pulse_action_ids.get(ion, ())) for ion in pulse_timesteps
     }
 
 
+def _rewritten_actions(
+    problem: SADDProblem,
+    timeline: CompiledTimeline,
+    decoded_transport_by_time: dict[int, list[Action]],
+    pulses_by_time: dict[int, list[Rx]],
+    rewritten_timeline: CompiledTimeline | None,
+) -> tuple[list[ScheduledAction], dict[int, list[int]]]:
+    """Merge decoded transport and pulses with the retained input actions.
+
+    Args:
+        problem: Control-window problem that owns the input schedule.
+        timeline: Timeline of the input schedule.
+        decoded_transport_by_time: Decoded transport actions keyed by start time.
+        pulses_by_time: Decoded pulses keyed by start time.
+        rewritten_timeline: Timeline of the transport-rewritten schedule, which
+            supplies the pulse positions. Required whenever pulses are present.
+
+    Returns:
+        The ordered scheduled actions and the identifiers of inserted pulses.
+    """
+    participant_set = set(problem.participating_ions)
+    action_ids = count(problem.schedule.next_action_id)
+    pulse_action_ids: dict[int, list[int]] = {}
+    new_actions: list[ScheduledAction] = []
+    for timestep in range(problem.schedule.start_time, problem.schedule.end_time + 1):
+        if problem.t_start <= timestep < problem.t_end:
+            new_actions.extend(
+                ScheduledAction(
+                    next(action_ids),
+                    action,
+                    start_time=timestep,
+                    duration=problem.architecture.action_duration(action),
+                )
+                for action in decoded_transport_by_time.get(timestep, ())
+            )
+            for action in pulses_by_time.get(timestep, ()):
+                action_id = next(action_ids)
+                state = cast("CompiledTimeline", rewritten_timeline).state_at(timestep)
+                new_actions.append(
+                    ScheduledAction(
+                        action_id,
+                        action,
+                        start_time=timestep,
+                        duration=problem.pulse_duration,
+                        processing_zone_id=problem.architecture.action_processing_zone(action, state),
+                    )
+                )
+                pulse_action_ids.setdefault(action.ion, []).append(action_id)
+        original_at_time = timeline.scheduled_action_at(timestep) or ()
+        for item in original_at_time:
+            action = item.action
+            transport_ions = set(action.ions) if isinstance(action, TransportAction) else set()
+            if (
+                problem.t_start <= timestep < problem.t_end
+                and transport_ions.intersection(participant_set)
+                and transport_ions.issubset(participant_set)
+                and item.end_time <= problem.t_end
+            ):
+                continue
+            new_actions.append(item)
+    return new_actions, pulse_action_ids
+
+
 def _objective_for_result(
-    program: ActionSchedule,
+    program: Schedule,
     problem: SADDProblem,
     pulse_action_ids: dict[int, tuple[int, ...]],
 ) -> float:
