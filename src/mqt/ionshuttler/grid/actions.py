@@ -24,7 +24,11 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class JunctionMove(Action):
-    """Move one ordered ion chain between two endpoints of a junction."""
+    """Move one ion chain between two endpoints of a junction.
+
+    The ordering of ``ions`` follows the source segment's canonical
+    start-to-end order, regardless of which endpoint the chain leaves through.
+    """
 
     source: SegmentEndpoint
     destination: SegmentEndpoint

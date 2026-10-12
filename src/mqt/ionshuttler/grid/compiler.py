@@ -22,6 +22,7 @@ from mqt.ionshuttler.grid.config import (
     GridCompilerStrategy,
     GridDependencyMode,
 )
+from mqt.ionshuttler.grid.routing import select_greedy_target
 from mqt.ionshuttler.grid.scheduling import schedule_breadth_first, schedule_greedy
 
 if TYPE_CHECKING:
@@ -85,6 +86,14 @@ class GridCompiler:
             gate_to_processing_zone,
             pre_partition=pre_partition,
         )
+        if self.config.strategy is GridCompilerStrategy.GREEDY:
+            _validate_initial_gate_reachability(
+                parsed,
+                self.architecture,
+                initial_state,
+                gate_to_segment_assignment,
+                self.config.allowed_junction_crossings,
+            )
 
         schedule, diagnostics = self._create_schedule(parsed, initial_state, gate_to_segment_assignment)
         status = CompilationStatus.SUCCESS if diagnostics.gates == len(parsed.gates) else CompilationStatus.FAILED
@@ -181,7 +190,11 @@ class GridCompiler:
             if not zone.supports(gate):
                 msg = f"processing zone {zone_id!r} does not support gate {gate_id}"
                 raise ValueError(msg)
-            segment_assignment[gate_id] = self.architecture.processing_zone_segment(zone_id).segment_id
+            segment = self.architecture.processing_zone_segment(zone_id)
+            if segment.capacity < len(gate.ions):
+                msg = f"processing zone {zone_id!r} cannot accommodate gate {gate_id}"
+                raise ValueError(msg)
+            segment_assignment[gate_id] = segment.segment_id
         return segment_assignment
 
 
@@ -211,9 +224,38 @@ def _validate_gate_capabilities(circuit: Circuit, architecture: GridArchitecture
     for gate in circuit.gates:
         if architecture.is_virtual_gate(gate):
             continue
-        if not any(zone.supports(gate) for zone in architecture.processing_zones):
+        if not any(
+            zone.supports(gate) and architecture.processing_zone_segment(zone.zone_id).capacity >= len(gate.ions)
+            for zone in architecture.processing_zones
+        ):
             msg = f"Grid architecture has no processing zone for {type(gate).__name__}"
             raise ValueError(msg)
+
+
+def _validate_initial_gate_reachability(
+    circuit: Circuit,
+    architecture: GridArchitecture,
+    state: GridMachineState,
+    gate_to_segment_assignment: Mapping[int, str],
+    allowed_crossings: frozenset[tuple[str, str]] | None,
+) -> None:
+    """Reject a Greedy input whose initial placement cannot reach a gate target."""
+    for gate in circuit.gates:
+        if architecture.is_virtual_gate(gate):
+            continue
+        target_segment_ids = (
+            (gate_to_segment_assignment[gate.gate_id],)
+            if gate.gate_id is not None and gate.gate_id in gate_to_segment_assignment
+            else tuple(
+                dict.fromkeys(
+                    architecture.processing_zone_segment(zone.zone_id).segment_id
+                    for zone in architecture.processing_zones
+                    if zone.supports(gate)
+                    and architecture.processing_zone_segment(zone.zone_id).capacity >= len(gate.ions)
+                )
+            )
+        )
+        select_greedy_target(architecture, state, gate, target_segment_ids, allowed_crossings)
 
 
 __all__ = ["GridCompiler"]

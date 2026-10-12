@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 from collections import deque
-from functools import lru_cache
 from itertools import combinations, pairwise
 from typing import TYPE_CHECKING
 
@@ -534,7 +533,6 @@ def _gate_is_placed(state: GridMachineState, gate: GateAction, target_segment_id
     )
 
 
-@lru_cache(maxsize=1024)
 def _segment_distances(
     architecture: GridArchitecture,
     start_segment_id: str,
@@ -543,6 +541,11 @@ def _segment_distances(
     reverse: bool = False,
 ) -> dict[str, int]:
     """Return unweighted topology distances from one segment."""
+    cache_key = (start_segment_id, allowed_crossings, reverse)
+    # Routing alone manages this architecture-local cache.
+    distance_cache = architecture._routing_distances  # ruff: ignore[private-member-access]
+    if cached := distance_cache.get(cache_key):
+        return cached
     adjacency = _segment_adjacency(architecture, allowed_crossings, reverse=reverse)
     distances = {start_segment_id: 0}
     queue = deque((start_segment_id,))
@@ -553,6 +556,7 @@ def _segment_distances(
                 continue
             distances[neighbor] = distances[segment_id] + 1
             queue.append(neighbor)
+    distance_cache[cache_key] = distances
     return distances
 
 
@@ -576,7 +580,6 @@ def _shortest_segment_path(
     return None
 
 
-@lru_cache(maxsize=128)
 def _segment_adjacency(
     architecture: GridArchitecture,
     allowed_crossings: JunctionCrossings = None,
@@ -584,6 +587,11 @@ def _segment_adjacency(
     reverse: bool = False,
 ) -> dict[str, tuple[str, ...]]:
     """Return deterministic segment adjacency induced by junction membership."""
+    cache_key = (allowed_crossings, reverse)
+    # Routing alone manages this architecture-local cache.
+    adjacency_cache = architecture._routing_adjacencies  # ruff: ignore[private-member-access]
+    if cached := adjacency_cache.get(cache_key):
+        return cached
     adjacency: dict[str, set[str]] = {segment.segment_id: set() for segment in architecture.segments}
     for junction in architecture.junctions:
         segment_ids = {endpoint.segment_id for endpoint in junction.endpoints}
@@ -592,7 +600,9 @@ def _segment_adjacency(
                 crossing = (neighbor, segment_id) if reverse else (segment_id, neighbor)
                 if allowed_crossings is None or crossing in allowed_crossings:
                     adjacency[segment_id].add(neighbor)
-    return {segment_id: tuple(sorted(neighbors)) for segment_id, neighbors in adjacency.items()}
+    result = {segment_id: tuple(sorted(neighbors)) for segment_id, neighbors in adjacency.items()}
+    adjacency_cache[cache_key] = result
+    return result
 
 
 def _occupancy_key(state: GridMachineState) -> OccupancyKey:

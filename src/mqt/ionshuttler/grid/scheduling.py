@@ -487,14 +487,17 @@ def _greedy_gate_plan(
         for gate in ready:
             if architecture.is_virtual_gate(gate):
                 continue
-            target_segment_id = _select_gate_segment(
-                architecture,
-                state,
-                gate,
-                gate_to_segment_lock,
-                allowed_crossings,
-                gate_to_segment_assignment,
-            )
+            try:
+                target_segment_id = _select_gate_segment(
+                    architecture,
+                    state,
+                    gate,
+                    gate_to_segment_lock,
+                    allowed_crossings,
+                    gate_to_segment_assignment,
+                )
+            except ValueError:
+                continue
             gates_by_segment[target_segment_id].append(gate)
         chosen = list(virtual)
         ordered_segment_ids = sorted(
@@ -577,7 +580,11 @@ def _candidate_target_segments(
     gate: GateAction,
 ) -> tuple[str, ...]:
     """Return processing-zone segments that support the gate."""
-    zones = tuple(zone for zone in architecture.processing_zones if zone.supports(gate))
+    zones = tuple(
+        zone
+        for zone in architecture.processing_zones
+        if zone.supports(gate) and architecture.processing_zone_segment(zone.zone_id).capacity >= len(gate.ions)
+    )
     return tuple(dict.fromkeys(architecture.processing_zone_segment(zone.zone_id).segment_id for zone in zones))
 
 

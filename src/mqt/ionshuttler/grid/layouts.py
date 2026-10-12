@@ -48,8 +48,9 @@ def square_grid(
     """Construct a square physical layout with edge-based Grid segments.
 
     ``size`` is the number of junctions along each side. Every physical edge
-    becomes one compiler segment. Every pair of segments incident to a physical
-    junction receives a bidirectional transport edge.
+    becomes one compiler segment. Each physical junction owns the endpoints of
+    its incident segments. An ion can move between any two distinct endpoints
+    of that junction.
 
     Returns:
         The canonical Grid architecture.

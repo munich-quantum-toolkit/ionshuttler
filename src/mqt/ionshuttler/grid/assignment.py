@@ -43,7 +43,13 @@ def compute_gate_zone_assignment(
     physical_gates = tuple(gate for gate in circuit.gates if not architecture.is_virtual_gate(gate))
     if not physical_gates:
         return {}
-    zones = tuple(zone for zone in architecture.processing_zones if all(zone.supports(gate) for gate in physical_gates))
+    largest_gate_arity = max(len(gate.ions) for gate in physical_gates)
+    zones = tuple(
+        zone
+        for zone in architecture.processing_zones
+        if architecture.processing_zone_segment(zone.zone_id).capacity >= largest_gate_arity
+        and all(zone.supports(gate) for gate in physical_gates)
+    )
     if len(zones) < 2:
         return {}
     zone_ids = tuple(zone.zone_id for zone in zones)

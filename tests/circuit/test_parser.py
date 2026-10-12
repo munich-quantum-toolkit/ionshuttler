@@ -76,6 +76,14 @@ def test_limited_qasm3_ignores_metadata_and_trailing_measurements(version: str) 
     )
 
 
+def test_qasm3_rejects_an_unsupported_header_version() -> None:
+    """Accept only the OpenQASM 3 headers implemented by the parser."""
+    source = 'OPENQASM 3.1;\ninclude "stdgates.inc";\nqubit[1] q;\nrx(0.5) q[0];'
+
+    with pytest.raises(ValueError, match="OPENQASM"):
+        parse_circuit(source)
+
+
 def test_dependencies_follow_each_ions_previous_gate() -> None:
     """Connect each gate to the latest gate acting on the same ions."""
     circuit = parse_circuit(QASM2_ALL_GATES)

@@ -13,7 +13,7 @@ from typing import cast
 
 import pytest
 
-from mqt.ionshuttler.core.gates import GateAction
+from mqt.ionshuttler.core.gates import GateAction, Rx, Ry
 from mqt.ionshuttler.grid import (
     CompilationStatus,
     Cycle,
@@ -570,6 +570,61 @@ def test_greedy_compiler_honors_allowed_junction_crossings() -> None:
         )
 
 
+def test_greedy_compiler_returns_no_progress_if_a_later_gate_becomes_unreachable() -> None:
+    """Stop cleanly if earlier routing leaves a later gate without a reachable zone."""
+    source = Segment("source")
+    rx_processor = Segment(
+        "rx-processor",
+        processing_zones=(ProcessingZone("rx-pz", supported_gate_types=(Rx,)),),
+    )
+    ry_processor = Segment(
+        "ry-processor",
+        processing_zones=(ProcessingZone("ry-pz", supported_gate_types=(Ry,)),),
+    )
+    architecture = GridArchitecture(
+        (source, rx_processor, ry_processor),
+        (Junction("junction", (source.end, rx_processor.start, ry_processor.start)),),
+    )
+    compiler = GridCompiler(
+        architecture,
+        GridCompilerConfig(
+            allowed_junction_crossings=frozenset({("source", "rx-processor"), ("source", "ry-processor")}),
+        ),
+    )
+
+    result = compiler.compile(
+        _qasm(1, "rx(0.5) q[0];", "ry(0.25) q[0];"),
+        initial_placement={"source": (0,)},
+        pre_partition=False,
+    )
+
+    assert result.status is CompilationStatus.FAILED
+    assert result.diagnostics is not None
+    assert result.diagnostics.gates == 1
+    assert result.diagnostics.stop_reason is GridStopReason.NO_PROGRESS
+    result.validate()
+
+
+def test_greedy_compiler_ignores_a_processing_zone_on_an_undersized_segment() -> None:
+    """Route a multi-ion gate only to a segment that can contain all operands."""
+    source = Segment("source", capacity=2)
+    undersized = Segment("undersized", processing_zones=(ProcessingZone("undersized-pz"),))
+    processor = Segment("processor", capacity=2, processing_zones=(ProcessingZone("processor-pz"),))
+    architecture = GridArchitecture(
+        (source, undersized, processor),
+        (Junction("junction", (source.end, undersized.start, processor.start)),),
+    )
+
+    result = GridCompiler(architecture).compile(
+        _qasm(2, "rxx(0.5) q[0],q[1];"),
+        initial_placement={"source": (0, 1)},
+        pre_partition=False,
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.schedule.scheduled_actions[-1].processing_zone_id == "processor-pz"
+
+
 def test_greedy_compiler_clears_a_blocked_route_from_the_free_end() -> None:
     """Shift downstream blockers before admitting an ion through a busy junction."""
     source = Segment("source")
@@ -875,3 +930,37 @@ def test_compiler_rejects_a_gate_without_a_capable_processing_zone() -> None:
 
     with pytest.raises(ValueError, match="Grid architecture has no processing zone for Rx"):
         GridCompiler(architecture).compile(_qasm(1, "rx(0.5) q[0];"))
+
+
+def test_compiler_rejects_a_gate_if_every_processing_zone_segment_is_too_small() -> None:
+    """Require one processing-zone segment to contain every gate operand."""
+    memory = Segment("memory", capacity=2)
+    processor = Segment("processor", processing_zones=(ProcessingZone("pz"),))
+    architecture = GridArchitecture(
+        (memory, processor),
+        (Junction("junction", (memory.end, processor.start)),),
+    )
+
+    with pytest.raises(ValueError, match="Grid architecture has no processing zone for Rxx"):
+        GridCompiler(architecture).compile(
+            _qasm(2, "rxx(0.5) q[0],q[1];"),
+            initial_placement={"memory": (0, 1)},
+        )
+
+
+def test_compiler_rejects_an_explicit_gate_assignment_to_an_undersized_segment() -> None:
+    """Reject an explicit target that cannot contain all gate operands."""
+    memory = Segment("memory", capacity=2)
+    undersized = Segment("undersized", processing_zones=(ProcessingZone("undersized-pz"),))
+    processor = Segment("processor", capacity=2, processing_zones=(ProcessingZone("processor-pz"),))
+    architecture = GridArchitecture(
+        (memory, undersized, processor),
+        (Junction("junction", (memory.end, undersized.start, processor.start)),),
+    )
+
+    with pytest.raises(ValueError, match="processing zone 'undersized-pz' cannot accommodate gate 0"):
+        GridCompiler(architecture).compile(
+            _qasm(2, "rxx(0.5) q[0],q[1];"),
+            initial_placement={"memory": (0, 1)},
+            gate_to_processing_zone={0: "undersized-pz"},
+        )

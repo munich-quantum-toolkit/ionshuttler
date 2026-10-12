@@ -57,7 +57,9 @@ def test_commutation_aware_dependencies_preserve_gate_ids_across_independent_ope
 @pytest.mark.parametrize("version", ["3", "3.0"])
 def test_commutation_aware_dependencies_support_qasm3_text(version: str) -> None:
     """Load OpenQASM 3 text before constructing the dependency view."""
-    source = f"""OPENQASM {version};
+    source = f"""// generated circuit
+    // the version header follows leading comments
+    OPENQASM {version};
     include "stdgates.inc";
     qubit[2] q;
     rx(0.5) q[0];

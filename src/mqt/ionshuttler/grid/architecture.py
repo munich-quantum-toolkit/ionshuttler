@@ -60,6 +60,14 @@ class GridArchitecture:
     _endpoint_junctions: dict[SegmentEndpoint, str] = field(init=False, repr=False, compare=False)
     _zones_by_id: dict[str, ProcessingZone] = field(init=False, repr=False, compare=False)
     _zone_segments: dict[str, str] = field(init=False, repr=False, compare=False)
+    _routing_adjacencies: dict[
+        tuple[frozenset[tuple[str, str]] | None, bool],
+        dict[str, tuple[str, ...]],
+    ] = field(default_factory=dict, init=False, repr=False, compare=False)
+    _routing_distances: dict[
+        tuple[str, frozenset[tuple[str, str]] | None, bool],
+        dict[str, int],
+    ] = field(default_factory=dict, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Validate and canonicalize the architecture.

@@ -18,6 +18,7 @@ from qiskit.converters import circuit_to_dagdependency
 from qiskit.qasm3 import loads as load_qasm3
 
 from .model import Circuit
+from .parser import qasm_version
 
 if TYPE_CHECKING:
     from .parser import CircuitInput
@@ -73,7 +74,7 @@ def _as_quantum_circuit(source: CircuitInput) -> QuantumCircuit:
     if isinstance(source, QuantumCircuit):
         return source
     qasm = source.read_text(encoding="utf-8") if isinstance(source, Path) else source
-    if qasm.lstrip().startswith(("OPENQASM 3;", "OPENQASM 3.0;")):
+    if qasm_version(qasm) == 3:
         return load_qasm3(qasm)
     return QuantumCircuit.from_qasm_str(qasm)
 
