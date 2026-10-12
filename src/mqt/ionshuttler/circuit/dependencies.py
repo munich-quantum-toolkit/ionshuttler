@@ -10,34 +10,41 @@
 from __future__ import annotations
 
 from functools import cache
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from qiskit import QuantumCircuit
+from qiskit.circuit import Gate
+from qiskit.circuit.library import RXGate, RXXGate, RYGate, RYYGate, RZGate, RZZGate
 from qiskit.converters import circuit_to_dagdependency
-from qiskit.qasm3 import loads as load_qasm3
 
 from .model import Circuit
-from .parser import qasm_version
 
 if TYPE_CHECKING:
-    from .parser import CircuitInput
+    from mqt.ionshuttler.core.gates import GateAction
+
+_QISKIT_GATE_TYPES = {
+    "rx": RXGate,
+    "ry": RYGate,
+    "rz": RZGate,
+    "rxx": RXXGate,
+    "ryy": RYYGate,
+    "rzz": RZZGate,
+}
 
 
-def with_commutation_aware_dependencies(circuit: Circuit, source: CircuitInput) -> Circuit:
+def with_commutation_aware_dependencies(circuit: Circuit) -> Circuit:
     """Return a scheduling view that permits commuting gate reordering.
 
     Args:
         circuit: Parsed circuit whose gate IDs define schedule identity.
-        source: Original circuit used to derive commutation relations.
 
     Returns:
         A circuit with Qiskit's commutation-aware direct predecessors.
 
     Raises:
-        ValueError: If the source operations do not match the parsed gates.
+        ValueError: If the dependency operations do not match the parsed gates.
     """
-    quantum_circuit = _as_quantum_circuit(source)
+    quantum_circuit = _as_quantum_circuit(circuit)
     dependency_graph = circuit_to_dagdependency(quantum_circuit)
     qubit_indices = {qubit: index for index, qubit in enumerate(dependency_graph.qubits)}
     operation_nodes = tuple(node for node in dependency_graph.get_nodes() if node.op.name not in {"barrier", "measure"})
@@ -66,17 +73,46 @@ def with_commutation_aware_dependencies(circuit: Circuit, source: CircuitInput) 
     predecessors = [frozenset[int]() for _gate in circuit.gates]
     for node_id, gate_id in node_to_gate.items():
         predecessors[gate_id] = gate_predecessors(node_id)
-    return Circuit(circuit.num_ions, circuit.gates, tuple(predecessors))
+    return Circuit(
+        num_ions=circuit.num_ions,
+        gates=circuit.gates,
+        predecessors=tuple(predecessors),
+        barriers=circuit.barriers,
+    )
 
 
-def _as_quantum_circuit(source: CircuitInput) -> QuantumCircuit:
-    """Return a Qiskit circuit for dependency analysis."""
-    if isinstance(source, QuantumCircuit):
-        return source
-    qasm = source.read_text(encoding="utf-8") if isinstance(source, Path) else source
-    if qasm_version(qasm) == 3:
-        return load_qasm3(qasm)
-    return QuantumCircuit.from_qasm_str(qasm)
+def _as_quantum_circuit(circuit: Circuit) -> QuantumCircuit:
+    """Build a Qiskit circuit from the parsed gates and barriers.
+
+    Returns:
+        The circuit used for dependency analysis.
+    """
+    quantum_circuit = QuantumCircuit(circuit.num_ions)
+    for gate_id, gate in enumerate(circuit.gates):
+        for targets in circuit.barriers[gate_id]:
+            quantum_circuit.barrier(*sorted(targets))
+        quantum_circuit.append(_as_qiskit_gate(gate), gate.ions)
+    for targets in circuit.barriers[-1]:
+        quantum_circuit.barrier(*sorted(targets))
+    return quantum_circuit
+
+
+def _as_qiskit_gate(gate: GateAction) -> Gate:
+    """Build one Qiskit gate while preserving its parsed name and operands.
+
+    Returns:
+        The gate used for dependency analysis.
+
+    Raises:
+        ValueError: If the parsed gate type has no circuit name.
+    """
+    name = gate.circuit_name
+    if name is None:
+        msg = f"gate type {type(gate).__name__} has no circuit name"
+        raise ValueError(msg)
+    parameters = [getattr(gate, parameter_name) for parameter_name in gate.parameter_names]
+    gate_type = _QISKIT_GATE_TYPES.get(name)
+    return Gate(name, len(gate.ions), parameters) if gate_type is None else gate_type(*parameters)
 
 
 __all__ = ["with_commutation_aware_dependencies"]

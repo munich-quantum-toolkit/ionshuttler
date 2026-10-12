@@ -74,7 +74,7 @@ class GridCompiler:
         )
         parsed = parse_circuit(circuit, gate_types=gate_types)
         if self.config.dependency_mode is GridDependencyMode.COMMUTATION_AWARE:
-            parsed = with_commutation_aware_dependencies(parsed, circuit)
+            parsed = with_commutation_aware_dependencies(parsed)
         placement = (
             _default_placement(parsed.num_ions, self.architecture) if initial_placement is None else initial_placement
         )

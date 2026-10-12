@@ -30,6 +30,8 @@ from mqt.ionshuttler.grid import (
 from mqt.ionshuttler.grid.schedule import schedule_from_json
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from mqt.ionshuttler.core.actions import Action
     from mqt.ionshuttler.grid import GridMachineState
 
@@ -327,3 +329,11 @@ def test_architecture_and_schedule_round_trip_and_replay() -> None:
     assert restored_schedule == schedule
     assert restored_architecture.is_schedule_valid(restored_schedule)
     assert restored_architecture.replay_schedule(restored_schedule).occupants("b") == (0,)
+
+
+def test_architecture_save_appends_json_to_existing_suffix(tmp_path: Path) -> None:
+    """Keep a supplied filename suffix when adding the JSON extension."""
+    output = _cycle_architecture().save(tmp_path / "architecture.backup")
+
+    assert output == tmp_path / "architecture.backup.json"
+    assert output.is_file()

@@ -233,6 +233,14 @@ def test_schedule_save_adds_json_suffix_and_creates_parent(tmp_path: Path) -> No
     assert output.is_file()
 
 
+def test_schedule_save_appends_json_to_existing_suffix(tmp_path: Path) -> None:
+    """Keep a supplied filename suffix when adding the JSON extension."""
+    output = _schedule().save(tmp_path / "schedule.backup")
+
+    assert output == tmp_path / "schedule.backup.json"
+    assert output.is_file()
+
+
 def test_scheduled_actions_contain_only_actions() -> None:
     """Keep compiler bookkeeping such as time advances out of public schedules."""
 

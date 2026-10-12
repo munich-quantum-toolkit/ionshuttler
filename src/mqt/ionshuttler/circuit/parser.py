@@ -72,6 +72,7 @@ def parse_circuit(
         num_ions=num_qubits,
         gates=tuple(_lower_gate(record, gate_id=gate_id) for gate_id, record in enumerate(records)),
         predecessors=_compute_predecessors(records, barriers),
+        barriers=tuple(barriers.get(gate_id, ()) for gate_id in range(len(records) + 1)),
     )
 
 

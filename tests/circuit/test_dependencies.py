@@ -22,7 +22,7 @@ def test_commutation_aware_dependencies_release_commuting_rotations() -> None:
     """Permit equal-axis rotations on one ion to change order."""
     source = _qasm("rx(0.5) q[0];", "rx(0.25) q[0];")
 
-    circuit = with_commutation_aware_dependencies(parse_circuit(source), source)
+    circuit = with_commutation_aware_dependencies(parse_circuit(source))
 
     assert circuit.predecessors == (frozenset(), frozenset())
 
@@ -31,7 +31,7 @@ def test_commutation_aware_dependencies_retain_noncommuting_rotations() -> None:
     """Keep the order of rotations that do not commute."""
     source = _qasm("rx(0.5) q[0];", "rz(0.25) q[0];")
 
-    circuit = with_commutation_aware_dependencies(parse_circuit(source), source)
+    circuit = with_commutation_aware_dependencies(parse_circuit(source))
 
     assert circuit.predecessors == (frozenset(), frozenset({0}))
 
@@ -40,7 +40,7 @@ def test_commutation_aware_dependencies_retain_barrier_order() -> None:
     """Do not move commuting gates through a circuit barrier."""
     source = _qasm("rx(0.5) q[0];", "barrier q;", "rx(0.25) q[1];")
 
-    circuit = with_commutation_aware_dependencies(parse_circuit(source), source)
+    circuit = with_commutation_aware_dependencies(parse_circuit(source))
 
     assert circuit.predecessors == (frozenset(), frozenset({0}))
 
@@ -49,14 +49,14 @@ def test_commutation_aware_dependencies_preserve_gate_ids_across_independent_ope
     """Map dependency nodes to stable IDs in source order."""
     source = _qasm("rx(0.5) q[1];", "rx(0.25) q[0];", "rz(0.125) q[1];")
 
-    circuit = with_commutation_aware_dependencies(parse_circuit(source), source)
+    circuit = with_commutation_aware_dependencies(parse_circuit(source))
 
     assert circuit.predecessors == (frozenset(), frozenset(), frozenset({0}))
 
 
 @pytest.mark.parametrize("version", ["3", "3.0"])
 def test_commutation_aware_dependencies_support_qasm3_text(version: str) -> None:
-    """Load OpenQASM 3 text before constructing the dependency view."""
+    """Construct the dependency view from parsed OpenQASM 3 operations."""
     source = f"""// generated circuit
     // the version header follows leading comments
     OPENQASM {version};
@@ -66,6 +66,6 @@ def test_commutation_aware_dependencies_support_qasm3_text(version: str) -> None
     rx(0.25) q[0];
     """
 
-    circuit = with_commutation_aware_dependencies(parse_circuit(source), source)
+    circuit = with_commutation_aware_dependencies(parse_circuit(source))
 
     assert circuit.predecessors == (frozenset(), frozenset())
