@@ -166,10 +166,16 @@ def _records_from_qasm(
     # ``None`` marks a barrier on the whole register, whose size may be unknown here.
     barrier_targets: dict[int, list[frozenset[int] | None]] = {}
     significant_lines = _significant_qasm_lines(qasm)
-    header_seen = qasm_version(qasm) is not None
+    header_seen = False
     measurement_seen = False
 
     for line in significant_lines:
+        if line.startswith("OPENQASM"):
+            if line not in {"OPENQASM 2.0;", "OPENQASM 3;", "OPENQASM 3.0;"}:
+                msg = f"Unsupported OPENQASM header: {line}"
+                raise ValueError(msg)
+            header_seen = True
+            continue
         if _CLASSICAL_REGISTER_PATTERN.match(line):
             continue
         if _BARRIER_PATTERN.match(line):
@@ -181,9 +187,6 @@ def _records_from_qasm(
         if measurement_seen:
             msg = "measurements must be trailing"
             raise ValueError(msg)
-        if line in {"OPENQASM 2.0;", "OPENQASM 3;", "OPENQASM 3.0;"}:
-            header_seen = True
-            continue
         if line in {'include "qelib1.inc";', 'include "stdgates.inc";'}:
             continue
         if match := _QASM2_QREG_PATTERN.match(line) or _QASM3_QREG_PATTERN.match(line):
@@ -417,16 +420,6 @@ def _validate_barriers(barriers: Barriers, num_qubits: int) -> None:
 
 def _significant_qasm_lines(qasm: str) -> list[str]:
     return [line for raw_line in qasm.splitlines() if (line := raw_line.split("//", maxsplit=1)[0].strip())]
-
-
-def qasm_version(qasm: str) -> int | None:
-    """Return the supported OpenQASM major version declared in source text."""
-    lines = _significant_qasm_lines(qasm)
-    if "OPENQASM 2.0;" in lines:
-        return 2
-    if any(header in lines for header in ("OPENQASM 3;", "OPENQASM 3.0;")):
-        return 3
-    return None
 
 
 __all__ = [

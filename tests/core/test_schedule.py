@@ -280,6 +280,24 @@ def test_result_round_trips_with_explicit_decoders() -> None:
     restored.validate()
 
 
+def test_result_save_appends_json_to_existing_suffix(tmp_path: Path) -> None:
+    """Keep a supplied filename suffix when saving a compilation result."""
+    schedule = _schedule()
+    result = CompilationResult(
+        status=CompilationStatus.SUCCESS,
+        schedule=schedule,
+        architecture=_ClockArchitecture(),
+        final_state=_ClockState(time=4),
+        wall_clock_s=0.25,
+        diagnostics=_Counts(attempts=3),
+    )
+
+    output = result.save(tmp_path / "result.backup")
+
+    assert output == tmp_path / "result.backup.json"
+    assert output.is_file()
+
+
 @pytest.mark.parametrize(
     ("changes", "error", "message"),
     [

@@ -212,7 +212,7 @@ class CompilationResult(Generic[ArchitectureT, ActionT, MachineStateT, Diagnosti
         """
         output_path = Path(filename)
         if output_path.suffix != ".json":
-            output_path = output_path.with_suffix(".json")
+            output_path = Path(f"{output_path}.json")
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(self.to_json(), encoding="utf-8")
         return output_path

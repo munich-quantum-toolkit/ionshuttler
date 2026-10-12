@@ -80,7 +80,7 @@ def test_qasm3_rejects_an_unsupported_header_version() -> None:
     """Accept only the OpenQASM 3 headers implemented by the parser."""
     source = 'OPENQASM 3.1;\ninclude "stdgates.inc";\nqubit[1] q;\nrx(0.5) q[0];'
 
-    with pytest.raises(ValueError, match="OPENQASM"):
+    with pytest.raises(ValueError, match=r"Unsupported OPENQASM header: OPENQASM 3\.1;"):
         parse_circuit(source)
 
 

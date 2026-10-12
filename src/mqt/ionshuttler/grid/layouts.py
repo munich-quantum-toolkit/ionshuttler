@@ -115,14 +115,7 @@ def rectangular_grid(
             incident[f"j:{row + 1}:{column}"].append(segment.end)
 
     segment_ids = {segment.segment_id for segment in segments}
-    unknown_relaxed = sorted(unordered.difference(segment_ids))
-    unknown_pzs = sorted(set(pz_segments).difference(segment_ids))
-    if unknown_relaxed:
-        msg = f"unordered_segments contains unknown segments: {', '.join(unknown_relaxed)}"
-        raise ValueError(msg)
-    if unknown_pzs:
-        msg = f"processing_zone_segments contains unknown segments: {', '.join(unknown_pzs)}"
-        raise ValueError(msg)
+    _validate_named_segments(unordered, pz_segment_set, segment_ids)
 
     junctions = tuple(
         Junction(junction_id, tuple(incident[junction_id]))

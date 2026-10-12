@@ -43,7 +43,7 @@ def route_gate_bfs(
 
     Returns:
         The movement sequence, or ``None`` if the bound is exhausted, and the
-        number of explored occupancy states.
+        number of explored occupancy states and cycle-search steps.
     """
     queue: deque[tuple[GridMachineState, tuple[Action, ...]]] = deque([(state, ())])
     visited = {_occupancy_key(state)}
@@ -53,7 +53,14 @@ def route_gate_bfs(
         explored += 1
         if _gate_is_placed(current, gate, target_segment_ids):
             return path, explored
-        for action in movement_candidates(architecture, current, allowed_crossings=allowed_crossings):
+        candidates, cycle_work = movement_candidates(
+            architecture,
+            current,
+            max_cycle_work=max_states - explored,
+            allowed_crossings=allowed_crossings,
+        )
+        explored += cycle_work
+        for action in candidates:
             duration = architecture.action_duration(action)
             timed_action = ScheduledAction(0, action, current.time, duration)
             try:
@@ -388,11 +395,13 @@ def movement_candidates(
     architecture: GridArchitecture,
     state: GridMachineState,
     *,
+    max_cycle_work: int,
     allowed_crossings: JunctionCrossings = None,
-) -> tuple[Action, ...]:
-    """Return deterministic single-junction moves and simultaneous rotations."""
+) -> tuple[tuple[Action, ...], int]:
+    """Return deterministic moves and the work used to find simultaneous rotations."""
     moves = junction_moves(architecture, state, allowed_crossings=allowed_crossings)
-    return (*moves, *_cycle_candidates(architecture, state, moves))
+    cycles, explored = _cycle_candidates(architecture, state, moves, max_work=max_cycle_work)
+    return (*moves, *cycles), explored
 
 
 def junction_moves(
@@ -438,8 +447,10 @@ def _cycle_candidates(
     architecture: GridArchitecture,
     state: GridMachineState,
     moves: Sequence[JunctionMove],
-) -> tuple[Cycle, ...]:
-    """Return legal simultaneous rotations built from one-ion junction moves."""
+    *,
+    max_work: int,
+) -> tuple[tuple[Cycle, ...], int]:
+    """Return legal simultaneous rotations and the number of examined moves."""
     # Restrict discovery to one-ion moves to bound the candidate combinations.
     # Cycle validation itself supports mixed chain sizes.
     one_ion_moves = tuple(move for move in moves if len(move.ions) == 1)
@@ -447,8 +458,11 @@ def _cycle_candidates(
     for move in one_ion_moves:
         by_source.setdefault(move.source.segment_id, []).append(move)
     cycles: dict[tuple[tuple[str, str, str, str], ...], Cycle] = {}
+    explored = 0
     for start in sorted(by_source):
-        _extend_cycles(
+        if explored >= max_work:
+            break
+        explored += _extend_cycles(
             architecture,
             state,
             start,
@@ -458,8 +472,9 @@ def _cycle_candidates(
             frozenset(),
             frozenset(),
             cycles,
+            max_work=max_work - explored,
         )
-    return tuple(cycles[key] for key in sorted(cycles))
+    return tuple(cycles[key] for key in sorted(cycles)), explored
 
 
 def _extend_cycles(
@@ -472,11 +487,21 @@ def _extend_cycles(
     used_segments: frozenset[str],
     used_junctions: frozenset[str],
     cycles: dict[tuple[tuple[str, str, str, str], ...], Cycle],
-) -> None:
-    """Explore simple move paths and record cycles that close at the start segment."""
-    if len(path) >= len(architecture.segments):
-        return
+    *,
+    max_work: int,
+) -> int:
+    """Explore bounded simple move paths and record cycles.
+
+    Returns:
+        The number of examined moves.
+    """
+    if len(path) >= len(architecture.segments) or max_work <= 0:
+        return 0
+    explored = 0
     for move in by_source.get(current, []):
+        if explored >= max_work:
+            break
+        explored += 1
         junction_id = architecture.junction_for(move.source).junction_id
         destination = move.destination.segment_id
         if junction_id in used_junctions or move.ions[0] in {prior_move.ions[0] for prior_move in path}:
@@ -496,7 +521,7 @@ def _extend_cycles(
             continue
         if destination in used_segments or destination == current:
             continue
-        _extend_cycles(
+        explored += _extend_cycles(
             architecture,
             state,
             start,
@@ -506,7 +531,9 @@ def _extend_cycles(
             used_segments | {current},
             used_junctions | {junction_id},
             cycles,
+            max_work=max_work - explored,
         )
+    return explored
 
 
 def _canonical_cycle_key(moves: Sequence[JunctionMove]) -> tuple[tuple[str, str, str, str], ...]:

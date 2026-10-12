@@ -46,8 +46,8 @@ class GridDiagnostics:
 
     Attributes:
         iterations: Number of scheduling iterations.
-        explored_routing_states: Number of routing states that the router
-            evaluated.
+        explored_routing_states: Number of routing states and cycle-search steps
+            that the router evaluated.
         junction_moves: Number of junction moves, including the moves inside
             cycles.
         cycles: Number of cycles.
