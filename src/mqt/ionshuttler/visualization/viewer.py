@@ -135,11 +135,19 @@ class _ViewerServer:
             data = json.loads(body.decode())
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             return _json(HTTPStatus.BAD_REQUEST, {"error": f"the file is not valid JSON ({error})"})
+        except RecursionError:
+            return _json(HTTPStatus.BAD_REQUEST, {"error": "the file nests JSON values too deeply"})
         title = file_name.removesuffix(".json") or "result"
         try:
             view = self._open_result(data, title)
         except (TypeError, ValueError, KeyError) as error:
             return _json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
+        # The page must get an answer for every file, so report any other replay error too.
+        except Exception:
+            logger.exception("Could not replay the result file %s", file_name)
+            return _json(
+                HTTPStatus.BAD_REQUEST, {"error": "the viewer could not replay this result; see the Python log"}
+            )
         return _json(HTTPStatus.OK, {"id": self.add_view(view)})
 
 

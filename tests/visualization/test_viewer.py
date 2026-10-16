@@ -81,8 +81,9 @@ def _request(url: str, data: bytes | None = None, headers: dict[str, str] | None
             body = response.read().decode("utf-8")
             status = response.status
     except urllib.error.HTTPError as error:
-        body = error.read().decode("utf-8")
-        status = error.code
+        with error:
+            body = error.read().decode("utf-8")
+            status = error.code
     return status, json.loads(body) if body.startswith(("{", "[")) else body
 
 
@@ -99,6 +100,9 @@ def server() -> Iterator[viewer_module._ViewerServer]:
         if data == "unsupported":
             msg = "cannot show this result"
             raise ValueError(msg)
+        if data == "broken":
+            msg = "replay failed"
+            raise RuntimeError(msg)
         return {"title": title, "data": data}
 
     running = viewer_module._ViewerServer(lambda token: f"<html>{token}</html>", open_result)
@@ -154,6 +158,31 @@ def test_server_turns_uploaded_files_into_views(server: viewer_module._ViewerSer
     assert "not valid JSON" in body["error"]
     status, body = _request(_address(server.url, "/results"), b'"unsupported"', headers)
     assert (status, body) == (400, {"error": "cannot show this result"})
+
+
+def test_server_answers_deeply_nested_files_with_an_error(server: viewer_module._ViewerServer) -> None:
+    """Report JSON that nests too deeply for the parser instead of closing the connection."""
+    headers = {"Content-Type": "application/json"}
+
+    status, body = _request(_address(server.url, "/results"), b"[" * 100_000 + b"]" * 100_000, headers)
+
+    assert (status, body) == (400, {"error": "the file nests JSON values too deeply"})
+
+
+def test_server_answers_and_logs_unexpected_replay_errors(
+    server: viewer_module._ViewerServer, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Report any replay error to the page and log its traceback."""
+    headers = {"Content-Type": "application/json", "X-File-Name": "broken.json"}
+
+    with caplog.at_level("ERROR", logger=viewer_module.__name__):
+        status, body = _request(_address(server.url, "/results"), b'"broken"', headers)
+
+    assert status == 400
+    assert "could not replay" in body["error"]
+    [record] = caplog.records
+    assert "broken.json" in record.getMessage()
+    assert record.exc_info is not None
 
 
 def test_viewer_opens_saved_grid_and_linear_results() -> None:

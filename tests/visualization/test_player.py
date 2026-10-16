@@ -303,7 +303,11 @@ function makeElement(tag) {
     setAttribute: (name, value) => { attributes[name] = String(value); },
     getAttribute: (name) => attributes[name],
     toggleAttribute: (name, on) => { if (name === "hidden") element.hidden = on; },
-    addEventListener: (type, handler) => { (listeners[type] ??= []).push(handler); },
+    addEventListener: (type, handler, options) => {
+      const handlers = (listeners[type] ??= []);
+      handlers.push(handler);
+      options?.signal?.addEventListener("abort", () => handlers.splice(handlers.indexOf(handler), 1));
+    },
     click: () => (listeners.click ?? []).forEach((handler) => handler({ target: element })),
     dispatchEvent() {},
     append: (...items) => { element.children.push(...items); },
@@ -352,7 +356,7 @@ const describe = (node) =>
     : node.className === "player-pill"
       ? { pill: node.textContent, styles: node.styles }
       : { tag: node.tag, text: node.textContent, children: node.children.map(describe) };
-Player.mount(root, drawing, JSON.parse(dataJson));
+const stop = Player.mount(root, drawing, JSON.parse(dataJson));
 const output = { buttonHidden: element("sidebar-toggle").hidden, label: element("sidebar-label").textContent };
 output.closed = { hidden: element("sidebar").hidden, body: element("sidebar-body").children.length };
 element("sidebar-toggle").click();
@@ -372,6 +376,9 @@ element("export-toggle").click();
 output.exportOpen = exportPanel();
 element("export-toggle").click();
 output.exportClosed = exportPanel();
+stop();
+element("export-toggle").click();
+output.exportAfterStop = exportPanel();
 console.log(JSON.stringify(output));
 """
 
@@ -460,3 +467,10 @@ def test_export_button_opens_the_export_panel_in_view(tmp_path: Path) -> None:
 
     assert output["exportOpen"] == {"hidden": False, "expanded": "true", "scrolls": 1}
     assert output["exportClosed"] == {"hidden": True, "expanded": "false", "scrolls": 1}
+
+
+def test_stopped_player_ignores_its_controls(tmp_path: Path) -> None:
+    """Remove the control listeners when the player stops, so a click changes nothing."""
+    output = _run_player_check(tmp_path, _view())
+
+    assert output["exportAfterStop"] == output["exportClosed"]

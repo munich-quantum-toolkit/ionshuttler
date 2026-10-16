@@ -253,6 +253,9 @@ const Player = (() => {
     let cancelled = false;
     let dragging = null;
     let frameRequested = false;
+    // Every listener uses this signal, so the stop function removes them all.
+    const listeners = new AbortController();
+    const { signal } = listeners;
 
     function render() {
       const width = canvas.clientWidth;
@@ -484,10 +487,14 @@ const Player = (() => {
           const input = document.createElement("input");
           input.type = "color";
           input.value = value;
-          input.addEventListener("input", () => {
-            drawing.paint(view, handle, part, input.value);
-            requestRender();
-          });
+          input.addEventListener(
+            "input",
+            () => {
+              drawing.paint(view, handle, part, input.value);
+              requestRender();
+            },
+            { signal },
+          );
           field.append(input, label);
           return field;
         }),
@@ -600,10 +607,14 @@ const Player = (() => {
     for (const radio of root.querySelectorAll(".player-segmented input")) {
       radio.name = `player-theme-${mounted}`;
       radio.checked = radio.value === settings.theme;
-      radio.addEventListener("change", () => {
-        settings.theme = radio.value;
-        applyTheme();
-      });
+      radio.addEventListener(
+        "change",
+        () => {
+          settings.theme = radio.value;
+          applyTheme();
+        },
+        { signal },
+      );
     }
     for (const [setting, label, choices] of data.options) {
       if (choices !== undefined) {
@@ -619,10 +630,14 @@ const Player = (() => {
           radio.name = `player-${setting}-${mounted}`;
           radio.value = value;
           radio.checked = settings[setting] === value;
-          radio.addEventListener("change", () => {
-            settings[setting] = value;
-            render();
-          });
+          radio.addEventListener(
+            "change",
+            () => {
+              settings[setting] = value;
+              render();
+            },
+            { signal },
+          );
           const caption = document.createElement("span");
           caption.textContent = text;
           option.append(radio, caption);
@@ -638,10 +653,14 @@ const Player = (() => {
       checkbox.type = "checkbox";
       checkbox.dataset.setting = setting;
       checkbox.checked = settings[setting];
-      checkbox.addEventListener("change", () => {
-        settings[setting] = checkbox.checked;
-        render();
-      });
+      checkbox.addEventListener(
+        "change",
+        () => {
+          settings[setting] = checkbox.checked;
+          render();
+        },
+        { signal },
+      );
       // A switch: the checkbox stays in the page for keyboards and screen readers.
       checkbox.setAttribute("role", "switch");
       const track = document.createElement("span");
@@ -653,49 +672,83 @@ const Player = (() => {
       element("chips").append(toggle);
     }
 
-    playButton.addEventListener("click", () => setPlaying(!playing));
-    element("previous").addEventListener("click", () => {
-      setPlaying(false);
-      setTime(stepTarget(stepTimes, time, -1, startTime, endTime));
+    playButton.addEventListener("click", () => setPlaying(!playing), {
+      signal,
     });
-    element("next").addEventListener("click", () => {
-      setPlaying(false);
-      setTime(stepTarget(stepTimes, time, 1, startTime, endTime));
+    element("previous").addEventListener(
+      "click",
+      () => {
+        setPlaying(false);
+        setTime(stepTarget(stepTimes, time, -1, startTime, endTime));
+      },
+      { signal },
+    );
+    element("next").addEventListener(
+      "click",
+      () => {
+        setPlaying(false);
+        setTime(stepTarget(stepTimes, time, 1, startTime, endTime));
+      },
+      { signal },
+    );
+    timeInput.addEventListener(
+      "input",
+      () => setTime(Number(timeInput.value)),
+      { signal },
+    );
+    element("speed").addEventListener(
+      "change",
+      (event) => {
+        settings.timesteps_per_second = readPositive(
+          event.target,
+          settings.timesteps_per_second,
+        );
+        event.target.value = String(settings.timesteps_per_second);
+        updateDuration();
+      },
+      { signal },
+    );
+    element("fps").addEventListener(
+      "change",
+      (event) => {
+        settings.frames_per_second = Math.max(
+          1,
+          Math.round(readPositive(event.target, settings.frames_per_second)),
+        );
+        event.target.value = String(settings.frames_per_second);
+        updateDuration();
+      },
+      { signal },
+    );
+    rangeStart.addEventListener("input", () => updateRange("start"), {
+      signal,
     });
-    timeInput.addEventListener("input", () => setTime(Number(timeInput.value)));
-    element("speed").addEventListener("change", (event) => {
-      settings.timesteps_per_second = readPositive(
-        event.target,
-        settings.timesteps_per_second,
-      );
-      event.target.value = String(settings.timesteps_per_second);
-      updateDuration();
-    });
-    element("fps").addEventListener("change", (event) => {
-      settings.frames_per_second = Math.max(
-        1,
-        Math.round(readPositive(event.target, settings.frames_per_second)),
-      );
-      event.target.value = String(settings.frames_per_second);
-      updateDuration();
-    });
-    rangeStart.addEventListener("input", () => updateRange("start"));
-    rangeEnd.addEventListener("input", () => updateRange("end"));
-    exportToggle.addEventListener("click", () => {
-      exportPanel.hidden = !exportPanel.hidden;
-      exportToggle.setAttribute("aria-expanded", String(!exportPanel.hidden));
-      // The canvas can fill the window, so the panel can open below its
-      // bottom edge. Scroll the opened panel into view.
-      if (!exportPanel.hidden)
-        exportPanel.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    });
+    rangeEnd.addEventListener("input", () => updateRange("end"), { signal });
+    exportToggle.addEventListener(
+      "click",
+      () => {
+        exportPanel.hidden = !exportPanel.hidden;
+        exportToggle.setAttribute("aria-expanded", String(!exportPanel.hidden));
+        // The canvas can fill the window, so the panel can open below its
+        // bottom edge. Scroll the opened panel into view.
+        if (!exportPanel.hidden)
+          exportPanel.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      },
+      { signal },
+    );
     if (canEdit) {
       editToggle.hidden = false;
       // The drawing says what the editor can change.
       if (typeof drawing.editHint === "string")
         element("edit-hint").textContent = drawing.editHint;
-      editToggle.addEventListener("click", () => setEditing(!settings.editing));
-      element("done").addEventListener("click", () => setEditing(false));
+      editToggle.addEventListener(
+        "click",
+        () => setEditing(!settings.editing),
+        { signal },
+      );
+      element("done").addEventListener("click", () => setEditing(false), {
+        signal,
+      });
       // A drawing with a `marker_size` setting gets a size slider. It scales
       // the drawn ions and junctions without moving any junction.
       const sizeInput = element("size-input");
@@ -703,28 +756,40 @@ const Player = (() => {
       element("size").hidden = !hasSize;
       if (hasSize) {
         sizeInput.value = String(settings.marker_size);
-        sizeInput.addEventListener("input", () => {
-          settings.marker_size = Number(sizeInput.value);
-          requestRender();
-        });
+        sizeInput.addEventListener(
+          "input",
+          () => {
+            settings.marker_size = Number(sizeInput.value);
+            requestRender();
+          },
+          { signal },
+        );
       }
-      element("reset").addEventListener("click", () => {
-        drawing.resetLayout(view);
-        if (hasSize) {
-          settings.marker_size = data.settings.marker_size;
-          sizeInput.value = String(settings.marker_size);
-        }
-        render();
-      });
-      element("copy").addEventListener("click", copySettings);
-      element("paint-close").addEventListener("click", () => {
-        closePaint();
-        render();
-      });
-      canvas.addEventListener("pointerdown", onPointerDown);
-      canvas.addEventListener("pointermove", onPointerMove);
-      canvas.addEventListener("pointerup", onPointerUp);
-      canvas.addEventListener("pointercancel", onPointerUp);
+      element("reset").addEventListener(
+        "click",
+        () => {
+          drawing.resetLayout(view);
+          if (hasSize) {
+            settings.marker_size = data.settings.marker_size;
+            sizeInput.value = String(settings.marker_size);
+          }
+          render();
+        },
+        { signal },
+      );
+      element("copy").addEventListener("click", copySettings, { signal });
+      element("paint-close").addEventListener(
+        "click",
+        () => {
+          closePaint();
+          render();
+        },
+        { signal },
+      );
+      canvas.addEventListener("pointerdown", onPointerDown, { signal });
+      canvas.addEventListener("pointermove", onPointerMove, { signal });
+      canvas.addEventListener("pointerup", onPointerUp, { signal });
+      canvas.addEventListener("pointercancel", onPointerUp, { signal });
     }
     if (sidebar !== null) {
       const [setting, label] = sidebar;
@@ -732,59 +797,71 @@ const Player = (() => {
       element("sidebar-title").textContent = label;
       sidebarPanel.setAttribute("aria-label", label);
       sidebarToggle.hidden = false;
-      sidebarToggle.addEventListener("click", () =>
-        setSidebar(!settings[setting]),
+      sidebarToggle.addEventListener(
+        "click",
+        () => setSidebar(!settings[setting]),
+        { signal },
       );
-      element("sidebar-close").addEventListener("click", () =>
-        setSidebar(false),
+      element("sidebar-close").addEventListener(
+        "click",
+        () => setSidebar(false),
+        { signal },
       );
       sidebarPanel.hidden = !settings[setting];
       sidebarToggle.setAttribute("aria-expanded", String(!sidebarPanel.hidden));
     }
-    exportCancel.addEventListener("click", () => {
-      cancelled = true;
-    });
-    exportStart.addEventListener("click", async () => {
-      cancelled = false;
-      exportStart.disabled = true;
-      exportCancel.hidden = false;
-      progress.hidden = false;
-      progress.value = 0;
-      message.textContent = "Encoding…";
-      const exported = {
-        ...settings,
-        theme: resolveTheme(settings.theme),
-        editing: false,
-        highlight: null,
-      };
-      try {
-        const blob = await exportVideo(
-          drawing,
-          view,
-          exported,
-          (done, total) => {
-            progress.max = total;
-            progress.value = done;
-          },
-          () => cancelled,
-        );
-        if (blob === null) {
-          message.textContent = "Export cancelled.";
-        } else {
-          download(
-            blob,
-            `schedule-${exported.video_start_time}-${exported.video_end_time}.webm`,
+    exportCancel.addEventListener(
+      "click",
+      () => {
+        cancelled = true;
+      },
+      { signal },
+    );
+    exportStart.addEventListener(
+      "click",
+      async () => {
+        cancelled = false;
+        exportStart.disabled = true;
+        exportCancel.hidden = false;
+        progress.hidden = false;
+        progress.value = 0;
+        message.textContent = "Encoding…";
+        const exported = {
+          ...settings,
+          theme: resolveTheme(settings.theme),
+          editing: false,
+          highlight: null,
+        };
+        try {
+          const blob = await exportVideo(
+            drawing,
+            view,
+            exported,
+            (done, total) => {
+              progress.max = total;
+              progress.value = done;
+            },
+            () => cancelled,
           );
-          message.textContent = `Saved ${(blob.size / 1e6).toFixed(1)} MB.`;
+          if (blob === null) {
+            message.textContent = "Export cancelled.";
+          } else {
+            download(
+              blob,
+              `schedule-${exported.video_start_time}-${exported.video_end_time}.webm`,
+            );
+            message.textContent = `Saved ${(blob.size / 1e6).toFixed(1)} MB.`;
+          }
+        } catch (error) {
+          message.textContent = `Export failed: ${error.message}`;
+        } finally {
+          exportStart.disabled = false;
+          exportCancel.hidden = true;
+          progress.hidden = true;
         }
-      } catch (error) {
-        message.textContent = `Export failed: ${error.message}`;
-      } finally {
-        exportStart.disabled = false;
-        exportCancel.hidden = true;
-        progress.hidden = true;
-      }
-    });
+      },
+      { signal },
+    );
 
     const query =
       globalThis.matchMedia &&
@@ -793,7 +870,7 @@ const Player = (() => {
       if (settings.theme === "auto") applyTheme();
     };
     if (query && typeof query.addEventListener === "function")
-      query.addEventListener("change", followSystemTheme);
+      query.addEventListener("change", followSystemTheme, { signal });
     const resizeObserver = new ResizeObserver(render);
     resizeObserver.observe(canvas);
     updateRange("end");
@@ -803,9 +880,7 @@ const Player = (() => {
       playing = false;
       cancelled = true;
       resizeObserver.disconnect();
-      if (query && typeof query.removeEventListener === "function") {
-        query.removeEventListener("change", followSystemTheme);
-      }
+      listeners.abort();
     };
   }
 
