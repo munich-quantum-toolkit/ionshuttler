@@ -173,6 +173,11 @@ def clear_blocked_path(
 ) -> tuple[tuple[JunctionMove, ...] | None, int]:
     """Clear a blocked path from its free-capacity end.
 
+    If no path from the destination can be cleared, ions in front of the ion
+    can still block its exit from the source segment. The function then clears
+    a path for those ions into another segment at the same junction. The ion
+    crosses the junction in a later layer.
+
     Returns:
         The legal path-clearing moves and number of segment paths examined.
     """
@@ -203,6 +208,81 @@ def clear_blocked_path(
                 continue
             visited_segments.add(neighbor)
             queue.append((*clearing_path, neighbor))
+    exit_clearing_moves, exit_paths_explored = _clear_exit(
+        architecture,
+        state,
+        ion,
+        destination_segment_id,
+        max_states=max_states - explored,
+        moves=moves,
+        allowed_crossings=allowed_crossings,
+        ion_priorities=ion_priorities,
+    )
+    return exit_clearing_moves, explored + exit_paths_explored
+
+
+def _clear_exit(
+    architecture: GridArchitecture,
+    state: GridMachineState,
+    ion: int,
+    destination_segment_id: str,
+    *,
+    max_states: int,
+    moves: Sequence[JunctionMove],
+    allowed_crossings: JunctionCrossings,
+    ion_priorities: Mapping[int, int],
+) -> tuple[tuple[JunctionMove, ...] | None, int]:
+    """Clear a path for the ions in front of an ion into another segment at its exit junction.
+
+    The ions in front must not have a higher priority than the ion. The cleared
+    path does not enter the destination, so the ion keeps the free capacity
+    there.
+
+    Returns:
+        The legal path-clearing moves and number of segment paths examined.
+    """
+    source_segment_id = state.ion_segment(ion)
+    crossings = [
+        move
+        for move in moves
+        if ion in move.ions
+        and move.source.segment_id == source_segment_id
+        and move.destination.segment_id == destination_segment_id
+    ]
+    if not crossings:
+        return None, 0
+    # The shortest crossing chain holds the ion and the ions in front of it.
+    crossing = min(crossings, key=lambda move: len(move.ions))
+    front_ions = tuple(other for other in crossing.ions if other != ion)
+    missing_priority = len(ion_priorities)
+    rank = ion_priorities.get(ion, missing_priority)
+    if not front_ions or any(ion_priorities.get(other, missing_priority) < rank for other in front_ions):
+        return None, 0
+    # A chain that leaves with the nearest front ion but without the ion holds all front ions.
+    nearest_front_ion = crossing.ions[1] if crossing.ions[0] == ion else crossing.ions[-2]
+    exit_moves = tuple(
+        move for move in moves if ion not in move.ions and move.destination.segment_id != destination_segment_id
+    )
+    side_segment_ids = sorted({
+        move.destination.segment_id
+        for move in exit_moves
+        if move.source == crossing.source and nearest_front_ion in move.ions
+    })
+    explored = 0
+    for side_segment_id in side_segment_ids:
+        side_clearing_moves, side_paths_explored = clear_blocked_path(
+            architecture,
+            state,
+            nearest_front_ion,
+            side_segment_id,
+            max_states=max_states - explored,
+            moves=exit_moves,
+            allowed_crossings=allowed_crossings,
+            ion_priorities=ion_priorities,
+        )
+        explored += side_paths_explored
+        if side_clearing_moves:
+            return side_clearing_moves, explored
     return None, explored
 
 

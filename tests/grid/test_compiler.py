@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -31,7 +31,11 @@ from mqt.ionshuttler.grid import (
     Segment,
     SegmentOccupancy,
     result_from_json,
+    square_grid,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _qasm(num_ions: int, *instructions: str) -> str:
@@ -655,6 +659,38 @@ def test_greedy_compiler_clears_a_blocked_route_from_the_free_end() -> None:
     moves = [item for item in result.schedule.scheduled_actions if isinstance(item.action, JunctionMove)]
     assert [item.start_time for item in moves] == [0, 0, 1]
     assert result.duration == 3
+
+
+def test_greedy_compiler_moves_a_blocking_ion_aside_at_the_exit_junction() -> None:
+    """Let the ion in front step into a side segment so that the gate operand can leave."""
+    source = Segment("source", capacity=2)
+    processor = Segment("processor", processing_zones=(ProcessingZone("pz"),))
+    side = Segment("side")
+    architecture = GridArchitecture(
+        (source, processor, side),
+        (Junction("exit", (source.end, processor.start, side.start)),),
+    )
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY)).compile(
+        _qasm(2, "rx(0.5) q[0];"),
+        initial_placement={"source": (0, 1)},
+        pre_partition=False,
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    moves = [item.action for item in result.schedule.scheduled_actions if isinstance(item.action, JunctionMove)]
+    assert [(move.ions, move.destination.segment_id) for move in moves] == [((1,), "side"), ((0,), "processor")]
+    result.validate()
+
+
+def test_greedy_compiler_completes_qft_on_the_four_zone_square_grid(qasm_file_qft6: Path) -> None:
+    """Complete a benchmark in which ions in front of gate operands block their exit junctions."""
+    architecture = square_grid(4, processing_zone_segments=("h:0:1", "v:1:0", "h:3:1", "v:1:3"), segment_capacity=2)
+
+    result = GridCompiler(architecture).compile(qasm_file_qft6)
+
+    assert result.status is CompilationStatus.SUCCESS
+    result.validate()
 
 
 def test_greedy_compiler_rotates_a_sparse_topology_cycle() -> None:
