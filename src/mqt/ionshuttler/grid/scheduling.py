@@ -809,9 +809,12 @@ def _build_clearing_layer_for_gate(
 ) -> tuple[tuple[ScheduledAction[Action], ...], int]:
     """Build a movement layer that clears the path for the highest-priority blocked gate.
 
+    The layer must not move an ion with a higher priority away from its target.
+
     Returns:
         The path-clearing movement layer and number of segment paths examined.
     """
+    ion_ranks = {ion: rank for rank, (ion, _target) in enumerate(priority)}
     for ion, target_segment_id in priority:
         if target_segment_id not in blocked_targets or state.ion_segment(ion) == target_segment_id:
             continue
@@ -867,8 +870,19 @@ def _build_clearing_layer_for_gate(
             for offset, action in enumerate(actions)
         )
         try:
-            architecture.apply_layer(state, (*fixed_actions, *path_clearing_layer))
+            state_before_clearing = architecture.apply_layer(state, fixed_actions)
+            state_after_clearing = architecture.apply_layer(state, (*fixed_actions, *path_clearing_layer))
         except ValueError:
+            return (), explored
+        if _harms_higher_priority_ion(
+            architecture,
+            state_before_clearing,
+            state_after_clearing,
+            ion,
+            ion_ranks,
+            dict(priority),
+            allowed_crossings,
+        ):
             return (), explored
         return path_clearing_layer, explored
     return (), 0

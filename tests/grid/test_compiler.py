@@ -693,6 +693,16 @@ def test_greedy_compiler_completes_qft_on_the_four_zone_square_grid(qasm_file_qf
     result.validate()
 
 
+def test_greedy_compiler_path_clearing_does_not_undo_a_higher_priority_move(qasm_file_qft6: Path) -> None:
+    """Complete a benchmark in which clearing for a lower-priority gate would reverse a higher-priority chain move."""
+    architecture = square_grid(5, processing_zone_segments=("h:1:1", "h:3:2"), segment_capacity=4)
+
+    result = GridCompiler(architecture, GridCompilerConfig(max_iterations=1_000)).compile(qasm_file_qft6)
+
+    assert result.status is CompilationStatus.SUCCESS
+    result.validate()
+
+
 def test_greedy_compiler_rotates_a_sparse_topology_cycle() -> None:
     """Move occupied cycle segments together without requiring a full cycle."""
     source = Segment("source")
