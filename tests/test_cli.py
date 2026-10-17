@@ -88,33 +88,41 @@ class TestCLIInProcess:
 
     def test_exact_cli_with_config(
         self,
-        exact_config_full_register: dict[str, object],
         tmp_path: Any,
         monkeypatch: Any,
     ) -> None:
-        """Running the exact CLI main() with a valid config should succeed."""
-        from mqt.ionshuttler.single_shuttler.__main__ import main
+        """The exact CLI should load and pass through its config."""
+        from mqt.ionshuttler.single_shuttler import __main__ as cli
 
+        config = {"compiler": "exact"}
         config_file = tmp_path / "config.json"
-        config_file.write_text(json.dumps(exact_config_full_register))
+        config_file.write_text(json.dumps(config))
 
+        received = []
+        monkeypatch.setattr(cli, "single_shuttler_main", lambda loaded, plot: received.append((loaded, plot)))
         monkeypatch.setattr("sys.argv", ["mqt-ionshuttler-exact", str(config_file)])
-        main()  # Should not raise
+        cli.main()
+
+        assert received == [(config, False)]
 
     def test_heuristic_cli_with_config(
         self,
-        heuristic_config_1pz: dict[str, object],
         tmp_path: Any,
         monkeypatch: Any,
     ) -> None:
-        """Running the heuristic CLI main() with a valid config should succeed."""
-        from mqt.ionshuttler.multi_shuttler.__main__ import main
+        """The heuristic CLI should load and pass through its config."""
+        from mqt.ionshuttler.multi_shuttler import __main__ as cli
 
+        config = {"compiler": "heuristic"}
         config_file = tmp_path / "config.json"
-        config_file.write_text(json.dumps(heuristic_config_1pz))
+        config_file.write_text(json.dumps(config))
 
+        received = []
+        monkeypatch.setattr(cli, "multi_shuttler_main", received.append)
         monkeypatch.setattr("sys.argv", ["mqt-ionshuttler-heuristic", str(config_file)])
-        main()  # Should not raise
+        cli.main()
+
+        assert received == [config]
 
     def test_exact_cli_missing_config_raises(self, monkeypatch: Any) -> None:
         """The exact CLI main() should raise SystemExit when no config is given."""

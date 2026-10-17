@@ -21,7 +21,6 @@ from typing import Any, TypeVar, cast
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 INPUTS_DIR = ROOT_DIR / "inputs"
-EXACT_DIR = INPUTS_DIR / "algorithms_exact"
 HEURISTIC_DIR = INPUTS_DIR / "algorithms_heuristic"
 QASM_DIR = INPUTS_DIR / "qasm_files"
 
@@ -52,15 +51,14 @@ def _load_config(path: Path) -> ConfigDict:
 
 
 @fixture
-def exact_config_qft05() -> ConfigDict:
-    """Load the small exact QFT-5 config."""
-    return _load_config(EXACT_DIR / "qft_05.json")
-
-
-@fixture
-def exact_config_full_register() -> ConfigDict:
-    """Load the full-register-access exact config."""
-    return _load_config(EXACT_DIR / "full_register_access.json")
+def exact_config_smoke() -> ConfigDict:
+    """Return a satisfiable three-ion exact-compiler config."""
+    return {
+        "arch": [3, 3, 1, 1],
+        "max_timesteps": 14,
+        "num_ion_chains": 3,
+        "qu_alg": [[0, 1], [2], [0, 2]],
+    }
 
 
 @fixture
@@ -70,9 +68,48 @@ def heuristic_config_1pz() -> ConfigDict:
 
 
 @fixture
-def heuristic_config_2pzs() -> ConfigDict:
-    """Load the 2-PZ heuristic config."""
-    return _load_config(HEURISTIC_DIR / "qft_06_2pzs.json")
+def heuristic_config_2pzs_smoke(tmp_path: Path) -> ConfigDict:
+    """Return a four-ion config that assigns gates to two zones."""
+    algorithm_name = "smoke"
+    algorithm_dir = tmp_path / algorithm_name
+    algorithm_dir.mkdir()
+    (algorithm_dir / f"{algorithm_name}_4.qasm").write_text(
+        """OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[4];
+rx(pi/2) q[0];
+rx(pi/2) q[2];
+rzz(pi/4) q[0], q[1];
+ry(pi/2) q[1];
+rzz(pi/4) q[2], q[3];
+ry(pi/2) q[3];
+rzz(pi/4) q[1], q[2];
+rx(pi/2) q[0];
+"""
+    )
+    return {
+        "arch": [3, 3, 1, 1],
+        "num_pzs": 2,
+        "seed": 0,
+        "algorithm_name": algorithm_name,
+        "abs_num_ions": 4,
+        "qasm_base_dir": str(tmp_path),
+        "use_dag": True,
+        "gate_pz_assignment": {
+            0: "pz1",
+            1: "pz2",
+            2: "pz1",
+            3: "pz1",
+            4: "pz2",
+            5: "pz2",
+            6: "pz1",
+            7: "pz2",
+        },
+        "max_timesteps": 100,
+        "plot": False,
+        "save": False,
+        "failing_junctions": 0,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -597,9 +597,21 @@ class TestMultiShuttlerMain:
         """main() should complete without error for the 1-PZ config."""
         main(heuristic_config_1pz)  # Should not raise
 
-    def test_main_2pzs(self, heuristic_config_2pzs):
-        """main() should complete without error for the 2-PZ config."""
-        main(heuristic_config_2pzs)  # Should not raise
+    def test_main_2pzs(self, heuristic_config_2pzs_smoke):
+        """main() should compile gates assigned to two processing zones."""
+        used_zones = set()
+        get_preferred_zone = Graph.get_preferred_pz_for_gate
+
+        def record_preferred_zone(graph, gate_id):
+            zone = get_preferred_zone(graph, gate_id)
+            if zone is not None:
+                used_zones.add(zone)
+            return zone
+
+        with patch.object(Graph, "get_preferred_pz_for_gate", autospec=True, side_effect=record_preferred_zone):
+            assert main(heuristic_config_2pzs_smoke) > 0
+
+        assert used_zones == {"pz1", "pz2"}
 
     def test_main_threads_explicit_gate_assignment_to_graph(self, heuristic_config_1pz):
         """main() should pass explicit gate assignments through to the runtime graph."""
