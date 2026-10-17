@@ -72,6 +72,28 @@ def test_circuit_rejects_forward_dependencies() -> None:
             "stable circuit-order gate_id",
             id="gate-id-order",
         ),
+        pytest.param(
+            lambda: Circuit(
+                num_ions=1,
+                gates=(Rx(ion=0, theta=0.5, gate_id=0),),
+                predecessors=(frozenset(),),
+                barriers=((),),
+            ),
+            ValueError,
+            "one entry before each gate and one trailing entry",
+            id="barrier-position-count",
+        ),
+        pytest.param(
+            lambda: Circuit(
+                num_ions=1,
+                gates=(Rx(ion=0, theta=0.5, gate_id=0),),
+                predecessors=(frozenset(),),
+                barriers=((frozenset({1}),), ()),
+            ),
+            ValueError,
+            "barriers must reference circuit ions",
+            id="barrier-ion-range",
+        ),
     ],
 )
 def test_circuit_rejects_malformed_structure(
@@ -99,3 +121,20 @@ def test_parsed_circuit_always_retains_dependencies() -> None:
 
     assert circuit.predecessors == (frozenset(), frozenset(), frozenset({0, 1}))
     assert tuple(gate.gate_id for gate in circuit.gates) == (0, 1, 2)
+
+
+def test_parsed_circuit_retains_barrier_positions_and_targets() -> None:
+    """Retain barriers for later dependency analysis without reparsing the source."""
+    circuit = parse_circuit(
+        """
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        rx(0.5) q[0];
+        barrier q[0];
+        ry(0.25) q[1];
+        barrier q;
+        """
+    )
+
+    assert circuit.barriers == ((), (frozenset({0}),), (frozenset({0, 1}),))

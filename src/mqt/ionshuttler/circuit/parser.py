@@ -72,6 +72,7 @@ def parse_circuit(
         num_ions=num_qubits,
         gates=tuple(_lower_gate(record, gate_id=gate_id) for gate_id, record in enumerate(records)),
         predecessors=_compute_predecessors(records, barriers),
+        barriers=tuple(barriers.get(gate_id, ()) for gate_id in range(len(records) + 1)),
     )
 
 
@@ -164,10 +165,17 @@ def _records_from_qasm(
     records: list[GateRecord] = []
     # ``None`` marks a barrier on the whole register, whose size may be unknown here.
     barrier_targets: dict[int, list[frozenset[int] | None]] = {}
+    significant_lines = _significant_qasm_lines(qasm)
     header_seen = False
     measurement_seen = False
 
-    for line in _significant_qasm_lines(qasm):
+    for line in significant_lines:
+        if line.startswith("OPENQASM"):
+            if line not in {"OPENQASM 2.0;", "OPENQASM 3;", "OPENQASM 3.0;"}:
+                msg = f"Unsupported OPENQASM header: {line}"
+                raise ValueError(msg)
+            header_seen = True
+            continue
         if _CLASSICAL_REGISTER_PATTERN.match(line):
             continue
         if _BARRIER_PATTERN.match(line):
@@ -179,9 +187,6 @@ def _records_from_qasm(
         if measurement_seen:
             msg = "measurements must be trailing"
             raise ValueError(msg)
-        if line in {"OPENQASM 2.0;", "OPENQASM 3;", "OPENQASM 3.0;"}:
-            header_seen = True
-            continue
         if line in {'include "qelib1.inc";', 'include "stdgates.inc";'}:
             continue
         if match := _QASM2_QREG_PATTERN.match(line) or _QASM3_QREG_PATTERN.match(line):
