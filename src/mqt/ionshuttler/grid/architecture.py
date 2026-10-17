@@ -329,16 +329,21 @@ class GridArchitecture:
             time=start_time,
         )
 
-    def replay_schedule(self, schedule: Schedule[Action, GridMachineState]) -> GridMachineState:
+    def replay_schedule(
+        self,
+        schedule: Schedule[Action, GridMachineState],
+    ) -> GridMachineState:
         """Validate and replay a Grid schedule.
 
         Actions with the same start time form one layer, which
-        :meth:`apply_layer` applies as one state transition. An invalid schedule raises
-        :class:`ValueError`.
+        :meth:`apply_layer` applies as one state transition.
 
         Returns:
             The final Grid machine state at the schedule end time.
-        """
+
+        Raises:
+            ValueError: If the schedule is invalid.
+        """  # ruff: ignore[docstring-extraneous-exception] - Validation helpers raise ValueError.
         state = schedule.initial_state
         self._validate_state(state)
         for _start_time, layer in groupby(schedule.scheduled_actions, key=lambda item: item.start_time):

@@ -42,16 +42,22 @@ movement matters more than motion within one segment. A grid is one possible
 architecture at this level; the abstraction itself is a graph of segments and
 junctions.
 
-`GridArchitecture` stores stable segment, endpoint, junction, and
-processing-zone identities. The `square_grid`, `rectangular_grid`, and
-`hexagonal_grid` helpers in `mqt.ionshuttler.grid.layouts` construct common
-physical layouts. The `from_networkx` adapter converts an undirected physical
-layout graph into the same canonical model. It does not retain drawing
+{py:class}`~mqt.ionshuttler.grid.architecture.GridArchitecture` stores stable
+segment, endpoint, junction, and processing-zone identities. The
+{py:func}`~mqt.ionshuttler.grid.layouts.square_grid`,
+{py:func}`~mqt.ionshuttler.grid.layouts.rectangular_grid`, and
+{py:func}`~mqt.ionshuttler.grid.layouts.hexagonal_grid` functions construct
+common physical layouts. The
+{py:func}`~mqt.ionshuttler.grid.layouts.from_networkx` function converts an
+undirected physical layout graph into the same model. It does not retain drawing
 coordinates, colors, or labels.
 
-Each segment exposes a `start` endpoint and an `end` endpoint. A
-`SegmentEndpoint` stores the segment identity and the literal orientation
-`"start"` or `"end"`; the model does not define a separate endpoint enum.
+Each {py:class}`~mqt.ionshuttler.grid.model.Segment` exposes a
+{py:attr}`~mqt.ionshuttler.grid.model.Segment.start` endpoint and an
+{py:attr}`~mqt.ionshuttler.grid.model.Segment.end` endpoint. A
+{py:class}`~mqt.ionshuttler.grid.model.SegmentEndpoint` stores the segment
+identity and the literal orientation `"start"` or `"end"`. The model does not
+define a separate endpoint enum.
 
 This split also supports a future visual architecture editor. An editor can
 store coordinates and presentation data in a separate geometry document keyed by

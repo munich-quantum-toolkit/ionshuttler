@@ -1,3 +1,11 @@
+---
+file_format: mystnb
+kernelspec:
+  name: python3
+mystnb:
+  number_source_lines: true
+---
+
 # Grid Compilers
 
 Grid compilers route ions between processing and memory segments, connected by
@@ -8,14 +16,23 @@ levels.
 
 ## Grid compiler API
 
-{py:class}`mqt.ionshuttler.grid.GridCompiler` implements the shared compiler
-contract. It accepts a supported circuit input and returns a replayable
-{py:class}`mqt.ionshuttler.core.result.CompilationResult`. Use `square_grid`,
-`rectangular_grid`, `hexagonal_grid`, or `from_networkx` from
-`mqt.ionshuttler.grid` to construct common layouts.
+{py:class}`~mqt.ionshuttler.grid.compiler.GridCompiler` implements the shared
+compiler contract. It accepts a supported circuit input and returns a replayable
+{py:class}`~mqt.ionshuttler.core.result.CompilationResult`. Use
+{py:func}`~mqt.ionshuttler.grid.layouts.square_grid`,
+{py:func}`~mqt.ionshuttler.grid.layouts.rectangular_grid`,
+{py:func}`~mqt.ionshuttler.grid.layouts.hexagonal_grid`, or
+{py:func}`~mqt.ionshuttler.grid.layouts.from_networkx` to construct common
+layouts.
 
-```python
-from mqt.ionshuttler.grid import GridArchitecture, GridCompiler, Junction, ProcessingZone, Segment
+```{code-cell} ipython3
+from mqt.ionshuttler.grid import (
+    GridArchitecture,
+    GridCompiler,
+    Junction,
+    ProcessingZone,
+    Segment,
+)
 
 memory = Segment("memory", capacity=2)
 processing = Segment("processing", capacity=2, processing_zones=(ProcessingZone("pz"),))
@@ -48,28 +65,33 @@ By default, the compiler also:
 - runs ten lookahead rounds, each selecting at most one gate per target
   processing-zone segment, and prioritizes the ions used by those gates.
 
-Set `pre_partition=False` in `compile()` to select processing zones while
-scheduling. Use `gate_to_processing_zone` to assign individual gate IDs to
-processing-zone IDs explicitly. An explicit mapping replaces pre-partitioning,
-even when `pre_partition=True`. Unassigned gates select a processing zone while
-scheduling.
+Set `pre_partition=False` in
+{py:meth}`~mqt.ionshuttler.grid.compiler.GridCompiler.compile` to select
+processing zones while scheduling. Use `gate_to_processing_zone` to assign
+individual gate IDs to processing-zone IDs explicitly. An explicit mapping
+replaces pre-partitioning, even when `pre_partition=True`. Unassigned gates
+select a processing zone while scheduling.
 
 ### Configuration
 
-{py:class}`mqt.ionshuttler.grid.GridCompilerConfig` provides the main compiler
-settings:
+{py:class}`~mqt.ionshuttler.grid.config.GridCompilerConfig` provides the main
+compiler settings:
 
-- `GridCompilerStrategy.GREEDY` is the default and suits larger inputs.
-- `GridCompilerStrategy.BREADTH_FIRST` performs bounded routing search and is
-  intended for small architectures.
-- `GridDependencyMode.CONSERVATIVE` preserves the dependencies produced by the
-  shared circuit parser instead of reordering commuting gates.
-- `allowed_junction_crossings` can restrict routing to selected directed segment
-  pairs without changing the hardware topology.
-- `greedy_lookahead_rounds` controls how much future work the greedy strategy
-  considers. Larger values can increase both congestion and compilation time.
+- {py:attr}`~mqt.ionshuttler.grid.config.GridCompilerStrategy.GREEDY` is the
+  default and suits larger inputs.
+- {py:attr}`~mqt.ionshuttler.grid.config.GridCompilerStrategy.BREADTH_FIRST`
+  performs bounded routing search and is intended for small architectures.
+- {py:attr}`~mqt.ionshuttler.grid.config.GridDependencyMode.CONSERVATIVE`
+  preserves the dependencies produced by the shared circuit parser instead of
+  reordering commuting gates.
+- {py:attr}`~mqt.ionshuttler.grid.config.GridCompilerConfig.allowed_junction_crossings`
+  can restrict routing to selected directed segment pairs without changing the
+  hardware topology.
+- {py:attr}`~mqt.ionshuttler.grid.config.GridCompilerConfig.greedy_lookahead_rounds`
+  controls how much future work the greedy strategy considers. Larger values can
+  increase both congestion and compilation time.
 
-```python
+```{code-cell} ipython3
 from mqt.ionshuttler.grid import GridCompilerConfig, GridCompilerStrategy
 
 config = GridCompilerConfig(
@@ -97,7 +119,7 @@ compiler stores one snapshot per scheduling decision in
 gates, target segments, ion priorities, transport actions, and any reason for
 making no progress.
 
-```python
+```{code-cell} ipython3
 config = GridCompilerConfig(record_planning_trace=True)
 result = GridCompiler(architecture, config).compile(circuit)
 for snapshot in result.diagnostics.planning_trace or ():
