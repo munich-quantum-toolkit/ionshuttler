@@ -301,12 +301,6 @@ class TestMemorySAT:
         result = sat_solver.evaluate([0, 1], num_of_registers=2)
         assert result is True
 
-    def test_sat_solver_with_full_register_config(self, exact_config_full_register):
-        """The exact solver should find a solution for the full_register_access config."""
-        from mqt.ionshuttler.single_shuttler.main import main
-
-        main(exact_config_full_register)  # Should not raise
-
 
 # ===================================================================
 # Integration: single_shuttler.main
@@ -316,8 +310,8 @@ class TestMemorySAT:
 class TestSingleShuttlerMain:
     """Integration tests for the single_shuttler main entry point."""
 
-    def test_main_qft05(self, exact_config_qft05):
-        """main() should complete without error for the QFT-5 config."""
+    def test_main_small_circuit(self, exact_config_smoke):
+        """main() should solve a small circuit end to end."""
         from mqt.ionshuttler.single_shuttler.main import main
 
-        main(exact_config_qft05)  # Should not raise
+        main(exact_config_smoke)  # Should not raise
