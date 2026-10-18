@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pathlib
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from .cycles import get_ion_chains
 from .plotting import plot_state
@@ -263,7 +263,7 @@ def main(graph: Graph, sequence: list[int] | None, cycle_or_paths: str, record_p
     )
 
     graph.in_process = []
-    graph.locked_gates = cast("dict[int, str]", {})
+    graph.locked_gates = {}
     while timestep < max_timesteps:
         print("locked_gates", graph.locked_gates)
         print(f"\nStarting timestep {timestep}")
