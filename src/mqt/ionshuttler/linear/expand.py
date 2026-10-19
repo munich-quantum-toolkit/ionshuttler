@@ -337,8 +337,8 @@ def _shuttle_candidates(state: State, architecture: LinearArchitecture, busy_ion
         Shuttle(ion=ion, src=position, dst=destination)
         for ion, position in state.positions
         if ion not in busy_ions
-        for destination in (position - 1, position + 1)
-        if 0 <= destination < architecture.num_sites and destination not in occupied
+        for destination in architecture.neighbors(position)
+        if destination not in occupied
     ]
 
 
@@ -353,7 +353,7 @@ def _swap_candidates(
         PhysicalSwap(ion_a=ion_a, ion_b=ion_b, pos_a=pos_a, pos_b=pos_b)
         for index, (ion_a, pos_a) in enumerate(free_ions)
         for ion_b, pos_b in free_ions[index + 1 :]
-        if architecture.are_adjacent(pos_a, pos_b)
+        if pos_b in architecture.neighbors(pos_a)
     ]
 
 
@@ -420,21 +420,18 @@ def _good_moves(
     for ion, position in state.positions:
         if ion in busy_ions or ion not in considered_ions or architecture.get_processing_zone(position) is not None:
             continue
-        distance = _distance_to_processing_zone(position, zone_sites)
+        distance = _distance_to_processing_zone(position, zone_sites, architecture)
         if distance is None:
             continue
-        for delta in (-1, 1):
-            destination = position + delta
-            if not 0 <= destination < architecture.num_sites:
-                continue
-            next_distance = _distance_to_processing_zone(destination, zone_sites)
+        for destination in architecture.neighbors(position):
+            next_distance = _distance_to_processing_zone(destination, zone_sites, architecture)
             if destination not in occupied and next_distance is not None and next_distance < distance:
                 moves.append((Shuttle(ion=ion, src=position, dst=destination), None))
 
     free_ions = [(ion, position) for ion, position in state.positions if ion not in busy_ions]
     for index, (ion_a, pos_a) in enumerate(free_ions):
         for ion_b, pos_b in free_ions[index + 1 :]:
-            if abs(pos_a - pos_b) == 1 and _is_good_swap(
+            if pos_b in architecture.neighbors(pos_a) and _is_good_swap(
                 ion_a,
                 pos_a,
                 ion_b,
@@ -473,9 +470,13 @@ def _considered_ions(
     return ions
 
 
-def _distance_to_processing_zone(position: int, zone_sites: tuple[int, ...]) -> int | None:
+def _distance_to_processing_zone(
+    position: int,
+    zone_sites: tuple[int, ...],
+    architecture: LinearArchitecture,
+) -> int | None:
     """Return the nearest processing-zone distance, or ``None`` if no zone exists."""
-    return min((abs(position - site) for site in zone_sites), default=None)
+    return min((architecture.distance(position, site) for site in zone_sites), default=None)
 
 
 def _is_good_swap(
@@ -497,8 +498,8 @@ def _is_good_swap(
             continue
         if architecture.get_processing_zone(current_position) is not None:
             continue
-        current_distance = _distance_to_processing_zone(current_position, zone_sites)
-        next_distance = _distance_to_processing_zone(next_position, zone_sites)
+        current_distance = _distance_to_processing_zone(current_position, zone_sites, architecture)
+        next_distance = _distance_to_processing_zone(next_position, zone_sites, architecture)
         if current_distance is None or next_distance is None:
             continue
         if next_distance > current_distance:

@@ -120,21 +120,23 @@ def min_distance_to_valid_pair(
     pos_a: int,
     pos_b: int,
     valid_pairs: tuple[tuple[int, int], ...],
+    ring_size: int | None = None,
 ) -> int:
     """Return the fewest simultaneous site moves needed to reach a valid pair.
 
-    The result depends only on the two sites and the architecture's fixed pair
-    list, so repeated lookups during search reuse a cached value.
+    The result depends only on the two sites, the architecture's fixed pair
+    list, and the optional ring size, so repeated lookups during search reuse
+    a cached value. Omit ``ring_size`` for chain distance.
     """
     if not valid_pairs:
         return 0
     best = maxsize
     for left, right in valid_pairs:
-        forward = abs(pos_a - left)
-        other = abs(pos_b - right)
+        forward = _site_distance(pos_a, left, ring_size)
+        other = _site_distance(pos_b, right, ring_size)
         forward = max(forward, other)
-        reverse = abs(pos_a - right)
-        other = abs(pos_b - left)
+        reverse = _site_distance(pos_a, right, ring_size)
+        other = _site_distance(pos_b, left, ring_size)
         reverse = max(reverse, other)
         forward = min(forward, reverse)
         best = min(best, forward)
@@ -182,11 +184,19 @@ def heuristic(
             valid_pairs = architecture.valid_two_qubit_site_pairs
             if gate_zone is not None and zone_site_pairs is not None and gate_id in gate_zone:
                 valid_pairs = zone_site_pairs.get(gate_zone[gate_id], valid_pairs)
-            routing_estimate += min_distance_to_valid_pair(
-                positions[gate.ion_a],
-                positions[gate.ion_b],
-                valid_pairs,
-            )
+            if architecture.topology == "ring":
+                routing_estimate += min_distance_to_valid_pair(
+                    positions[gate.ion_a],
+                    positions[gate.ion_b],
+                    valid_pairs,
+                    architecture.num_sites,
+                )
+            else:
+                routing_estimate += min_distance_to_valid_pair(
+                    positions[gate.ion_a],
+                    positions[gate.ion_b],
+                    valid_pairs,
+                )
         else:
             routing_estimate += 1
 
@@ -200,6 +210,13 @@ def heuristic(
         gate_estimate = _critical_path_length(remaining, predecessors)
         critical_path_cache[cache_key] = gate_estimate
     return routing_estimate + gate_estimate
+
+
+def _site_distance(first_site: int, second_site: int, ring_size: int | None) -> int:
+    separation = abs(first_site - second_site)
+    if ring_size is None:
+        return separation
+    return min(separation, ring_size - separation)
 
 
 def makespan_lower_bound(circuit: Circuit, architecture: LinearArchitecture) -> int:

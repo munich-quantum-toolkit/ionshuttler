@@ -93,6 +93,14 @@ def test_distance_chooses_the_closest_valid_site_pair() -> None:
     assert min_distance_to_valid_pair(0, 4, ()) == 0
 
 
+def test_distance_cache_separates_chain_and_ring_geometry() -> None:
+    """Use cyclic distance without reusing the chain value for the same sites."""
+    valid_pairs = ((0, 1),)
+
+    assert min_distance_to_valid_pair(7, 2, valid_pairs) == 6
+    assert min_distance_to_valid_pair(7, 2, valid_pairs, 8) == 1
+
+
 def test_two_qubit_estimate_uses_any_two_sites_in_one_zone() -> None:
     """Treat separated sites in a processing zone as directly gate-capable."""
     architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [1, 2, 3]})

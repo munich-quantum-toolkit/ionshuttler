@@ -81,6 +81,49 @@ def test_assignment_passes_each_processing_zone_capacity(monkeypatch: pytest.Mon
     assert received_capacities == {"left": 3, "right": 2}
 
 
+@pytest.mark.parametrize(
+    ("architecture", "expected_distances"),
+    [
+        (
+            LinearArchitecture(num_sites=6, processing_zones={"left": [0, 1], "right": [4, 5]}),
+            [[0.0, 4.0], [4.0, 0.0]],
+        ),
+        (
+            LinearArchitecture(
+                num_sites=12,
+                processing_zones={"wrap": [10, 11, 0, 1], "middle": [4, 5]},
+                topology="ring",
+            ),
+            [[0.0, 5.0], [5.0, 0.0]],
+        ),
+    ],
+    ids=["chain", "ring"],
+)
+def test_assignment_uses_topology_distance_between_zone_centers(
+    monkeypatch: pytest.MonkeyPatch,
+    architecture: LinearArchitecture,
+    expected_distances: list[list[float]],
+) -> None:
+    """Preserve chain midpoints and measure wrapping ring zones cyclically."""
+    received_distances: list[list[float]] | None = None
+
+    def partition(*args: object, **_kwargs: object) -> SimpleNamespace:
+        nonlocal received_distances
+        received_distances = cast("list[list[float]]", args[3])
+        return SimpleNamespace(gate_assignment={0: next(iter(architecture.processing_zones or {}))})
+
+    monkeypatch.setattr(assignment, "compute_fine_grained_gate_partition", partition)
+    circuit = Circuit(
+        num_ions=2,
+        gates=(Rzz(ion_a=0, ion_b=1, theta=0.5, gate_id=0),),
+        predecessors=(frozenset(),),
+    )
+
+    assignment.compute_gate_zone_assignment(circuit, architecture)
+
+    assert received_distances == expected_distances
+
+
 def test_zone_site_pairs_are_scoped_to_each_processing_zone() -> None:
     """Exclude cross-zone pairs from a zone-specific heuristic target."""
     architecture = LinearArchitecture(
