@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import pytest
 
 from mqt.ionshuttler.partitioning import (
@@ -141,6 +142,71 @@ def test_compute_partition_rejects_duplicate_gate_ids() -> None:
         )
 
 
+def test_compute_partition_rejects_repeated_processing_zone_names() -> None:
+    """Require a distinct name for every processing zone."""
+    with pytest.raises(ValueError, match="names must be unique"):
+        compute_fine_grained_gate_partition(
+            [0],
+            {0: GateInfo(qubits=(0,), qasm="x q[0];")},
+            ["pz1", "pz1"],
+            _distance_matrix(2),
+        )
+
+
+@pytest.mark.parametrize(
+    ("capacities", "error", "message"),
+    [
+        ({"pz1": 2}, ValueError, "exactly the processing-zone names"),
+        ({"pz1": 2, "pz2": 2, "other": 2}, ValueError, "exactly the processing-zone names"),
+        ({"pz1": 0, "pz2": 2}, ValueError, "must be positive"),
+        ({"pz1": True, "pz2": 2}, TypeError, "must be an integer"),
+        ({"pz1": 1.5, "pz2": 2}, TypeError, "must be an integer"),
+        ([2, 2], TypeError, "must be a mapping"),
+    ],
+)
+def test_compute_partition_rejects_invalid_processing_zone_capacities(
+    capacities: Any,
+    error: type[Exception],
+    message: str,
+) -> None:
+    """Require one positive integer capacity for every named processing zone."""
+    with pytest.raises(error, match=message):
+        compute_fine_grained_gate_partition(
+            [0],
+            {0: GateInfo(qubits=(0,), qasm="x q[0];")},
+            ["pz1", "pz2"],
+            _distance_matrix(2),
+            processing_zone_capacities=capacities,
+        )
+
+
+def test_capacity_cost_uses_each_processing_zone_capacity() -> None:
+    """Charge overflow only against the capacity of the occupied zone."""
+    counts = [[3, 3]]
+    loads = [[6, 3]]
+
+    assert tabu._compute_capacity_cost(counts, loads, (2, 4)) == pytest.approx(6.0)
+    assert tabu._compute_capacity_cost(counts, loads, (3, 3)) == pytest.approx(0.0)
+    assert tabu._capacity_delta(counts[0], loads[0], 0, 1, 1, 2, (2, 4)) == pytest.approx(-6.0)
+
+
+def test_omitted_capacities_match_the_uniform_default() -> None:
+    """Preserve the inferred uniform capacities for callers that omit the mapping."""
+    gate_info = _sample_gate_info()
+    args = ([0, 1, 2, 3, 4], gate_info, ["pz1", "pz2"], _distance_matrix(2))
+
+    inferred = compute_fine_grained_gate_partition(*args)
+    explicit = compute_fine_grained_gate_partition(
+        *args,
+        processing_zone_capacities={"pz1": 2, "pz2": 2},
+    )
+
+    assert inferred.gate_assignment == explicit.gate_assignment
+    assert inferred.qubit_assignments_by_slice == explicit.qubit_assignments_by_slice
+    assert inferred.cost_before == pytest.approx(explicit.cost_before)
+    assert inferred.cost_after == pytest.approx(explicit.cost_after)
+
+
 def test_compute_partition_returns_runtime_neutral_result() -> None:
     gate_info = _sample_gate_info()
     result = compute_fine_grained_gate_partition(
@@ -148,7 +214,7 @@ def test_compute_partition_returns_runtime_neutral_result() -> None:
         gate_info,
         ["pz1", "pz2"],
         _distance_matrix(2),
-        capacity=2,
+        processing_zone_capacities={"pz1": 2, "pz2": 2},
     )
 
     assert set(result.gate_partition_by_pz) == {"pz1", "pz2"}
@@ -173,11 +239,71 @@ def test_relaxed_slicing_groups_non_conflicting_two_qubit_gates() -> None:
         gate_info,
         ["pz1", "pz2"],
         _distance_matrix(2),
-        capacity=2,
+        processing_zone_capacities={"pz1": 2, "pz2": 2},
     )
 
     assert result.time_slices[0] == [0, 1]
     assert result.time_slices[1] == [2]
+
+
+def _scan_relaxed_slices(
+    gate_ids: list[int],
+    gate_info: dict[int, GateInfo],
+    max_layer_depth: int | None,
+) -> list[list[int]]:
+    """Build relaxed slices by scanning every remaining gate for each slice.
+
+    A gate with a blocked qubit or at the depth limit blocks all its qubits. A
+    gate that would join a third qubit to a pair blocks its qubits and their
+    partners. Every other gate joins the slice. A gate without qubits joins no
+    slice, and a gate that no empty slice accepts forms a slice on its own.
+    """
+    pending_gate_ids = [gate_id for gate_id in gate_ids if gate_info[gate_id].qubits]
+    time_slices: list[list[int]] = []
+    while pending_gate_ids:
+        blocked_qubits: set[int] = set()
+        depth_by_qubit: dict[int, int] = {}
+        component_by_qubit: dict[int, set[int]] = {}
+        selected_gate_ids: list[int] = []
+        for gate_id in pending_gate_ids:
+            qubits = tuple(dict.fromkeys(gate_info[gate_id].qubits))
+            component = set().union(*(component_by_qubit.get(qubit, {qubit}) for qubit in qubits))
+            if blocked_qubits.intersection(qubits) or (
+                max_layer_depth is not None and any(depth_by_qubit.get(qubit, 0) >= max_layer_depth for qubit in qubits)
+            ):
+                blocked_qubits.update(qubits)
+            elif len(component) > 2:
+                blocked_qubits.update(component if len(qubits) == 2 else qubits)
+            else:
+                selected_gate_ids.append(gate_id)
+                for qubit in qubits:
+                    depth_by_qubit[qubit] = depth_by_qubit.get(qubit, 0) + 1
+                    component_by_qubit[qubit] = component
+                    if max_layer_depth is not None and depth_by_qubit[qubit] >= max_layer_depth:
+                        blocked_qubits.add(qubit)
+        if not selected_gate_ids:
+            selected_gate_ids = pending_gate_ids[:1]
+        time_slices.append(selected_gate_ids)
+        pending_gate_ids = [gate_id for gate_id in pending_gate_ids if gate_id not in selected_gate_ids]
+    return time_slices
+
+
+@pytest.mark.parametrize("seed", range(100))
+def test_relaxed_slicing_matches_a_scan_of_all_remaining_gates(seed: int) -> None:
+    """Skip only gates that cannot change a slice, so the slices match a full scan."""
+    rng = np.random.default_rng(seed)
+    num_qubits = int(rng.integers(3, 8))
+    gate_info: dict[int, GateInfo] = {}
+    for gate_id in range(int(rng.integers(1, 80))):
+        arity = int(rng.choice([0, 1, 2, 2, 2, 3]))
+        qubits = tuple(int(qubit) for qubit in rng.choice(num_qubits, size=arity, replace=False))
+        gate_info[gate_id] = GateInfo(qubits=qubits, qasm="gate")
+    gate_ids = list(gate_info)
+    max_layer_depth = None if seed % 3 else int(rng.integers(1, 4))
+
+    slices = tabu._build_time_slices_relaxed(gate_ids, gate_info, num_qubits, max_layer_depth=max_layer_depth)
+
+    assert slices == _scan_relaxed_slices(gate_ids, gate_info, max_layer_depth)
 
 
 def test_multi_qubit_projection_stays_within_one_cluster() -> None:
@@ -188,7 +314,7 @@ def test_multi_qubit_projection_stays_within_one_cluster() -> None:
         gate_info,
         ["pz1", "pz2"],
         _distance_matrix(2),
-        capacity=2,
+        processing_zone_capacities={"pz1": 2, "pz2": 2},
     )
 
     for slice_gate_ids, qubit_assignment in zip(result.time_slices, result.qubit_assignments_by_slice, strict=True):
@@ -209,7 +335,7 @@ def test_seeded_randomized_runs_are_deterministic() -> None:
         gate_info,
         ["pz1", "pz2", "pz3"],
         _distance_matrix(3),
-        capacity=2,
+        processing_zone_capacities={"pz1": 2, "pz2": 2, "pz3": 2},
         config=config,
     )
     second = compute_fine_grained_gate_partition(
@@ -217,7 +343,7 @@ def test_seeded_randomized_runs_are_deterministic() -> None:
         gate_info,
         ["pz1", "pz2", "pz3"],
         _distance_matrix(3),
-        capacity=2,
+        processing_zone_capacities={"pz1": 2, "pz2": 2, "pz3": 2},
         config=config,
     )
 
@@ -266,7 +392,7 @@ def test_consider_supernode_moves_returns_pre_move_balance_delta() -> None:
         qubit_assignments_by_slice=[[0]],
         distance_matrix=None,
         slack_weights=None,
-        capacity=None,
+        capacities=None,
         config=FineGrainedTabuConfig(balance_penalty=1.0, capacity_weight=0.0, distance_weight_factor=0.0),
         current_cost=0.0,
         best_cost=0.0,

@@ -7,11 +7,14 @@
 
 from __future__ import annotations
 
+import heapq
 import itertools
 import math
+import operator
 import random
 import time
 from collections import defaultdict, deque
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -154,7 +157,7 @@ def compute_fine_grained_gate_partition(
     pz_names: Sequence[str],
     pz_distance_matrix: Sequence[Sequence[float]] | None,
     *,
-    capacity: int | None = None,
+    processing_zone_capacities: Mapping[str, int] | None = None,
     config: FineGrainedTabuConfig | None = None,
 ) -> GatePartitionResult:
     """Compute a fine-grained gate-to-processing-zone assignment.
@@ -170,19 +173,21 @@ def compute_fine_grained_gate_partition(
         gate_info: Gate metadata keyed by gate id.
         pz_names: Processing-zone names in cluster index order.
         pz_distance_matrix: Square distance matrix indexed by processing-zone order.
-        capacity: Optional soft per-zone qubit capacity, which informs the congestion penalty in the partitioning cost function.
-            When omitted, defaults to `ceil(num_qubits / num_pzs)`.
+        processing_zone_capacities: Optional soft qubit capacity of each processing zone.
+            The mapping must contain exactly the names in ``pz_names``. When omitted,
+            every zone uses ``ceil(num_qubits / num_pzs)``.
         config: Optional configuration settings (see defaults in FineGrainedTabuConfig class).
 
     Returns:
         A gate partition result object including GatePartitionResult.gate_assignment, which is the main output mapping gate ids to PZs.
 
     Raises:
+        TypeError: If the capacity mapping or one of its values has the wrong type.
         ValueError: If the inputs are inconsistent or incomplete.
     """
 
     resolved_config = config or FineGrainedTabuConfig()
-    _validate_gate_inputs(sequence, gate_info, pz_names, capacity)
+    _validate_gate_inputs(sequence, gate_info, pz_names, processing_zone_capacities)
 
     normalized_distances = _normalize_distance_matrix(pz_names, pz_distance_matrix)
     if not sequence:
@@ -199,7 +204,11 @@ def compute_fine_grained_gate_partition(
 
     num_pzs = len(pz_names)
     num_qubits = _infer_num_qubits(gate_info)
-    resolved_capacity = capacity if capacity is not None else max(math.ceil(num_qubits / num_pzs), 1)
+    default_capacity = max(math.ceil(num_qubits / num_pzs), 1)
+    capacities = tuple(
+        default_capacity if processing_zone_capacities is None else processing_zone_capacities[name]
+        for name in pz_names
+    )
 
     # Decompose circuit into slices
     time_slices = _build_time_slices_relaxed(
@@ -234,7 +243,7 @@ def compute_fine_grained_gate_partition(
     optimized_assignments, cost_before, cost_after = _optimize_gate_partition(
         slice_contractions,
         num_pzs=num_pzs,
-        capacity=resolved_capacity,
+        capacities=capacities,
         distance_matrix=normalized_distances,
         num_qubits=num_qubits,
         config=resolved_config,
@@ -278,7 +287,7 @@ def _validate_gate_inputs(
     sequence: Sequence[int],
     gate_info: dict[int, GateInfo],
     pz_names: Sequence[str],
-    capacity: int | None,
+    processing_zone_capacities: Mapping[str, int] | None,
 ) -> None:
     if not pz_names:
         msg = "At least one processing zone is required."
@@ -286,9 +295,21 @@ def _validate_gate_inputs(
     if len(set(pz_names)) != len(pz_names):
         msg = "Processing zone names must be unique."
         raise ValueError(msg)
-    if capacity is not None and capacity <= 0:
-        msg = "capacity must be positive when provided."
-        raise ValueError(msg)
+    if processing_zone_capacities is not None:
+        if not isinstance(processing_zone_capacities, Mapping):
+            msg = "processing_zone_capacities must be a mapping when provided."
+            raise TypeError(msg)
+        if set(processing_zone_capacities) != set(pz_names):
+            msg = "processing_zone_capacities must contain exactly the processing-zone names."
+            raise ValueError(msg)
+        for name in pz_names:
+            capacity = processing_zone_capacities[name]
+            if isinstance(capacity, bool) or not isinstance(capacity, int):
+                msg = f"Capacity of processing zone '{name}' must be an integer."
+                raise TypeError(msg)
+            if capacity <= 0:
+                msg = f"Capacity of processing zone '{name}' must be positive."
+                raise ValueError(msg)
     missing_gate_ids = [gate_id for gate_id in sequence if gate_id not in gate_info]
     if missing_gate_ids:
         msg = f"Sequence references unknown gate ids: {missing_gate_ids[:5]}"
@@ -400,88 +421,126 @@ def _build_time_slices_relaxed(
     additional scaffolding that informs the partitioner about actual
     commutativity and dependency relationships between gates, for example
     by passing a proper DAG.
+
+    Each slice visits relevant unprocessed gates in circuit order. A heap holds
+    the next gate on each unblocked qubit. This avoids scanning every remaining
+    gate for every slice. Gates without qubits belong to no slice.
     """
 
     ordered_gate_ids = list(gate_ids)
-    processed: set[int] = set()
-    time_slices: list[list[int]] = []
-    total_gates = len(ordered_gate_ids)
     max_depth = None if max_layer_depth is None or max_layer_depth <= 0 else max_layer_depth
+    qubits_by_position = [tuple(dict.fromkeys(gate_info[gate_id].qubits)) for gate_id in ordered_gate_ids]
+    # Positions of the unprocessed gates on each qubit, in circuit order.
+    pending_positions_by_qubit: defaultdict[int, deque[int]] = defaultdict(deque)
+    for position, qubits in enumerate(qubits_by_position):
+        for qubit in qubits:
+            pending_positions_by_qubit[qubit].append(position)
+    remaining_gate_count = sum(1 for qubits in qubits_by_position if qubits)
+    time_slices: list[list[int]] = []
 
-    while len(processed) < total_gates:
-        blocked_qubits: set[int] = set()
-        current_slice: list[int] = []
-        progress = False
-        gate_depth_by_qubit: defaultdict[int, int] = defaultdict(int)
-        union_find = _UnionFind(list(range(num_qubits)))
-        component_sizes: dict[int, int] = dict.fromkeys(range(num_qubits), 1)
-        component_members: dict[int, set[int]] = {qubit: {qubit} for qubit in range(num_qubits)}
-
-        for gate_id in ordered_gate_ids:
-            if gate_id in processed:
-                continue
-            qubits = tuple(dict.fromkeys(gate_info[gate_id].qubits))
-            if not qubits:
-                processed.add(gate_id)
-                progress = True
-                continue
-            if any(qubit in blocked_qubits for qubit in qubits):
-                blocked_qubits.update(qubits)
-                continue
-            if max_depth is not None and any(gate_depth_by_qubit[qubit] >= max_depth for qubit in qubits):
-                blocked_qubits.update(qubits)
-                continue
-            if not _can_accept_gate_without_triplet(qubits, union_find, component_sizes):
-                if len(qubits) == 2:
-                    first_root = union_find.find(qubits[0])
-                    second_root = union_find.find(qubits[1])
-                    blocked_qubits.update(component_members.get(first_root, {qubits[0]}))
-                    blocked_qubits.update(component_members.get(second_root, {qubits[1]}))
-                blocked_qubits.update(qubits)
-                continue
-
-            processed.add(gate_id)
-            progress = True
-            current_slice.append(gate_id)
-            for qubit in qubits:
-                gate_depth_by_qubit[qubit] += 1
-                if max_depth is not None and gate_depth_by_qubit[qubit] >= max_depth:
-                    blocked_qubits.add(qubit)
-
-            if len(qubits) == 2:
-                first_qubit, second_qubit = qubits
-                first_root = union_find.find(first_qubit)
-                second_root = union_find.find(second_qubit)
-                if first_root != second_root:
-                    first_members = component_members.get(first_root, {first_qubit})
-                    second_members = component_members.get(second_root, {second_qubit})
-                    union_find.union(first_qubit, second_qubit)
-                    new_root = union_find.find(first_qubit)
-                    merged_members = set(first_members) | set(second_members)
-                    component_members[new_root] = merged_members
-                    component_sizes[new_root] = len(merged_members)
-                    if first_root != new_root:
-                        component_members.pop(first_root, None)
-                        component_sizes.pop(first_root, None)
-                    if second_root != new_root:
-                        component_members.pop(second_root, None)
-                        component_sizes.pop(second_root, None)
-
-        if current_slice:
-            time_slices.append(current_slice)
-
-        if not progress:
-            for gate_id in ordered_gate_ids:
-                if gate_id in processed:
-                    continue
-                processed.add(gate_id)
-                if gate_info[gate_id].qubits:
-                    time_slices.append([gate_id])
-                break
-            else:
-                break
+    while remaining_gate_count:
+        selected_positions = _next_relaxed_slice(
+            qubits_by_position,
+            pending_positions_by_qubit,
+            num_qubits,
+            max_depth,
+        )
+        if not selected_positions:
+            # No gate fits into an empty slice, which happens only for a gate
+            # on more than two qubits. The earliest such gate forms its own slice.
+            first_position = min(queue[0] for queue in pending_positions_by_qubit.values() if queue)
+            for qubit in qubits_by_position[first_position]:
+                pending_positions_by_qubit[qubit].popleft()
+            selected_positions = [first_position]
+        remaining_gate_count -= len(selected_positions)
+        time_slices.append([ordered_gate_ids[position] for position in selected_positions])
 
     return time_slices
+
+
+def _next_relaxed_slice(
+    qubits_by_position: Sequence[tuple[int, ...]],
+    pending_positions_by_qubit: dict[int, deque[int]],
+    num_qubits: int,
+    max_depth: int | None,
+) -> list[int]:
+    """Select one relaxed slice and remove its gates from the pending queues.
+
+    The rules match a scan of all unprocessed gates in circuit order. A gate
+    with a blocked qubit or a qubit at the depth limit blocks all its qubits.
+    A gate that would join three qubits blocks its qubits and their partners.
+    Every other gate joins the slice.
+
+    Returns:
+        The circuit positions of the selected gates in circuit order.
+    """
+    blocked_qubits: set[int] = set()
+    selected_positions: list[int] = []
+    gate_depth_by_qubit: defaultdict[int, int] = defaultdict(int)
+    union_find = _UnionFind(list(range(num_qubits)))
+    component_sizes: dict[int, int] = dict.fromkeys(range(num_qubits), 1)
+    component_members: dict[int, set[int]] = {qubit: {qubit} for qubit in range(num_qubits)}
+    # The next unprocessed gate on each unblocked qubit. A gate on two qubits
+    # can appear twice, and a qubit's next gate changes only after that gate
+    # was visited, so entries at or before the last visited position are stale.
+    next_position_heap = [(queue[0], qubit) for qubit, queue in pending_positions_by_qubit.items() if queue]
+    heapq.heapify(next_position_heap)
+    last_visited_position = -1
+
+    while next_position_heap:
+        position, qubit = heapq.heappop(next_position_heap)
+        if position <= last_visited_position or qubit in blocked_qubits:
+            continue
+        last_visited_position = position
+        qubits = qubits_by_position[position]
+        if any(qubit in blocked_qubits for qubit in qubits):
+            blocked_qubits.update(qubits)
+            continue
+        if max_depth is not None and any(gate_depth_by_qubit[qubit] >= max_depth for qubit in qubits):
+            blocked_qubits.update(qubits)
+            continue
+        if not _can_accept_gate_without_triplet(qubits, union_find, component_sizes):
+            if len(qubits) == 2:
+                first_root = union_find.find(qubits[0])
+                second_root = union_find.find(qubits[1])
+                blocked_qubits.update(component_members.get(first_root, {qubits[0]}))
+                blocked_qubits.update(component_members.get(second_root, {qubits[1]}))
+            blocked_qubits.update(qubits)
+            continue
+
+        selected_positions.append(position)
+        for qubit in qubits:
+            gate_depth_by_qubit[qubit] += 1
+            if max_depth is not None and gate_depth_by_qubit[qubit] >= max_depth:
+                blocked_qubits.add(qubit)
+
+        if len(qubits) == 2:
+            first_qubit, second_qubit = qubits
+            first_root = union_find.find(first_qubit)
+            second_root = union_find.find(second_qubit)
+            if first_root != second_root:
+                first_members = component_members.get(first_root, {first_qubit})
+                second_members = component_members.get(second_root, {second_qubit})
+                union_find.union(first_qubit, second_qubit)
+                new_root = union_find.find(first_qubit)
+                merged_members = set(first_members) | set(second_members)
+                component_members[new_root] = merged_members
+                component_sizes[new_root] = len(merged_members)
+                if first_root != new_root:
+                    component_members.pop(first_root, None)
+                    component_sizes.pop(first_root, None)
+                if second_root != new_root:
+                    component_members.pop(second_root, None)
+                    component_sizes.pop(second_root, None)
+
+        # Every qubit of an accepted gate was unblocked, so the gate heads each queue.
+        for qubit in qubits:
+            queue = pending_positions_by_qubit[qubit]
+            queue.popleft()
+            if queue and qubit not in blocked_qubits:
+                heapq.heappush(next_position_heap, (queue[0], qubit))
+
+    return selected_positions
 
 
 def _contract_slice(
@@ -682,7 +741,7 @@ def _optimize_gate_partition(
     slice_contractions: Sequence[_SliceContraction],
     *,
     num_pzs: int,
-    capacity: int | None,
+    capacities: Sequence[int],
     distance_matrix: DistanceMatrix | None,
     num_qubits: int,
     config: FineGrainedTabuConfig,
@@ -746,7 +805,7 @@ def _optimize_gate_partition(
         active_counts_per_slice.append(active_counts)
         active_loads_per_slice.append(active_loads)
 
-    capacity_cost = _compute_capacity_cost(slice_counts, slice_loads, capacity)
+    capacity_cost = _compute_capacity_cost(slice_counts, slice_loads, capacities)
     distance_cost = _compute_distance_cost(qubit_assignments_by_slice, distance_matrix, slack_weights)
     balance_cost = _compute_balance_cost(slice_loads)
     current_cost = (
@@ -779,7 +838,7 @@ def _optimize_gate_partition(
             qubit_assignments_by_slice,
             slice_counts,
             slice_loads,
-            capacity,
+            capacities,
             config.balance_penalty,
             config.capacity_weight,
             distance_matrix,
@@ -802,7 +861,7 @@ def _optimize_gate_partition(
                 qubit_assignments_by_slice,
                 slice_counts,
                 slice_loads,
-                capacity,
+                capacities,
                 config.balance_penalty,
                 config.capacity_weight,
                 distance_matrix,
@@ -829,7 +888,7 @@ def _optimize_gate_partition(
                             qubit_assignments_by_slice=qubit_assignments_by_slice,
                             distance_matrix=distance_matrix,
                             slack_weights=slack_weights,
-                            capacity=capacity,
+                            capacities=capacities,
                             config=config,
                             current_cost=current_cost,
                             best_cost=best_cost,
@@ -852,7 +911,7 @@ def _optimize_gate_partition(
                         qubit_assignments_by_slice=qubit_assignments_by_slice,
                         distance_matrix=distance_matrix,
                         slack_weights=slack_weights,
-                        capacity=capacity,
+                        capacities=capacities,
                         config=config,
                         current_cost=current_cost,
                         best_cost=best_cost,
@@ -871,7 +930,7 @@ def _optimize_gate_partition(
                     qubit_assignments_by_slice,
                     slice_counts,
                     slice_loads,
-                    capacity,
+                    capacities,
                     config.balance_penalty,
                     config.capacity_weight,
                     distance_matrix,
@@ -915,7 +974,7 @@ def _optimize_gate_partition(
                     qubit_assignments_by_slice,
                     slice_counts,
                     slice_loads,
-                    capacity,
+                    capacities,
                     config.balance_penalty,
                     config.capacity_weight,
                     distance_matrix,
@@ -930,7 +989,7 @@ def _optimize_gate_partition(
                 qubit_assignments_by_slice,
                 slice_counts,
                 slice_loads,
-                capacity,
+                capacities,
                 config.balance_penalty,
                 config.capacity_weight,
                 distance_matrix,
@@ -955,7 +1014,7 @@ def _consider_supernode_moves(
     qubit_assignments_by_slice: Sequence[Sequence[int]],
     distance_matrix: DistanceMatrix | None,
     slack_weights: Sequence[Sequence[float]] | None,
-    capacity: int | None,
+    capacities: Sequence[int] | None,
     config: FineGrainedTabuConfig,
     current_cost: float,
     best_cost: float,
@@ -980,7 +1039,7 @@ def _consider_supernode_moves(
         qubit_assignments_by_slice: Current qubit-to-zone assignments.
         distance_matrix: Optional processing-zone distance matrix.
         slack_weights: Optional per-boundary movement weights.
-        capacity: Optional soft processing-zone capacity.
+        capacities: Optional soft processing-zone capacities in cluster order.
         config: Objective weights and search configuration.
         current_cost: Objective value of the current assignment.
         best_cost: Best objective value reached so far.
@@ -1010,7 +1069,7 @@ def _consider_supernode_moves(
             target_cluster,
             active_count,
             active_load,
-            capacity,
+            capacities,
         )
         distance_delta = _distance_delta(
             slice_index,
@@ -1074,7 +1133,7 @@ def _capacity_delta(
     dst_cluster: int,
     supernode_count: int,
     supernode_load: int,
-    capacity: int | None,
+    capacities: Sequence[int] | None,
 ) -> float:
     """Measure how one move changes the overflow penalty.
 
@@ -1082,7 +1141,7 @@ def _capacity_delta(
     the delta can be computed locally instead of recomputing the full score.
     """
 
-    if capacity is None:
+    if capacities is None:
         return 0.0
     if not (
         0 <= src_cluster < len(load_vector)
@@ -1092,24 +1151,26 @@ def _capacity_delta(
     ):
         return 0.0
 
+    source_capacity = capacities[src_cluster]
+    target_capacity = capacities[dst_cluster]
     before = (
-        (count_vector[src_cluster] - capacity) * load_vector[src_cluster]
-        if count_vector[src_cluster] > capacity
+        (count_vector[src_cluster] - source_capacity) * load_vector[src_cluster]
+        if count_vector[src_cluster] > source_capacity
         else 0.0
     ) + (
-        (count_vector[dst_cluster] - capacity) * load_vector[dst_cluster]
-        if count_vector[dst_cluster] > capacity
+        (count_vector[dst_cluster] - target_capacity) * load_vector[dst_cluster]
+        if count_vector[dst_cluster] > target_capacity
         else 0.0
     )
     after_src_count = count_vector[src_cluster] - supernode_count
     after_dst_count = count_vector[dst_cluster] + supernode_count
     after = (
-        (after_src_count - capacity) * (load_vector[src_cluster] - supernode_load)
-        if after_src_count > capacity
+        (after_src_count - source_capacity) * (load_vector[src_cluster] - supernode_load)
+        if after_src_count > source_capacity
         else 0.0
     ) + (
-        (after_dst_count - capacity) * (load_vector[dst_cluster] + supernode_load)
-        if after_dst_count > capacity
+        (after_dst_count - target_capacity) * (load_vector[dst_cluster] + supernode_load)
+        if after_dst_count > target_capacity
         else 0.0
     )
     return float(after - before)
@@ -1167,19 +1228,19 @@ def _distance_delta(
 def _compute_capacity_cost(
     slice_counts: Sequence[Sequence[int]],
     slice_loads: Sequence[Sequence[int]],
-    capacity: int | None,
+    capacities: Sequence[int] | None,
 ) -> float:
     """Add up the congestion penalty across all slices.
 
     A slice contributes to this cost only when a cluster holds more active
-    qubits than the chosen PZs capacity.
+    qubits than its processing zone can hold.
     """
 
-    if capacity is None:
+    if capacities is None:
         return 0.0
     total = 0.0
-    for counts, loads in zip(slice_counts, slice_loads, strict=False):
-        for count, load in zip(counts, loads, strict=False):
+    for counts, loads in zip(slice_counts, slice_loads, strict=True):
+        for count, load, capacity in zip(counts, loads, capacities, strict=True):
             if count > capacity:
                 total += (count - capacity) * load
     return float(total)
@@ -1391,7 +1452,7 @@ def _compute_supernode_scores_for_slice(
     qubit_assignments_by_slice: Sequence[Sequence[int]],
     slice_counts: Sequence[Sequence[int]],
     slice_loads: Sequence[Sequence[int]],
-    capacity: int | None,
+    capacities: Sequence[int] | None,
     balance_penalty: float,
     capacity_weight: float,
     distance_matrix: DistanceMatrix | None,
@@ -1425,12 +1486,12 @@ def _compute_supernode_scores_for_slice(
         cluster = current[supernode.qubits[0]] if supernode.qubits else -1
         overflow_penalty = 0.0
         if (
-            capacity is not None
+            capacities is not None
             and 0 <= cluster < len(loads)
             and 0 <= cluster < len(counts)
-            and counts[cluster] > capacity
+            and counts[cluster] > capacities[cluster]
         ):
-            overflow_penalty = (counts[cluster] - capacity) * loads[cluster]
+            overflow_penalty = (counts[cluster] - capacities[cluster]) * loads[cluster]
         total += capacity_weight * overflow_penalty
 
         total += balance_penalty * max(0.0, loads[cluster] - mean_load)
@@ -1443,7 +1504,7 @@ def _build_candidate_scores(
     qubit_assignments_by_slice: Sequence[Sequence[int]],
     slice_counts: Sequence[Sequence[int]],
     slice_loads: Sequence[Sequence[int]],
-    capacity: int | None,
+    capacities: Sequence[int] | None,
     balance_penalty: float,
     capacity_weight: float,
     distance_matrix: DistanceMatrix | None,
@@ -1457,7 +1518,7 @@ def _build_candidate_scores(
             qubit_assignments_by_slice,
             slice_counts,
             slice_loads,
-            capacity,
+            capacities,
             balance_penalty,
             capacity_weight,
             distance_matrix,
@@ -1471,7 +1532,7 @@ def _update_candidate_scores(
     qubit_assignments_by_slice: Sequence[Sequence[int]],
     slice_counts: Sequence[Sequence[int]],
     slice_loads: Sequence[Sequence[int]],
-    capacity: int | None,
+    capacities: Sequence[int] | None,
     balance_penalty: float,
     capacity_weight: float,
     distance_matrix: DistanceMatrix | None,
@@ -1487,7 +1548,7 @@ def _update_candidate_scores(
             qubit_assignments_by_slice,
             slice_counts,
             slice_loads,
-            capacity,
+            capacities,
             balance_penalty,
             capacity_weight,
             distance_matrix,
@@ -1506,20 +1567,17 @@ def _build_candidate_pool(
     the current solution before falling back to a broader scan.
     """
 
-    ranked: list[tuple[float, int, int]] = []
-    for slice_index, scores in enumerate(scores_by_slice):
-        for supernode_id, score in enumerate(scores):
-            ranked.append((score, slice_index, supernode_id))
-    ranked.sort(reverse=True, key=lambda item: item[0])
+    ranked = (
+        (score, slice_index, supernode_id)
+        for slice_index, scores in enumerate(scores_by_slice)
+        for supernode_id, score in enumerate(scores)
+    )
+    # Equal scores keep slice order, like a stable descending sort.
+    top_candidates = heapq.nlargest(candidate_k, ranked, key=operator.itemgetter(0))
 
-    pool: list[tuple[int, int]] = []
-    seen: set[tuple[int, int]] = set()
-    for _, slice_index, supernode_id in ranked[:candidate_k]:
-        key = (slice_index, supernode_id)
-        if key in seen:
-            continue
-        seen.add(key)
-        pool.append(key)
+    # Each slice and supernode pair occurs once in the ranking.
+    pool = [(slice_index, supernode_id) for _, slice_index, supernode_id in top_candidates]
+    seen = set(pool)
 
     if per_slice_quota and per_slice_quota > 0:
         for slice_index, scores in enumerate(scores_by_slice):
