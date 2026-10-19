@@ -14,9 +14,15 @@ from typing import TYPE_CHECKING
 
 import mqt.ionshuttler.linear.cost as linear_cost
 from mqt.ionshuttler.circuit import Circuit
-from mqt.ionshuttler.core.gates import GateAction, GlobalGate, Rx, Rzz
+from mqt.ionshuttler.core.gates import GateAction, GlobalGate, Rx, Rz, Rzz
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
-from mqt.ionshuttler.linear.cost import cost, heuristic, min_distance_to_valid_pair, zero_heuristic
+from mqt.ionshuttler.linear.cost import (
+    cost,
+    heuristic,
+    makespan_lower_bound,
+    min_distance_to_valid_pair,
+    zero_heuristic,
+)
 from mqt.ionshuttler.linear.state import State
 
 if TYPE_CHECKING:
@@ -120,7 +126,7 @@ def test_two_qubit_estimate_can_prefer_one_processing_zone() -> None:
 
 
 def test_partition_parameters_omitted_preserve_heuristic_results() -> None:
-    """Keep the original estimate unchanged when partition bias is not supplied."""
+    """Keep the original estimate when no preferred gate zones are supplied."""
     architecture = LinearArchitecture(
         num_sites=9,
         processing_zones={"left": [1, 2], "right": [7, 8]},
@@ -270,3 +276,24 @@ def test_unknown_preferred_zone_uses_architecture_pairs() -> None:
     assert estimate(
         state, architecture, gates, gate_zone={0: "missing"}, zone_site_pairs={"right": ((2, 3),)}
     ) == estimate(state, architecture, gates)
+
+
+def test_makespan_lower_bound_follows_the_longest_dependency_chain() -> None:
+    """Add gate durations along dependencies and ignore virtual gates in zone time."""
+    architecture = LinearArchitecture(num_sites=8, processing_zones={"left": [0, 1], "right": [5, 6]})
+    gates = {0: Rx(ion=0, theta=0.1), 1: Rzz(ion_a=0, ion_b=1, theta=0.2), 2: Rz(ion=1, theta=0.3)}
+    circuit = make_circuit(gates, {1: frozenset({0}), 2: frozenset({1})})
+
+    assert makespan_lower_bound(circuit, architecture) == 3
+
+
+def test_makespan_lower_bound_spreads_gate_time_over_the_zones() -> None:
+    """Bound independent gates by the busiest share of the processing zones."""
+    architecture = LinearArchitecture(num_sites=8, processing_zones={"left": [0, 1], "right": [5]})
+    pairs = {gate_id: Rzz(ion_a=0, ion_b=1, theta=0.1) for gate_id in range(3)}
+    singles = {gate_id: Rx(ion=2, theta=0.1) for gate_id in range(5)}
+
+    # Only one zone holds two ions, so it runs all three two-ion gates.
+    assert makespan_lower_bound(make_circuit(pairs), architecture) == 6
+    # Five single-ion gates over two zones need at least three timesteps.
+    assert makespan_lower_bound(make_circuit(singles), architecture) == 3
