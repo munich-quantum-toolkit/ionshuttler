@@ -426,9 +426,9 @@ Linear compiler, the diagnostics are a
 | `makespan_lower_bound` | Lower bound from dependency-chain time, total processing-zone load, and two-ion-gate load on capable zones. The bound does not include transport.                                |
 | `permutation`          | Permutation statistics, or `None` for search.                                                                                                                                    |
 
-For a nonempty circuit, divide the schedule duration by the lower bound to
-compare complete schedules with the same circuit and architecture. The ratio is
-at least one. The gap can include transport and other idle time:
+Divide the schedule duration by the lower bound to compare complete schedules
+with the same circuit and architecture. For a `SUCCESS` result, the ratio is at
+least one. The gap can include transport and other idle time:
 
 ```{code-cell} ipython3
 diagnostics = permutation_result.diagnostics
