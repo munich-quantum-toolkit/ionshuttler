@@ -33,14 +33,17 @@ def test_package_exports_only_the_supported_facade() -> None:
         "DEFAULT_ACTION_TYPES",
         "CompilationResult",
         "CompilationStatus",
+        "GateGroup",
         "GateTiming",
         "HeuristicFn",
         "LinearArchitecture",
         "LinearCompilationResult",
         "LinearCompiler",
-        "LinearCompilerConfig",
+        "LinearConfig",
         "LinearDiagnostics",
         "LinearMachineState",
+        "PermutationConfig",
+        "PermutationDiagnostics",
         "Schedule",
         "ScheduledAction",
         "SearchConfig",
@@ -118,7 +121,8 @@ def test_schedule_import_does_not_load_compiler_search() -> None:
     command = (
         "import sys; "
         "from mqt.ionshuttler.linear.schedule import LinearMachineState; "
-        "assert 'mqt.ionshuttler.linear.search' not in sys.modules"
+        "assert 'mqt.ionshuttler.linear.search' not in sys.modules; "
+        "assert 'mqt.ionshuttler.linear.permutation' not in sys.modules"
     )
     completed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - Fixed interpreter command.
         [sys.executable, "-c", command],

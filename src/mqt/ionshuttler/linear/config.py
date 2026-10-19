@@ -5,21 +5,59 @@
 #
 # Licensed under the MIT License
 
-"""Settings for Linear schedule search."""
+"""Settings for Linear compilation."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
+
+from mqt.ionshuttler.core.actions import Action
 
 if TYPE_CHECKING:
     from mqt.ionshuttler.linear.cost import HeuristicFn
     from mqt.ionshuttler.partitioning import FineGrainedTabuConfig
 
 
-@dataclass(frozen=True)
-class SearchConfig:
-    """Configure how the compiler searches for a schedule.
+@dataclass(frozen=True, kw_only=True)
+class LinearConfig(ABC):
+    """Configuration settings shared by all Linear compiler strategies.
+
+    ``action_types`` limits the compiler to a subset of the operations
+    supported by the architecture. ``None`` uses every supported operation.
+    ``max_compile_time`` bounds the complete compilation in seconds; ``None``
+    removes the limit. ``pre_partition`` toggles a pre-partitioning step that
+    assigns gates to preferred processing zones. ``pre_partition_config``
+    tunes that step.
+
+    Use :class:`SearchConfig` or :class:`PermutationConfig` to select a
+    strategy and configure its remaining settings.
+    """
+
+    action_types: tuple[type[Action], ...] | None = None
+    max_compile_time: float | None = 1800.0
+    pre_partition: bool = False
+    pre_partition_config: FineGrainedTabuConfig | None = None
+
+    @abstractmethod
+    def __post_init__(self) -> None:
+        """Validate the shared settings.
+
+        Raises:
+            TypeError: If an action type is invalid.
+            ValueError: If the time limit is invalid or an action type is repeated.
+        """
+        object.__setattr__(self, "action_types", _normalize_action_types(self.action_types))
+        _validate_compile_time(self.max_compile_time)
+        if not isinstance(self.pre_partition, bool):
+            msg = "pre_partition must be a boolean"
+            raise TypeError(msg)
+
+
+@dataclass(frozen=True, kw_only=True)
+class SearchConfig(LinearConfig):
+    """Configuration of the search-based strategy.
 
     A finite ``horizon`` plans a few gates at a time and commits
     ``committed_gates`` before planning again. Set ``horizon`` to ``None`` to
@@ -39,18 +77,17 @@ class SearchConfig:
     informed_action_prioritization: bool = False
     num_solutions: int = 1
     max_frontier_size: int | None = 1000
-    max_compile_time: float | None = 1800.0
     use_dependencies: bool = True
     heuristic: HeuristicFn | None = None
-    pre_partition_config: FineGrainedTabuConfig | None = None
 
     def __post_init__(self) -> None:
         """Ensure all search limits are meaningful and mutually consistent.
 
         Raises:
-            TypeError: If a Boolean option is not Boolean.
-            ValueError: If a numeric bound or horizon relationship is invalid.
+            TypeError: If a Boolean option or action type is invalid.
+            ValueError: If a bound is invalid or an action type is repeated.
         """
+        super().__post_init__()
         if self.horizon is not None:
             _require_integer_at_least(self.horizon, "horizon", minimum=1)
         _require_integer_at_least(self.committed_gates, "committed_gates", minimum=1)
@@ -60,13 +97,6 @@ class SearchConfig:
         _require_integer_at_least(self.num_solutions, "num_solutions", minimum=1)
         if self.max_frontier_size is not None:
             _require_integer_at_least(self.max_frontier_size, "max_frontier_size", minimum=1)
-        if self.max_compile_time is not None and (
-            isinstance(self.max_compile_time, bool)
-            or not isinstance(self.max_compile_time, int | float)
-            or self.max_compile_time < 0
-        ):
-            msg = "max_compile_time must be None or a nonnegative number"
-            raise ValueError(msg)
         for name in (
             "iterative_diving_search",
             "informed_action_prioritization",
@@ -80,11 +110,76 @@ class SearchConfig:
             raise TypeError(msg)
 
 
-@dataclass(frozen=True)
-class LinearCompilerConfig:
-    """Configure the Linear scheduling method."""
+@dataclass(frozen=True, kw_only=True)
+class PermutationConfig(LinearConfig):
+    """Configuration of the permutation-based strategy.
 
-    search: SearchConfig = field(default_factory=SearchConfig)
+    This strategy requires ``pre_partition=True`` because it constructs each
+    target placement from preferred gate zones.
+
+    ``lookahead_gates`` bounds how many upcoming gates the compiler inspects
+    when it fills one group of gates. A larger value can fill groups better but
+    takes more planning time per group. ``record_planning_trace`` stores one
+    :class:`~mqt.ionshuttler.linear.result.GateGroup` per group in the result
+    diagnostics. Use it to inspect the compiler's decisions; it costs memory.
+    """
+
+    pre_partition: Literal[True] = True
+    lookahead_gates: int = 32
+    record_planning_trace: bool = False
+
+    def __post_init__(self) -> None:
+        """Validate the permutation settings.
+
+        Raises:
+            TypeError: If a Boolean option or action type is invalid.
+            ValueError: If pre-partitioning is disabled.
+        """
+        super().__post_init__()
+        if not self.pre_partition:
+            msg = "PermutationConfig requires pre_partition=True"
+            raise ValueError(msg)
+        _require_integer_at_least(self.lookahead_gates, "lookahead_gates", minimum=1)
+        if not isinstance(self.record_planning_trace, bool):
+            msg = "record_planning_trace must be a boolean"
+            raise TypeError(msg)
+
+
+def _normalize_action_types(
+    action_types: tuple[type[Action], ...] | None,
+) -> tuple[type[Action], ...] | None:
+    """Validate and normalize the enabled action types.
+
+    Returns:
+        The normalized action types, or ``None``.
+
+    Raises:
+        TypeError: If an action type is not an ``Action`` subclass.
+        ValueError: If an action type is repeated.
+    """
+    if action_types is not None:
+        action_types = tuple(action_types)
+        for action_type in action_types:
+            if not isinstance(action_type, type) or not issubclass(action_type, Action):
+                msg = "action_types must contain Action subclasses"
+                raise TypeError(msg)
+        if len(set(action_types)) != len(action_types):
+            msg = "action_types must not contain duplicates"
+            raise ValueError(msg)
+    return action_types
+
+
+def _validate_compile_time(max_compile_time: float | None) -> None:
+    """Validate the compilation time limit.
+
+    Raises:
+        ValueError: If the time limit is not ``None`` or a nonnegative number.
+    """
+    if max_compile_time is not None and (
+        isinstance(max_compile_time, bool) or not isinstance(max_compile_time, int | float) or max_compile_time < 0
+    ):
+        msg = "max_compile_time must be None or a nonnegative number"
+        raise ValueError(msg)
 
 
 def _require_integer_at_least(value: object, name: str, *, minimum: int) -> None:
@@ -98,4 +193,4 @@ def _require_integer_at_least(value: object, name: str, *, minimum: int) -> None
         raise ValueError(msg)
 
 
-__all__ = ["LinearCompilerConfig", "SearchConfig"]
+__all__ = ["LinearConfig", "PermutationConfig", "SearchConfig"]

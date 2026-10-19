@@ -28,14 +28,13 @@ from mqt.ionshuttler.linear import (
     result_from_json,
 )
 from mqt.ionshuttler.linear.actions import PhysicalSwap, Shuttle
-from mqt.ionshuttler.linear.config import LinearCompilerConfig, SearchConfig
+from mqt.ionshuttler.linear.config import PermutationConfig, SearchConfig
+from mqt.ionshuttler.linear.result import LinearDiagnostics
 from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import create_initial_state
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from mqt.ionshuttler.core.actions import Action
 
 
 def test_compiler_produces_a_compact_replayable_schedule() -> None:
@@ -64,11 +63,10 @@ def test_compiler_produces_a_compact_replayable_schedule() -> None:
 def test_pre_partition_is_a_strict_single_zone_no_op() -> None:
     """Produce identical deterministic output when one zone makes partitioning irrelevant."""
     architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2, 3]})
-    compiler = LinearCompiler(architecture)
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nrzz(0.3) q[0],q[1];\n'
 
-    baseline = compiler.compile(qasm)
-    partitioned = compiler.compile(qasm, pre_partition=True)
+    baseline = LinearCompiler(architecture).compile(qasm)
+    partitioned = LinearCompiler(architecture, SearchConfig(pre_partition=True)).compile(qasm)
 
     assert partitioned == baseline
 
@@ -86,13 +84,13 @@ rzz(0.1) q[0],q[1];
 rx(0.2) q[2];
 rzz(0.3) q[1],q[2];
 """
-    compiler = LinearCompiler(architecture)
+    compiler = LinearCompiler(architecture, SearchConfig(pre_partition=True))
 
-    result = compiler.compile(qasm, pre_partition=True)
+    result = compiler.compile(qasm)
     circuit = parse_circuit(
         qasm,
         gate_types=tuple(
-            action_type for action_type in compiler.action_types or () if issubclass(action_type, GateAction)
+            action_type for action_type in architecture.supported_action_types if issubclass(action_type, GateAction)
         ),
     )
     gate_order = list(circuit.gate_ids)
@@ -115,11 +113,11 @@ def test_compiler_proposes_only_the_selected_hardware_actions() -> None:
 
     shuttle_result = LinearCompiler(
         architecture,
-        action_types=(Rx, Shuttle),
+        SearchConfig(action_types=(Rx, Shuttle)),
     ).compile(qasm, initial_placement=[0])
     unavailable_result = LinearCompiler(
         architecture,
-        action_types=(Rx,),
+        SearchConfig(action_types=(Rx,)),
     ).compile(qasm, initial_placement=[0])
 
     assert shuttle_result.status is CompilationStatus.SUCCESS
@@ -131,8 +129,9 @@ def test_compiler_defaults_to_all_built_in_hardware_actions() -> None:
     """Expose every built-in hardware capability by default."""
     compiler = LinearCompiler(LinearArchitecture(num_sites=2))
 
-    assert compiler.action_types == DEFAULT_ACTION_TYPES
-    assert compiler.action_types == (PhysicalSwap, Shuttle, Rx, Ry, Rz, Rzz)
+    assert compiler.config.action_types is None
+    assert compiler.architecture.supported_action_types == DEFAULT_ACTION_TYPES
+    assert compiler.architecture.supported_action_types == (PhysicalSwap, Shuttle, Rx, Ry, Rz, Rzz)
 
 
 def test_compiler_requires_explicit_opt_in_for_non_default_gates() -> None:
@@ -144,7 +143,10 @@ def test_compiler_requires_explicit_opt_in_for_non_default_gates() -> None:
         LinearCompiler(architecture).compile(qasm)
 
     extended_architecture = replace(architecture, supported_action_types=(*DEFAULT_ACTION_TYPES, Rxx))
-    result = LinearCompiler(extended_architecture, action_types=(*DEFAULT_ACTION_TYPES, Rxx)).compile(qasm)
+    result = LinearCompiler(
+        extended_architecture,
+        SearchConfig(action_types=(*DEFAULT_ACTION_TYPES, Rxx)),
+    ).compile(qasm)
     assert result.status is CompilationStatus.SUCCESS
 
 
@@ -154,7 +156,7 @@ def test_compiler_rejects_circuit_gates_missing_from_hardware_catalog() -> None:
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nrzz(0.5) q[0],q[1];\n'
 
     with pytest.raises(ValueError, match="unavailable gate 'rzz'"):
-        LinearCompiler(architecture, action_types=(PhysicalSwap, Shuttle)).compile(qasm)
+        LinearCompiler(architecture, SearchConfig(action_types=(PhysicalSwap, Shuttle))).compile(qasm)
 
 
 @pytest.mark.parametrize("circuit_kind", ["qasm", "qiskit"])
@@ -181,13 +183,19 @@ def test_compiler_lowers_an_enabled_gate_from_each_frontend(circuit_kind: str) -
     assert restored.architecture.supports(Rxx)
 
 
-def test_compiler_rejects_non_action_types() -> None:
-    """Reject catalog entries that do not describe hardware actions."""
-    with pytest.raises(TypeError, match="Action subclasses"):
-        LinearCompiler(LinearArchitecture(num_sites=2), action_types=(cast("type[Action]", object),))
+def test_compiler_rejects_actions_unsupported_by_the_architecture() -> None:
+    """Reject a configured action that the target hardware does not support."""
+    with pytest.raises(ValueError, match="Rxx"):
+        LinearCompiler(
+            LinearArchitecture(num_sites=2),
+            SearchConfig(action_types=(*DEFAULT_ACTION_TYPES, Rxx)),
+        )
 
-    with pytest.raises(ValueError, match="must not contain duplicates"):
-        LinearCompiler(LinearArchitecture(num_sites=2), action_types=(Rx, Rx))
+
+def test_compiler_rejects_a_value_that_selects_no_strategy() -> None:
+    """Require a search or permutation configuration."""
+    with pytest.raises(TypeError, match="SearchConfig or PermutationConfig"):
+        LinearCompiler(LinearArchitecture(num_sites=2), cast("SearchConfig", object()))
 
 
 def test_qasm_and_qiskit_inputs_compile_equivalently() -> None:
@@ -247,14 +255,12 @@ def test_compiler_accepts_explicit_initial_placement() -> None:
 
 def test_exhaustive_configuration_compiles_through_the_same_facade() -> None:
     """Select complete-circuit search through configuration alone."""
-    config = LinearCompilerConfig(
-        search=SearchConfig(
-            horizon=None,
-            committed_gates=1,
-            iterative_diving_search=False,
-            max_frontier_size=None,
-            max_compile_time=None,
-        ),
+    config = SearchConfig(
+        horizon=None,
+        committed_gates=1,
+        iterative_diving_search=False,
+        max_frontier_size=None,
+        max_compile_time=None,
     )
     compiler = LinearCompiler(LinearArchitecture(num_sites=1), config=config)
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.5) q[0];\n'
@@ -278,9 +284,7 @@ rx(0.1) q[0];
 ry(0.2) q[1];
 """
     dependency_result = LinearCompiler(architecture).compile(qasm)
-    sequential_config = LinearCompilerConfig(
-        search=SearchConfig(use_dependencies=False),
-    )
+    sequential_config = SearchConfig(use_dependencies=False)
     sequential_result = LinearCompiler(architecture, config=sequential_config).compile(qasm)
 
     assert dependency_result.status is CompilationStatus.SUCCESS
@@ -308,7 +312,7 @@ def test_barrier_delays_gates_on_its_qubits_until_earlier_gates_finish() -> None
 
 def test_zero_time_budget_returns_timeout() -> None:
     """Return a partial result when no search time is available."""
-    config = LinearCompilerConfig(search=SearchConfig(max_compile_time=0))
+    config = SearchConfig(max_compile_time=0)
     compiler = LinearCompiler(LinearArchitecture(num_sites=1), config=config)
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.5) q[0];\n'
 
@@ -321,7 +325,7 @@ def test_zero_time_budget_returns_timeout() -> None:
 
 
 def test_failed_search_result_is_returned(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pass an unsuccessful search outcome through the facade unchanged."""
+    """Pass an unsuccessful search outcome through the facade with its schedule."""
     architecture = LinearArchitecture(num_sites=1)
     schedule = schedule_from_path([], create_initial_state(1, architecture), architecture)
     failed = CompilationResult(
@@ -329,6 +333,7 @@ def test_failed_search_result_is_returned(monkeypatch: pytest.MonkeyPatch) -> No
         schedule=schedule,
         architecture=architecture,
         final_state=schedule.initial_state,
+        diagnostics=LinearDiagnostics(score=0, explored_nodes=3),
     )
 
     def fail_search(*_args: object, **_kwargs: object) -> CompilationResult:
@@ -340,7 +345,9 @@ def test_failed_search_result_is_returned(monkeypatch: pytest.MonkeyPatch) -> No
 
     result = compiler.compile(qasm)
 
-    assert result is failed
+    assert result.status is CompilationStatus.FAILED
+    assert result.schedule is failed.schedule
+    assert result.diagnostics == LinearDiagnostics(score=0, explored_nodes=3, makespan_lower_bound=1)
 
 
 def test_interruption_returns_an_interrupted_result(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -401,18 +408,86 @@ def test_partition_time_counts_toward_compile_budget(
     monkeypatch.setattr(compiler_module, "perf_counter", lambda: now[0])
     monkeypatch.setattr(search_module, "perf_counter", lambda: now[0])
     monkeypatch.setattr(compiler_module, "compute_gate_zone_assignment", partition)
-    config = LinearCompilerConfig(search=SearchConfig(horizon=horizon, committed_gates=1, max_compile_time=limit))
+    config = SearchConfig(
+        horizon=horizon,
+        committed_gates=1,
+        max_compile_time=limit,
+        pre_partition=True,
+    )
     compiler = LinearCompiler(
         LinearArchitecture(num_sites=4, processing_zones={"left": [0, 1], "right": [2, 3]}), config
     )
     circuit = QuantumCircuit(2)
     circuit.rzz(0.3, 0, 1)
 
-    result = compiler.compile(circuit, pre_partition=True)
+    result = compiler.compile(circuit)
 
     expired = limit is not None and limit < 2.0
     assert result.status is (CompilationStatus.TIMEOUT if expired else CompilationStatus.SUCCESS)
     assert result.wall_clock_s == pytest.approx(2.0)
-    assert compiler.config.search.max_compile_time == limit
+    assert compiler.config.max_compile_time == limit
     if expired:
         assert result.path == []
+
+
+def test_permutation_strategy_runs_through_the_compiler() -> None:
+    """Select the permutation strategy through configuration and report its statistics."""
+    architecture = LinearArchitecture(num_sites=9, processing_zones={"left": [1, 2], "right": [6, 7]})
+    config = PermutationConfig()
+    circuit = QuantumCircuit(3)
+    circuit.rzz(0.1, 0, 1)
+    circuit.rx(0.2, 2)
+    circuit.rzz(0.3, 1, 2)
+
+    result = LinearCompiler(architecture, config).compile(circuit)
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.diagnostics is not None
+    assert result.diagnostics.explored_nodes == 0
+    assert result.diagnostics.permutation is not None
+    assert result.diagnostics.permutation.groups >= 1
+    assert {gate_id for gate_id, _zone in result.diagnostics.preferred_gate_zones} == {0, 1, 2}
+    result.validate()
+
+
+@pytest.mark.parametrize(
+    ("config", "expected_partitioning"),
+    [
+        (SearchConfig(), False),
+        (SearchConfig(pre_partition=True), True),
+        (PermutationConfig(), True),
+    ],
+)
+def test_pre_partitioning_follows_the_active_config(
+    monkeypatch: pytest.MonkeyPatch,
+    config: SearchConfig | PermutationConfig,
+    *,
+    expected_partitioning: bool,
+) -> None:
+    """Partition only when the active configuration requests or requires it."""
+    calls: list[object] = []
+
+    def partition(*args: object, **_kwargs: object) -> dict[int, str]:
+        calls.append(args)
+        return {}
+
+    monkeypatch.setattr(compiler_module, "compute_gate_zone_assignment", partition)
+    architecture = LinearArchitecture(num_sites=4, processing_zones={"left": [0, 1], "right": [2, 3]})
+    qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.5) q[0];\n'
+
+    LinearCompiler(architecture, config).compile(qasm)
+
+    assert bool(calls) is expected_partitioning
+
+
+def test_compiler_reports_a_makespan_lower_bound() -> None:
+    """Report a bound that the schedule cannot undercut for every strategy."""
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2, 3]})
+    qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nrx(0.1) q[0];\nrzz(0.3) q[0],q[1];\n'
+
+    for config in (SearchConfig(), PermutationConfig()):
+        result = LinearCompiler(architecture, config).compile(qasm)
+
+        assert result.diagnostics is not None
+        assert result.diagnostics.makespan_lower_bound == 3
+        assert result.duration >= result.diagnostics.makespan_lower_bound

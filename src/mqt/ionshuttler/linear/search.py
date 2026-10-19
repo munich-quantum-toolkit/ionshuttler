@@ -18,8 +18,7 @@ from time import perf_counter
 from typing import TYPE_CHECKING
 
 from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
-from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES
-from mqt.ionshuttler.linear.config import LinearCompilerConfig
+from mqt.ionshuttler.linear.config import SearchConfig
 from mqt.ionshuttler.linear.cost import cost, heuristic, zero_heuristic
 from mqt.ionshuttler.linear.expand import ExpansionOptions, GenerationMode, expand, replay_path
 from mqt.ionshuttler.linear.result import LinearDiagnostics
@@ -32,7 +31,6 @@ if TYPE_CHECKING:
     from mqt.ionshuttler.circuit import Circuit
     from mqt.ionshuttler.core.actions import Action
     from mqt.ionshuttler.linear.architecture import LinearArchitecture
-    from mqt.ionshuttler.linear.config import SearchConfig
     from mqt.ionshuttler.linear.cost import HeuristicFn
     from mqt.ionshuttler.linear.result import LinearCompilationResult
     from mqt.ionshuttler.linear.state import SearchTransition
@@ -192,9 +190,8 @@ def search(
     initial_state: State,
     circuit: Circuit,
     architecture: LinearArchitecture,
-    config: LinearCompilerConfig | None = None,
+    config: SearchConfig | None = None,
     *,
-    action_types: tuple[type[Action], ...] = DEFAULT_ACTION_TYPES,
     gate_zone: Mapping[int, str] | None = None,
     zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
 ) -> LinearCompilationResult:
@@ -203,15 +200,14 @@ def search(
     Returns:
         The schedule, completion status, and state reached by the search.
     """
-    compiler_config = config or LinearCompilerConfig()
+    search_config = config or SearchConfig()
     normalized_state = normalize_initial_state(initial_state, architecture)
-    if compiler_config.search.horizon is None:
+    if search_config.horizon is None:
         return exhaustive_search(
             normalized_state,
             architecture,
             circuit,
-            config=compiler_config,
-            action_types=action_types,
+            config=search_config,
             gate_zone=gate_zone,
             zone_site_pairs=zone_site_pairs,
         )
@@ -219,8 +215,7 @@ def search(
         normalized_state,
         architecture,
         circuit,
-        config=compiler_config,
-        action_types=action_types,
+        config=search_config,
         gate_zone=gate_zone,
         zone_site_pairs=zone_site_pairs,
     )
@@ -231,8 +226,7 @@ def exhaustive_search(
     architecture: LinearArchitecture,
     circuit: Circuit,
     *,
-    config: LinearCompilerConfig | None = None,
-    action_types: tuple[type[Action], ...] = DEFAULT_ACTION_TYPES,
+    config: SearchConfig | None = None,
     gate_zone: Mapping[int, str] | None = None,
     zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
 ) -> LinearCompilationResult:
@@ -241,12 +235,15 @@ def exhaustive_search(
     Returns:
         The best complete schedule, or the best partial schedule if search stops early.
     """
-    compiler_config = config or LinearCompilerConfig()
-    budget = _TimeBudget.start(compiler_config.search.max_compile_time)
+    search_config = config or SearchConfig()
+    action_types = (
+        architecture.supported_action_types if search_config.action_types is None else search_config.action_types
+    )
+    budget = _TimeBudget.start(search_config.max_compile_time)
     context = _context(
         architecture,
         circuit,
-        compiler_config,
+        search_config,
         action_types,
         gate_zone,
         zone_site_pairs,
@@ -265,8 +262,7 @@ def rolling_horizon_search(
     architecture: LinearArchitecture,
     circuit: Circuit,
     *,
-    config: LinearCompilerConfig,
-    action_types: tuple[type[Action], ...] = DEFAULT_ACTION_TYPES,
+    config: SearchConfig,
     gate_zone: Mapping[int, str] | None = None,
     zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
 ) -> LinearCompilationResult:
@@ -279,12 +275,13 @@ def rolling_horizon_search(
     Raises:
         ValueError: If the configuration does not select a rolling horizon.
     """
-    horizon = config.search.horizon
+    horizon = config.horizon
     if horizon is None:
         msg = "rolling-horizon search requires a finite horizon"
         raise ValueError(msg)
 
-    budget = _TimeBudget.start(config.search.max_compile_time)
+    budget = _TimeBudget.start(config.max_compile_time)
+    action_types = architecture.supported_action_types if config.action_types is None else config.action_types
     context = _context(
         architecture,
         circuit,
@@ -300,7 +297,7 @@ def rolling_horizon_search(
             progress,
             context,
             horizon,
-            config.search.committed_gates,
+            config.committed_gates,
             budget,
         )
     except KeyboardInterrupt:
@@ -381,12 +378,12 @@ def _commit_window(
 def _context(
     architecture: LinearArchitecture,
     circuit: Circuit,
-    config: LinearCompilerConfig,
+    config: SearchConfig,
     action_types: tuple[type[Action], ...],
     gate_zone: Mapping[int, str] | None = None,
     zone_site_pairs: Mapping[str, tuple[tuple[int, int], ...]] | None = None,
 ) -> _SearchContext:
-    policy = _SearchPolicy.from_config(config.search)
+    policy = _SearchPolicy.from_config(config)
     return _SearchContext(
         architecture=architecture,
         circuit=circuit,

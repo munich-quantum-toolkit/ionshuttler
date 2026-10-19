@@ -25,7 +25,7 @@ from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.linear import GateTiming
 from mqt.ionshuttler.linear.actions import Shuttle
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
-from mqt.ionshuttler.linear.config import LinearCompilerConfig, SearchConfig
+from mqt.ionshuttler.linear.config import SearchConfig
 from mqt.ionshuttler.linear.cost import zero_heuristic
 from mqt.ionshuttler.linear.expand import GenerationMode
 from mqt.ionshuttler.linear.result import LinearDiagnostics
@@ -49,19 +49,17 @@ def exhaustive_config(
     max_frontier_size: int | None = None,
     max_compile_time: float | None = None,
     heuristic: HeuristicFn | None = None,
-) -> LinearCompilerConfig:
+) -> SearchConfig:
     """Build an exhaustive-search configuration for focused tests."""
-    return LinearCompilerConfig(
-        search=SearchConfig(
-            horizon=None,
-            committed_gates=1,
-            iterative_diving_search=iterative_diving_search,
-            informed_action_prioritization=informed_action_prioritization,
-            num_solutions=num_solutions,
-            max_frontier_size=max_frontier_size,
-            max_compile_time=max_compile_time,
-            heuristic=heuristic,
-        )
+    return SearchConfig(
+        horizon=None,
+        committed_gates=1,
+        iterative_diving_search=iterative_diving_search,
+        informed_action_prioritization=informed_action_prioritization,
+        num_solutions=num_solutions,
+        max_frontier_size=max_frontier_size,
+        heuristic=heuristic,
+        max_compile_time=max_compile_time,
     )
 
 
@@ -253,14 +251,12 @@ def test_rolling_horizon_completes_serial_gates(horizon: int, committed: int) ->
     initial_state = create_initial_state(1, architecture)
     gates = {0: Rx(ion=0, theta=1.0, gate_id=0), 1: Ry(ion=0, theta=0.5, gate_id=1)}
     predecessors = {0: frozenset(), 1: frozenset({0})}
-    config = LinearCompilerConfig(
-        search=SearchConfig(
-            horizon=horizon,
-            committed_gates=committed,
-            iterative_diving_search=False,
-            max_frontier_size=None,
-            max_compile_time=None,
-        )
+    config = SearchConfig(
+        horizon=horizon,
+        committed_gates=committed,
+        iterative_diving_search=False,
+        max_frontier_size=None,
+        max_compile_time=None,
     )
 
     result = search_module.search(
@@ -485,14 +481,12 @@ def test_rolling_windows_share_one_time_budget(monkeypatch: pytest.MonkeyPatch) 
     initial_state = create_initial_state(1, architecture)
     gates = {0: Rx(ion=0, theta=1.0, gate_id=0), 1: Ry(ion=0, theta=0.5, gate_id=1)}
     predecessors = {0: frozenset(), 1: frozenset({0})}
-    config = LinearCompilerConfig(
-        search=SearchConfig(
-            horizon=1,
-            committed_gates=1,
-            iterative_diving_search=False,
-            max_frontier_size=None,
-            max_compile_time=None,
-        )
+    config = SearchConfig(
+        horizon=1,
+        committed_gates=1,
+        iterative_diving_search=False,
+        max_frontier_size=None,
+        max_compile_time=None,
     )
 
     result = search_module.search(
@@ -511,7 +505,7 @@ def test_rolling_search_times_out_before_starting_a_window() -> None:
     """Return immediately when no time remains for the first planning window."""
     architecture = LinearArchitecture(num_sites=1)
     initial_state = create_initial_state(1, architecture)
-    config = LinearCompilerConfig(search=SearchConfig(horizon=1, committed_gates=1, max_compile_time=0.0))
+    config = SearchConfig(horizon=1, committed_gates=1, max_compile_time=0.0)
 
     result = search_module.search(
         initial_state,
@@ -551,15 +545,13 @@ def test_rolling_search_serial_policy_uses_circuit_order() -> None:
     architecture = LinearArchitecture(num_sites=1)
     initial_state = create_initial_state(1, architecture)
     gates = {0: Rx(ion=0, theta=1.0, gate_id=0), 1: Ry(ion=0, theta=0.5, gate_id=1)}
-    config = LinearCompilerConfig(
-        search=SearchConfig(
-            horizon=1,
-            committed_gates=1,
-            iterative_diving_search=False,
-            max_frontier_size=None,
-            max_compile_time=None,
-            use_dependencies=False,
-        )
+    config = SearchConfig(
+        horizon=1,
+        committed_gates=1,
+        iterative_diving_search=False,
+        max_frontier_size=None,
+        use_dependencies=False,
+        max_compile_time=None,
     )
 
     result = search_module.search(
@@ -602,14 +594,12 @@ def test_rolling_window_accepts_a_completed_global_predecessor() -> None:
     )
     gates = {0: Rx(ion=0, theta=1.0, gate_id=0), 1: Ry(ion=0, theta=0.5, gate_id=1)}
     predecessors = {0: frozenset(), 1: frozenset({0})}
-    config = LinearCompilerConfig(
-        search=SearchConfig(
-            horizon=1,
-            committed_gates=1,
-            iterative_diving_search=False,
-            max_frontier_size=None,
-            max_compile_time=None,
-        )
+    config = SearchConfig(
+        horizon=1,
+        committed_gates=1,
+        iterative_diving_search=False,
+        max_frontier_size=None,
+        max_compile_time=None,
     )
 
     result = search_module.search(
@@ -797,15 +787,13 @@ def test_custom_heuristic_replaces_the_built_in_estimate() -> None:
         calls.append(state.time)
         return len([gate_id for gate_id in active_gate_ids if gate_id not in state.completed_gates])
 
-    config = LinearCompilerConfig(
-        search=SearchConfig(
-            horizon=None,
-            committed_gates=1,
-            iterative_diving_search=False,
-            max_frontier_size=None,
-            max_compile_time=None,
-            heuristic=custom_heuristic,
-        )
+    config = SearchConfig(
+        horizon=None,
+        committed_gates=1,
+        iterative_diving_search=False,
+        max_frontier_size=None,
+        heuristic=custom_heuristic,
+        max_compile_time=None,
     )
 
     result = search_module.search(initial_state, make_circuit(gates), architecture, config=config)
@@ -838,15 +826,13 @@ def test_custom_heuristic_is_used_by_rolling_horizon_windows() -> None:
         windows.append(tuple(active_gate_ids))
         return 0
 
-    config = LinearCompilerConfig(
-        search=SearchConfig(
-            horizon=1,
-            committed_gates=1,
-            iterative_diving_search=False,
-            max_frontier_size=None,
-            max_compile_time=None,
-            heuristic=custom_heuristic,
-        )
+    config = SearchConfig(
+        horizon=1,
+        committed_gates=1,
+        iterative_diving_search=False,
+        max_frontier_size=None,
+        heuristic=custom_heuristic,
+        max_compile_time=None,
     )
 
     result = search_module.search(initial_state, make_circuit(gates, predecessors), architecture, config)
@@ -862,15 +848,13 @@ def test_zero_heuristic_yields_an_admissible_estimate() -> None:
     initial_state = create_initial_state(1, architecture)
     gates: dict[int, GateAction] = {0: Rx(ion=0, theta=0.5, gate_id=0)}
 
-    config = LinearCompilerConfig(
-        search=SearchConfig(
-            horizon=None,
-            committed_gates=1,
-            iterative_diving_search=False,
-            max_frontier_size=None,
-            max_compile_time=None,
-            heuristic=zero_heuristic,
-        )
+    config = SearchConfig(
+        horizon=None,
+        committed_gates=1,
+        iterative_diving_search=False,
+        max_frontier_size=None,
+        heuristic=zero_heuristic,
+        max_compile_time=None,
     )
 
     result = search_module.search(initial_state, make_circuit(gates), architecture, config=config)
@@ -891,15 +875,13 @@ def test_omitting_a_custom_heuristic_keeps_the_built_in_schedule() -> None:
         initial_state,
         circuit,
         architecture,
-        config=LinearCompilerConfig(
-            search=SearchConfig(
-                horizon=None,
-                committed_gates=1,
-                iterative_diving_search=False,
-                max_frontier_size=None,
-                max_compile_time=None,
-                heuristic=None,
-            )
+        config=SearchConfig(
+            horizon=None,
+            committed_gates=1,
+            iterative_diving_search=False,
+            max_frontier_size=None,
+            heuristic=None,
+            max_compile_time=None,
         ),
     )
 
@@ -910,7 +892,7 @@ def test_omitting_a_custom_heuristic_keeps_the_built_in_schedule() -> None:
 
 @pytest.mark.parametrize("horizon", [None, 1])
 @pytest.mark.parametrize("assigned", [False, True])
-def test_custom_heuristic_receives_partition_bias(horizon: int | None, *, assigned: bool) -> None:
+def test_custom_heuristic_receives_gate_zone_assignment(horizon: int | None, *, assigned: bool) -> None:
     """Pass optional pre-partition data to custom estimates in both search modes."""
     architecture = LinearArchitecture(num_sites=2)
     initial_state = create_initial_state(2, architecture)
@@ -933,7 +915,7 @@ def test_custom_heuristic_receives_partition_bias(horizon: int | None, *, assign
         received.append((gate_zone, zone_site_pairs))
         return 0
 
-    config = LinearCompilerConfig(search=SearchConfig(horizon=horizon, committed_gates=1, heuristic=custom_heuristic))
+    config = SearchConfig(horizon=horizon, committed_gates=1, heuristic=custom_heuristic)
     expected_gate_zone = {0: "missing", 1: "missing"} if assigned else {}
     expected_zone_site_pairs = {"other": ((0, 1),)}
 
