@@ -15,20 +15,20 @@ import pytest
 
 from mqt.ionshuttler.core.gates import Rx
 from mqt.ionshuttler.core.result import CompilationStatus
-from mqt.ionshuttler.linear import LinearArchitecture, LinearCompiler, LinearCompilerConfig
+from mqt.ionshuttler.linear import LinearArchitecture, LinearCompiler, SearchConfig
 from mqt.ionshuttler.linear.replay import replay_schedule
 
 
 def test_production_defaults_are_explicit() -> None:
     """Keep the documented production search policy available without fixtures."""
-    config = LinearCompilerConfig()
+    config = SearchConfig()
 
-    assert config.search.horizon == 3
-    assert config.search.committed_gates == 2
-    assert config.search.iterative_diving_search
-    assert not config.search.informed_action_prioritization
-    assert config.search.max_frontier_size == 1000
-    assert config.search.max_compile_time == pytest.approx(1800.0)
+    assert config.horizon == 3
+    assert config.committed_gates == 2
+    assert config.iterative_diving_search
+    assert not config.informed_action_prioritization
+    assert config.max_frontier_size == 1000
+    assert config.max_compile_time == pytest.approx(1800.0)
 
 
 def test_compilation_stops_advancing_after_pending_work_finishes() -> None:

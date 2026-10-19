@@ -62,23 +62,24 @@ number of circuit qubits. See also the
 {doc}`hardware model overview <hardware_models>` for further details on the
 hardware abstraction.
 
-| Compile option      | User-visible effect                                                                                                                                                                                             |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `initial_placement` | Selects one distinct starting site per circuit qubit. When omitted, the compiler distributes the ions across the available sites.                                                                               |
-| `pre_partition`     | On layouts with multiple processing zones, computes a fine-grained gate-to-zone preference once and uses it to guide search. It defaults to `False` and has no effect on layouts with only one processing zone. |
+| Compile option      | User-visible effect                                                                                                               |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `initial_placement` | Selects one distinct starting site per circuit qubit. When omitted, the compiler distributes the ions across the available sites. |
 
-For example, enable the partition-guided heuristic for a multi-zone layout at
-the compilation call:
+For example, enable the partition-guided heuristic for a multi-zone layout in
+the search configuration:
 
 ```{code-cell} ipython3
+from mqt.ionshuttler.linear import SearchConfig
+
 multi_zone_architecture = LinearArchitecture(
     num_sites=7,
     processing_zones={"left": [1, 2], "right": [4, 5]},
 )
-partitioned_result = LinearCompiler(multi_zone_architecture).compile(
-    circuit,
-    pre_partition=True,
-)
+partitioned_result = LinearCompiler(
+    multi_zone_architecture,
+    SearchConfig(pre_partition=True),
+).compile(circuit)
 ```
 
 Pre-partitioning can substantially reduce compilation time when a circuit lacks
@@ -179,10 +180,71 @@ applies, so a global `rx` takes as long as a local `rx`. When reproducing a
 schedule created with different timing assumptions, pass those durations
 explicitly.
 
-## Choose a search profile
+## Choose a compiler strategy
 
-The compiler uses A-star search: it compares the time already used with an
-estimate of the work still needed and explores promising schedules first
+The configuration type selects one of two scheduling strategies:
+
+| Configuration       | Method                                                                                                                           | Use it for                                              |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SearchConfig`      | Search-based: explores schedules one gate, shuttle, or swap at a time. This is the default.                                      | Small circuits and reference schedules.                 |
+| `PermutationConfig` | Permutation-based: constructs complete target placements for groups of gates and routes directly between consecutive placements. | Large circuits where action-level search is too costly. |
+
+Both configuration types inherit these settings from
+{py:class}`~mqt.ionshuttler.linear.LinearCompilerConfig`:
+
+| Shared setting         | User-visible effect                                                                                                                                                                             |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `action_types`         | Operations that the compiler may use. `None` uses every operation supported by the architecture.                                                                                                |
+| `max_compile_time`     | Wall-clock budget in seconds for the complete compilation, including pre-partitioning. A finite value prevents unexpectedly long runs; `None` removes the time limit. Defaults to 1800 seconds. |
+| `pre_partition`        | Assigns gates to preferred processing zones. Search disables it by default; the permutation strategy requires it.                                                                               |
+| `pre_partition_config` | Optional fine-grained tabu settings used when pre-partitioning runs. `None` uses the partitioner's defaults.                                                                                    |
+
+(linear-permutation-strategy)=
+
+## Using the permutation-based strategy
+
+The permutation strategy works as follows:
+
+1. It uses
+   {py:func}`~mqt.ionshuttler.partitioning.compute_fine_grained_gate_partition`
+   to assign each gate to a preferred processing zone.
+2. It groups ready gates that fit one ion placement.
+3. It analytically computes a target placement and a minimum-length sequence of
+   adjacent exchanges from the current placement.
+4. It schedules the exchanges as swaps and shuttles, runs the gates, and
+   repeats.
+
+Pre-partitioning uses the number of sites in each processing zone as a soft
+capacity. Scheduling still enforces the physical capacity.
+
+Independent actions from neighboring groups can overlap. The exchange sequence
+for a fixed source and target is minimal; the complete schedule is heuristic.
+
+The permutation strategy always assigns preferred processing zones before
+scheduling.
+
+```{code-cell} ipython3
+from mqt.ionshuttler.linear import PermutationConfig
+
+permutation_config = PermutationConfig()
+permutation_result = LinearCompiler(multi_zone_architecture, permutation_config).compile(circuit)
+print(permutation_result.status.value, permutation_result.schedule.duration)
+```
+
+| Permutation setting     | User-visible effect                                                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lookahead_gates`       | Number of upcoming gates inspected for each group. A larger value can fill groups better but costs more planning time per group. Defaults to 32.              |
+| `record_planning_trace` | Stores one record per group in the diagnostics. Use it to inspect the decisions of the compiler; long compilations produce many records. Defaults to `False`. |
+
+The allowed `action_types` must include shuttles and physical swaps to support
+arbitrary permutations.
+
+(linear-search-strategy)=
+
+## Using the search-based strategy
+
+The search strategy uses A-star search: it compares the time already used with
+an estimate of the work still needed and explores promising schedules first
 {cite:p}`hart1968formal`. This estimate is called a *heuristic*. An admissible
 heuristic never overestimates the remaining cost; with the usual unrestricted
 A-star conditions, that property is what supports an optimality guarantee.
@@ -196,39 +258,35 @@ valid complete schedule, but it is not a proof that no shorter schedule exists.
 The defaults favor practical compilation time:
 
 ```{code-cell} ipython3
-from mqt.ionshuttler.linear import LinearCompilerConfig, SearchConfig
+from mqt.ionshuttler.linear import SearchConfig
 
-config = LinearCompilerConfig(
-    search=SearchConfig(
-        horizon=3,
-        committed_gates=2,
-        iterative_diving_search=True,
-        informed_action_prioritization=False,
-        num_solutions=1,
-        max_frontier_size=1000,
-        max_compile_time=1800.0,
-        use_dependencies=True,
-    )
+config = SearchConfig(
+    horizon=3,
+    committed_gates=2,
+    iterative_diving_search=True,
+    informed_action_prioritization=False,
+    num_solutions=1,
+    max_frontier_size=1000,
+    use_dependencies=True,
+    max_compile_time=1800.0,
 )
 ```
 
-| Setting                          | User-visible effect                                                                                                                                                                                                                                                    |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `horizon`                        | Plans this many upcoming gates at a time. Small horizons are usually faster and use less memory, but make more local decisions. `None` considers the complete remaining circuit together; it can be much more expensive and still does not prove optimality.           |
-| `committed_gates`                | Number of gates fixed before a rolling-horizon replan. A smaller value preserves more flexibility but replans more often. It must not exceed `horizon`.                                                                                                                |
-| `iterative_diving_search`        | Immediately follows a promising branch while retaining alternatives. This often reaches a schedule sooner, but changes search order and tends to yield lower-quality results than standard branching. It independently breaks admissibility and optimality guarantees. |
-| `informed_action_prioritization` | Tries a narrower set of promising movements before falling back to the full set. It may reduce work, especially under a time limit, but can change which schedule is found first.                                                                                      |
-| `num_solutions`                  | Continues until this many distinct completed states have been found, then returns the best of them. Larger values can improve the returned schedule at additional cost, without proving global optimality.                                                             |
-| `max_frontier_size`              | Limits stored alternatives. Smaller bounds reduce memory, but discarded candidates can contain the best or only solution. Use `None` to retain an unbounded frontier.                                                                                                  |
-| `max_compile_time`               | Shared wall-clock budget in seconds. A finite value prevents unexpectedly long runs; `None` removes the time limit.                                                                                                                                                    |
-| `use_dependencies`               | `True` respects circuit dependencies while allowing independent gates to overlap. `False` conservatively schedules gates in their input order and may increase the makespan.                                                                                           |
-| `heuristic`                      | Remaining-cost estimate guiding the search. `None` uses the faster default, which is not guaranteed to be admissible. `zero_heuristic` uses no estimate; it is admissible, but usually explores many more states. Any other `HeuristicFn` may be supplied.             |
-| `pre_partition_config`           | Optional fine-grained tabu settings used when `compile(..., pre_partition=True)` is selected. `None` uses the partitioner's defaults.                                                                                                                                  |
+| Setting                          | User-visible effect                                                                                                                                                                                                                                          |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `horizon`                        | Plans this many upcoming gates at a time. Small horizons are usually faster and use less memory, but make more local decisions. `None` considers the complete remaining circuit together; it can be much more expensive and still does not prove optimality. |
+| `committed_gates`                | Number of gates fixed before a rolling-horizon replan. A smaller value preserves more flexibility but replans more often. It must not exceed `horizon`.                                                                                                      |
+| `iterative_diving_search`        | Uses Iterative Diving Search (IDS) to follow an improving branch while retaining alternatives {cite:p}`stade2025searchsmarternotharder`. This changes the search order and independently removes the optimality guarantee.                                   |
+| `informed_action_prioritization` | Tries a narrower set of promising movements before falling back to the full set. It may reduce work, especially under a time limit, but can change which schedule is found first.                                                                            |
+| `num_solutions`                  | Continues until this many distinct completed states have been found, then returns the best of them. Larger values can improve the returned schedule at additional cost, without proving global optimality.                                                   |
+| `max_frontier_size`              | Limits stored alternatives. Smaller bounds reduce memory, but discarded candidates can contain the best or only solution. Use `None` to retain an unbounded frontier.                                                                                        |
+| `use_dependencies`               | `True` respects circuit dependencies while allowing independent gates to overlap. `False` conservatively schedules gates in their input order and may increase the makespan.                                                                                 |
+| `heuristic`                      | Remaining-cost estimate guiding the search. `None` uses the faster default, which is not guaranteed to be admissible. `zero_heuristic` uses no estimate; it is admissible, but usually explores many more states. Any other `HeuristicFn` may be supplied.   |
 
 A useful, more thorough profile for small circuits is:
 
 ```{code-cell} ipython3
-search = SearchConfig(
+thorough_config = SearchConfig(
     horizon=None,
     committed_gates=1,
     iterative_diving_search=False,
@@ -250,16 +308,16 @@ speed, all quality-oriented shortcuts can be disabled:
 ```{code-cell} ipython3
 from mqt.ionshuttler.linear import zero_heuristic
 
-exact_search = SearchConfig(
+exact_config = SearchConfig(
     horizon=None,
     committed_gates=1,
     iterative_diving_search=False,
     informed_action_prioritization=False,
     num_solutions=1,
     max_frontier_size=None,
-    max_compile_time=None,
     use_dependencies=True,
     heuristic=zero_heuristic,
+    max_compile_time=None,
 )
 ```
 
@@ -271,7 +329,7 @@ circuits, reference results, and comparisons. A timeout, frontier bound, rolling
 horizon, iterative dive, or narrowed action generation removes that optimality
 guarantee.
 
-## Supplying a custom heuristic
+### Supply a custom heuristic
 
 `SearchConfig.heuristic` selects the remaining-cost estimate. Besides the
 default (`None`) and :func:`~mqt.ionshuttler.linear.cost.zero_heuristic`, any
@@ -336,12 +394,12 @@ exactly as the default already does.
 
 The result status describes why compilation stopped:
 
-| Status        | Meaning                                                                       |
-| ------------- | ----------------------------------------------------------------------------- |
-| `SUCCESS`     | Every circuit gate was scheduled.                                             |
-| `TIMEOUT`     | The time budget expired; the result contains the best partial schedule found. |
-| `INTERRUPTED` | Compilation was interrupted; the best available partial schedule is returned. |
-| `FAILED`      | The search ran out of candidates before completing the circuit.               |
+| Status        | Meaning                                                                                                                                                                                 |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUCCESS`     | Every circuit gate was scheduled.                                                                                                                                                       |
+| `TIMEOUT`     | The time budget expired. The result contains a valid partial schedule.                                                                                                                  |
+| `INTERRUPTED` | Compilation was interrupted. The result contains a valid partial schedule.                                                                                                              |
+| `FAILED`      | Search ran out of candidates, or permutation found no group or route for the next gates. The result contains a valid partial schedule. `FAILED` does not prove that no schedule exists. |
 
 `result.schedule` is the immutable {py:class}`~mqt.ionshuttler.linear.Schedule`
 that downstream DD and simulation stages consume. Its `scheduled_actions`
@@ -356,15 +414,41 @@ architecture with additional capabilities. Compiler search progress and
 control-pass provenance are deliberately absent from this execution boundary.
 
 The containing result owns compiler-only information: `result.wall_clock_s`, the
-replayed machine-only `result.final_state`, and `result.diagnostics`. For the
-Linear compiler, the diagnostics are a
-{py:class}`~mqt.ionshuttler.linear.LinearDiagnostics` value with the search
-`score`, the number of `explored_nodes`, and any processing-zone preferences
-produced by pre-partitioning. These preferences may differ from the zones
-actually recorded in the schedule. Result equality ignores
-`result.wall_clock_s`, so two compilations with the same outcome compare equal.
-Always check `status` before treating its schedule as a complete circuit
-schedule.
+replayed machine-only `result.final_state`, and `result.diagnostics`. Both
+strategy-specific diagnostic types inherit these fields from
+{py:class}`~mqt.ionshuttler.linear.LinearDiagnostics`:
+
+| Field                  | Meaning                                                                                                                                                                          |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `score`                | Schedule time of the final compiler state.                                                                                                                                       |
+| `preferred_gate_zones` | Processing zone that pre-partitioning preferred for each gate that needs one. The schedule can use another zone.                                                                 |
+| `makespan_lower_bound` | Lower bound from dependency-chain time, total processing-zone load, and two-ion-gate load on capable zones. The bound does not include transport.                                |
+
+{py:class}`~mqt.ionshuttler.linear.SearchDiagnostics` adds the number of
+explored search states.
+{py:class}`~mqt.ionshuttler.linear.PermutationDiagnostics` adds the number of
+gate groups, groups without transport, and gates that ran in their preferred
+processing zone.
+
+Divide the schedule duration by the lower bound to compare complete schedules
+with the same circuit and architecture. For a `SUCCESS` result, the ratio is at
+least one. The gap can include transport and other idle time:
+
+```{code-cell} ipython3
+diagnostics = permutation_result.diagnostics
+print(permutation_result.schedule.duration / diagnostics.makespan_lower_bound)
+```
+
+The permutation statistics count the gate groups, the groups that required no
+transport, and the gates that ran in their preferred processing zone. With
+`PermutationConfig(record_planning_trace=True)`, `planning_trace` stores one
+{py:class}`~mqt.ionshuttler.linear.GateGroup` per group, in planning order. Each
+record contains its gates, zone assignments, target placement, transport counts,
+and time interval. Groups can overlap in time.
+
+Result equality ignores `result.wall_clock_s`, so two compilations with the same
+outcome compare equal. Always check `status` before treating its schedule as a
+complete circuit schedule.
 
 Invalid input and configuration errors raise exceptions instead of returning
 `FAILED`. Compilation does not create files on its own. Save a result explicitly

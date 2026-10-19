@@ -17,7 +17,7 @@ import pytest
 from qiskit import QuantumCircuit
 
 from mqt.ionshuttler.core.gates import GlobalGate, Rx
-from mqt.ionshuttler.linear import GateTiming, LinearCompiler
+from mqt.ionshuttler.linear import GateTiming, LinearCompiler, SearchConfig
 from mqt.ionshuttler.linear.actions import (
     DEFAULT_ACTION_TYPES,
     Shuttle,
@@ -229,7 +229,7 @@ def test_global_dd_can_target_an_extended_architecture_after_compilation() -> No
     circuit.rx(0.25, 0)
     compilation = LinearCompiler(
         compilation_architecture,
-        action_types=DEFAULT_ACTION_TYPES,
+        SearchConfig(action_types=DEFAULT_ACTION_TYPES),
     ).compile(circuit)
     extended_architecture = replace(
         compilation_architecture,

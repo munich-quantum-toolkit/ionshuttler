@@ -5,7 +5,7 @@
 #
 # Licensed under the MIT License
 
-"""Fine-grained processing-zone preferences for Linear schedule search."""
+"""Gate-to-processing-zone assignment for Linear compilation."""
 
 from __future__ import annotations
 
@@ -33,9 +33,10 @@ def compute_gate_zone_assignment(
 ) -> dict[int, str]:
     """Assign each gate to a preferred processing zone.
 
-    The assignment only biases schedule search; normal action validation still
-    determines where a gate may execute. Architectures with one processing zone
-    need no preference and return immediately without running the partitioner.
+    The assignment guides the selected compiler strategy. Normal action
+    validation still determines where a gate may run. Architectures with one
+    processing zone need no preference and return without running the
+    partitioner.
 
     Args:
         circuit: Circuit whose gates receive preferences.
@@ -51,25 +52,29 @@ def compute_gate_zone_assignment(
     if len(processing_zones) < 2:
         return {}
 
-    gate_ids = circuit.gate_ids if active_gate_ids is None else active_gate_ids
-    gate_info = {
+    candidate_gate_ids = circuit.gate_ids if active_gate_ids is None else active_gate_ids
+    gate_info_by_id = {
         gate_id: GateInfo(
-            qubits=_gate_qubits(circuit.gates[gate_id]),
+            qubits=_physical_gate_qubits(circuit.gates[gate_id], architecture),
             qasm=type(circuit.gates[gate_id]).__name__,
         )
-        for gate_id in gate_ids
+        for gate_id in candidate_gate_ids
     }
+    partitioned_gate_ids = tuple(gate_id for gate_id in candidate_gate_ids if gate_info_by_id[gate_id].qubits)
+    if not partitioned_gate_ids:
+        return {}
     zone_names = tuple(processing_zones)
-    midpoints = [(sites[0] + sites[-1]) / 2 for sites in processing_zones.values()]
-    distances = [[abs(source - target) for target in midpoints] for source in midpoints]
-    result = compute_fine_grained_gate_partition(
-        gate_ids,
-        gate_info,
+    zone_midpoints = [(sites[0] + sites[-1]) / 2 for sites in processing_zones.values()]
+    zone_distances = [[abs(source - target) for target in zone_midpoints] for source in zone_midpoints]
+    partition = compute_fine_grained_gate_partition(
+        partitioned_gate_ids,
+        gate_info_by_id,
         zone_names,
-        distances,
+        zone_distances,
+        processing_zone_capacities={name: len(sites) for name, sites in processing_zones.items()},
         config=config,
     )
-    return result.gate_assignment
+    return partition.gate_assignment
 
 
 def zone_site_pairs(architecture: LinearArchitecture) -> dict[str, tuple[tuple[int, int], ...]]:
@@ -79,10 +84,13 @@ def zone_site_pairs(architecture: LinearArchitecture) -> dict[str, tuple[tuple[i
     }
 
 
-def _gate_qubits(gate: GateAction) -> tuple[int, ...]:
+def _physical_gate_qubits(
+    gate: GateAction,
+    architecture: LinearArchitecture,
+) -> tuple[int, ...]:
     if isinstance(gate, TwoQubitGate):
         return (gate.ion_a, gate.ion_b)
-    if isinstance(gate, SingleQubitGate):
+    if isinstance(gate, SingleQubitGate) and not architecture.is_virtual_gate(gate):
         return (gate.ion,)
     return ()
 

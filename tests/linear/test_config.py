@@ -9,40 +9,62 @@
 
 from __future__ import annotations
 
+from inspect import isabstract
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from mqt.ionshuttler.core.gates import Rx
 from mqt.ionshuttler.linear import GateTiming, TransportTiming
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
-from mqt.ionshuttler.linear.config import LinearCompilerConfig, SearchConfig
+from mqt.ionshuttler.linear.config import LinearCompilerConfig, PermutationConfig, SearchConfig
 from mqt.ionshuttler.linear.cost import zero_heuristic
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from typing import Literal
 
+    from mqt.ionshuttler.core.actions import Action
     from mqt.ionshuttler.linear.cost import HeuristicFn
 
 
 def test_architecture_and_compiler_config_use_ready_to_run_defaults() -> None:
     """Keep hardware data on the architecture and policy in compiler config."""
-    config = LinearCompilerConfig()
+    search = SearchConfig()
+    permutation = PermutationConfig()
     architecture = LinearArchitecture(num_sites=1)
 
     assert architecture.gate_timing == GateTiming(rx=1, ry=1, rz=0, rxx=2, ryy=2, rzz=2)
     assert architecture.gate_timing.virtual_single_qubit_gates == frozenset({"rz"})
     assert architecture.transport_timing == TransportTiming(shuttle=1, swap=3)
-    assert config.search == SearchConfig(
+    assert search == SearchConfig(
         horizon=3,
         committed_gates=2,
         iterative_diving_search=True,
         informed_action_prioritization=False,
         num_solutions=1,
         max_frontier_size=1000,
-        max_compile_time=1800.0,
         use_dependencies=True,
+        max_compile_time=1800.0,
         pre_partition_config=None,
+        pre_partition=False,
+        action_types=None,
     )
+    assert permutation == PermutationConfig(
+        lookahead_gates=32,
+        record_planning_trace=False,
+        max_compile_time=1800.0,
+        pre_partition=True,
+        pre_partition_config=None,
+        action_types=None,
+    )
+
+
+def test_strategy_configs_share_linear_settings() -> None:
+    """Keep common settings on a base that cannot select a strategy itself."""
+    assert isabstract(LinearCompilerConfig)
+    assert issubclass(SearchConfig, LinearCompilerConfig)
+    assert issubclass(PermutationConfig, LinearCompilerConfig)
 
 
 def test_gate_timing_supports_alternate_single_qubit_implementations() -> None:
@@ -113,7 +135,6 @@ def test_transport_timing_round_trips_and_rejects_malformed_data() -> None:
         (lambda: SearchConfig(committed_gates=0), "committed_gates"),
         (lambda: SearchConfig(num_solutions=0), "num_solutions"),
         (lambda: SearchConfig(max_frontier_size=0), "max_frontier_size"),
-        (lambda: SearchConfig(max_compile_time=-0.1), "max_compile_time"),
     ],
 )
 def test_search_config_rejects_invalid_bounds(
@@ -123,6 +144,57 @@ def test_search_config_rejects_invalid_bounds(
     """Reject search settings that cannot define a bounded compilation."""
     with pytest.raises(ValueError, match=message):
         factory()
+
+
+@pytest.mark.parametrize(
+    ("factory", "error", "message"),
+    [
+        pytest.param(lambda: SearchConfig(max_compile_time=-0.1), ValueError, "max_compile_time", id="negative-time"),
+        pytest.param(
+            lambda: PermutationConfig(max_compile_time=cast("float", "60")),
+            ValueError,
+            "max_compile_time",
+            id="text-time",
+        ),
+        pytest.param(
+            lambda: SearchConfig(pre_partition=cast("bool", 1)),
+            TypeError,
+            "pre_partition",
+            id="integer-partition-flag",
+        ),
+        pytest.param(lambda: PermutationConfig(lookahead_gates=0), ValueError, "lookahead_gates", id="no-lookahead"),
+        pytest.param(
+            lambda: PermutationConfig(record_planning_trace=cast("bool", 1)),
+            TypeError,
+            "record_planning_trace",
+            id="integer-trace-flag",
+        ),
+    ],
+)
+def test_compiler_and_permutation_configs_reject_invalid_settings(
+    factory: Callable[[], object],
+    error: type[Exception],
+    message: str,
+) -> None:
+    """Reject settings that cannot describe a compilation."""
+    with pytest.raises(error, match=message):
+        factory()
+
+
+def test_permutation_config_requires_pre_partitioning() -> None:
+    """Do not allow the permutation strategy to skip its required assignment."""
+    pre_partition = False
+
+    with pytest.raises(ValueError, match="requires pre_partition=True"):
+        PermutationConfig(pre_partition=cast("Literal[True]", pre_partition))
+
+
+def test_compiler_configs_reject_invalid_action_types() -> None:
+    """Reject entries that are not actions and repeated action classes."""
+    with pytest.raises(TypeError, match="Action subclasses"):
+        SearchConfig(action_types=(cast("type[Action]", object),))
+    with pytest.raises(ValueError, match="must not contain duplicates"):
+        PermutationConfig(action_types=(Rx, Rx))
 
 
 def test_search_config_accepts_the_zero_heuristic() -> None:

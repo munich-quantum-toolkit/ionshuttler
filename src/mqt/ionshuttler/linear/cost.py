@@ -5,7 +5,11 @@
 #
 # Licensed under the MIT License
 
-"""Cost estimates used to choose promising schedules, not admissible."""
+"""Cost estimates that guide search, and a lower bound on the schedule duration.
+
+The search estimates are not admissible. :func:`makespan_lower_bound` is a
+true lower bound and serves to judge the quality of a finished schedule.
+"""
 
 from __future__ import annotations
 
@@ -198,6 +202,49 @@ def heuristic(
     return routing_estimate + gate_estimate
 
 
+def makespan_lower_bound(circuit: Circuit, architecture: LinearArchitecture) -> int:
+    """Return a duration that no complete schedule of the circuit can undercut.
+
+    Unlike the search estimates in this module, this value is a true lower
+    bound. It is the largest of three times:
+
+    - the longest chain of dependent gates, adding their durations;
+    - the total time of all gates that occupy a processing zone, spread evenly
+      over the zones, because each zone runs one gate at a time;
+    - the total time of the two-ion gates, spread evenly over the zones with
+      at least two sites.
+
+    The bound ignores transport, so the gap between it and a schedule duration
+    includes all waiting for ion movement.
+
+    Returns:
+        The lower bound in timesteps.
+    """
+    zone_sizes = [len(sites) for sites in (architecture.processing_zones or {}).values()]
+    gate_end_times: list[int] = []
+    processing_zone_work = 0
+    two_ion_work = 0
+    # Predecessors have smaller gate IDs, so one pass in circuit order suffices.
+    for gate, predecessors in zip(circuit.gates, circuit.predecessors, strict=True):
+        duration = architecture.action_duration(gate)
+        earliest_start = max(
+            (gate_end_times[predecessor] for predecessor in predecessors),
+            default=0,
+        )
+        gate_end_times.append(earliest_start + duration)
+        if isinstance(gate, TwoQubitGate):
+            processing_zone_work += duration
+            two_ion_work += duration
+        elif isinstance(gate, SingleQubitGate) and not architecture.is_virtual_gate(gate):
+            processing_zone_work += duration
+    two_ion_zone_count = sum(1 for size in zone_sizes if size >= 2)
+    return max(
+        max(gate_end_times, default=0),
+        ceil(processing_zone_work / len(zone_sizes)) if zone_sizes else 0,
+        ceil(two_ion_work / two_ion_zone_count) if two_ion_zone_count else 0,
+    )
+
+
 def _critical_path_length(
     remaining_gate_ids: Sequence[int],
     predecessors: Sequence[frozenset[int]],
@@ -234,4 +281,11 @@ def _critical_path_length(
     return result
 
 
-__all__ = ["HeuristicFn", "cost", "heuristic", "min_distance_to_valid_pair", "zero_heuristic"]
+__all__ = [
+    "HeuristicFn",
+    "cost",
+    "heuristic",
+    "makespan_lower_bound",
+    "min_distance_to_valid_pair",
+    "zero_heuristic",
+]

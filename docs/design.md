@@ -107,8 +107,8 @@ site-based model of a linear architecture.
 
 {py:class}`~mqt.ionshuttler.linear.compiler.LinearCompiler` accepts a circuit
 and combines it with a {py:class}`~mqt.ionshuttler.linear.LinearArchitecture`
-and {py:class}`~mqt.ionshuttler.linear.LinearCompilerConfig`. It returns a
-`LinearCompilationResult`.
+and a concrete {py:class}`~mqt.ionshuttler.linear.LinearCompilerConfig`: either
+`SearchConfig` or `PermutationConfig`. It returns a `LinearCompilationResult`.
 
 `LinearArchitecture` owns sites, maps processing-zone identifiers to contiguous
 sites, and defines gate and transport timing, the supported action catalog, and
@@ -120,9 +120,17 @@ availability, and circuit progress. Search advances time with an internal
 `AdvanceTime` transition. Public schedules do not expose that search mechanism;
 idle time appears implicitly as a gap between action intervals.
 
-The Linear search proposes gates, shuttles, and physical swaps, then asks the
-architecture to validate and apply them. Its heuristic, rolling horizon,
-frontier limit, and time limit affect which valid schedule is found.
+The Linear compiler provides two scheduling strategies. The
+{ref}`search-based strategy <linear-search-strategy>` proposes gates, shuttles,
+and physical swaps one at a time. Its heuristic, rolling horizon, frontier
+limit, and time limit affect which valid schedule it finds.
+
+The {ref}`permutation-based strategy <linear-permutation-strategy>` first
+assigns preferred processing zones to gates. It then forms gate groups,
+constructs one complete ion placement for each group, and analytically routes
+between consecutive placements. The architecture supplies each action duration
+and validates the finished schedule. Both strategies therefore use the same
+hardware rules, but only the search-based strategy explores individual actions.
 
 ## Extending the package
 
