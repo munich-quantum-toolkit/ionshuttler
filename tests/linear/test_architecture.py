@@ -174,6 +174,24 @@ def test_architecture_round_trips_through_json() -> None:
     assert architecture.to_dict()["transport_timing"] == {"shuttle": 2, "swap": 4}
 
 
+def test_default_architecture_keeps_the_chain_serialized_form() -> None:
+    """Protect the default chain metadata before topology becomes configurable."""
+    assert LinearArchitecture(num_sites=3).to_dict() == {
+        "num_sites": 3,
+        "processing_zones": {"all_sites": [0, 1, 2]},
+        "gate_timing": {
+            "rx": 1,
+            "rxx": 2,
+            "ry": 1,
+            "ryy": 2,
+            "rz": 0,
+            "rzz": 2,
+            "virtual_single_qubit_gates": ["rz"],
+        },
+        "transport_timing": {"shuttle": 1, "swap": 3},
+    }
+
+
 def test_architecture_round_trips_through_pickle() -> None:
     """Restore an equal architecture whose processing zones stay read-only."""
     architecture = LinearArchitecture(

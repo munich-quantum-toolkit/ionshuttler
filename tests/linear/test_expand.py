@@ -91,6 +91,23 @@ def test_full_generation_includes_gates_and_available_transports() -> None:
     ]
 
 
+def test_shuttle_candidates_follow_chain_site_order() -> None:
+    """Offer the lower neighbor before the higher neighbor on a chain."""
+    state = make_state(((0, 2),))
+
+    actions = generate_actions_by_mode(
+        state,
+        LinearArchitecture(num_sites=5),
+        make_circuit(),
+        options=ExpansionOptions(mode=GenerationMode.FULL, action_types=(Shuttle,)),
+    )
+
+    assert actions == [
+        Shuttle(ion=0, src=2, dst=1),
+        Shuttle(ion=0, src=2, dst=3),
+    ]
+
+
 def test_generated_transport_takes_architecture_durations() -> None:
     """Reserve shuttled ions for the architecture's configured transport time."""
     architecture = LinearArchitecture(num_sites=3, transport_timing=TransportTiming(shuttle=2, swap=3))
