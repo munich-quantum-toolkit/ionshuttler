@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, kw_only=True)
-class LinearConfig(ABC):
+class LinearCompilerConfig(ABC):
     """Configuration settings shared by all Linear compiler strategies.
 
     ``action_types`` limits the compiler to a subset of the operations
@@ -56,7 +56,7 @@ class LinearConfig(ABC):
 
 
 @dataclass(frozen=True, kw_only=True)
-class SearchConfig(LinearConfig):
+class SearchConfig(LinearCompilerConfig):
     """Configuration of the search-based strategy.
 
     A finite ``horizon`` plans a few gates at a time and commits
@@ -111,7 +111,7 @@ class SearchConfig(LinearConfig):
 
 
 @dataclass(frozen=True, kw_only=True)
-class PermutationConfig(LinearConfig):
+class PermutationConfig(LinearCompilerConfig):
     """Configuration of the permutation-based strategy.
 
     This strategy requires ``pre_partition=True`` because it constructs each
@@ -193,4 +193,4 @@ def _require_integer_at_least(value: object, name: str, *, minimum: int) -> None
         raise ValueError(msg)
 
 
-__all__ = ["LinearConfig", "PermutationConfig", "SearchConfig"]
+__all__ = ["LinearCompilerConfig", "PermutationConfig", "SearchConfig"]

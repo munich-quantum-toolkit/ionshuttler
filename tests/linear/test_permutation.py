@@ -31,13 +31,14 @@ from mqt.ionshuttler.linear import (
 )
 from mqt.ionshuttler.linear.actions import PhysicalSwap, Shuttle
 from mqt.ionshuttler.linear.permutation import compile_with_permutations, route_to_placement
+from mqt.ionshuttler.linear.result import PermutationDiagnostics
 from mqt.ionshuttler.linear.state import State, create_initial_state
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from mqt.ionshuttler.core.actions import Action
-    from mqt.ionshuttler.linear.result import LinearCompilationResult, PermutationDiagnostics
+    from mqt.ionshuttler.linear.result import LinearCompilationResult
 
 TWO_ZONE_ARCHITECTURE = LinearArchitecture(
     num_sites=11,
@@ -64,9 +65,8 @@ def _compile(
 def _permutation_diagnostics(
     result: LinearCompilationResult,
 ) -> PermutationDiagnostics:
-    assert result.diagnostics is not None
-    assert result.diagnostics.permutation is not None
-    return result.diagnostics.permutation
+    assert isinstance(result.diagnostics, PermutationDiagnostics)
+    return result.diagnostics
 
 
 def _random_circuit(num_ions: int, num_gates: int, seed: int) -> QuantumCircuit:

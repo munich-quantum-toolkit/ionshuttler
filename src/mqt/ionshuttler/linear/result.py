@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias
@@ -148,8 +149,125 @@ class GateGroup:
         )
 
 
-@dataclass(frozen=True)
-class PermutationDiagnostics:
+@dataclass(frozen=True, kw_only=True)
+class LinearDiagnostics(ABC):
+    """Store statistics shared by all Linear compiler strategies.
+
+    Attributes:
+        score: Schedule time of the final compiler state.
+        preferred_gate_zones: Processing zone that pre-partitioning preferred
+            for each gate that needs one. The schedule may use another zone.
+        makespan_lower_bound: No complete schedule can be shorter. The bound
+            combines dependency-chain time, processing-zone load, and the load
+            on zones that support two-ion gates. It ignores transport.
+    """
+
+    score: int
+    preferred_gate_zones: tuple[tuple[int, str], ...] = ()
+    makespan_lower_bound: int = 0
+
+    def __post_init__(self) -> None:
+        """Validate the shared statistics.
+
+        Raises:
+            TypeError: If a statistic or assignment has the wrong type.
+            ValueError: If a statistic or identifier is invalid.
+        """
+        _require_count(self.score, "score")
+        _require_count(self.makespan_lower_bound, "makespan_lower_bound")
+        preferred_gate_zones = tuple(sorted(self.preferred_gate_zones))
+        gate_ids: set[int] = set()
+        for gate_id, processing_zone_id in preferred_gate_zones:
+            if isinstance(gate_id, bool) or not isinstance(gate_id, int):
+                msg = "preferred gate IDs must be integers"
+                raise TypeError(msg)
+            if gate_id < 0:
+                msg = "preferred gate IDs must be non-negative"
+                raise ValueError(msg)
+            if not isinstance(processing_zone_id, str):
+                msg = "preferred processing-zone IDs must be strings"
+                raise TypeError(msg)
+            if not processing_zone_id:
+                msg = "preferred processing-zone IDs must be non-empty"
+                raise ValueError(msg)
+            if gate_id in gate_ids:
+                msg = "preferred gate IDs must be unique"
+                raise ValueError(msg)
+            gate_ids.add(gate_id)
+        object.__setattr__(self, "preferred_gate_zones", preferred_gate_zones)
+
+    def _common_dict(self) -> dict[str, object]:
+        return {
+            "score": self.score,
+            "preferred_gate_zones": [list(assignment) for assignment in self.preferred_gate_zones],
+            "makespan_lower_bound": self.makespan_lower_bound,
+        }
+
+    @abstractmethod
+    def to_dict(self) -> dict[str, object]:
+        """Return these diagnostics using JSON-compatible values."""
+
+    @classmethod
+    def from_dict(cls, data: object) -> LinearDiagnostics:
+        """Restore diagnostics for the recorded Linear compiler strategy.
+
+        Returns:
+            Search or permutation diagnostics.
+
+        Raises:
+            ValueError: If a diagnostic field is malformed.
+        """
+        mapping = require_mapping(data, "linear diagnostics")
+        common = {
+            "score": require_int(mapping, "score"),
+            "preferred_gate_zones": _preferred_gate_zones_from_dict(mapping),
+            "makespan_lower_bound": (
+                require_int(mapping, "makespan_lower_bound") if "makespan_lower_bound" in mapping else 0
+            ),
+        }
+        raw_permutation = mapping.get("permutation")
+        explored_nodes = require_int(mapping, "explored_nodes")
+        if raw_permutation is None:
+            return SearchDiagnostics(explored_nodes=explored_nodes, **common)
+        if explored_nodes != 0:
+            msg = "permutation diagnostics must have explored_nodes=0"
+            raise ValueError(msg)
+        permutation = require_mapping(raw_permutation, "permutation diagnostics")
+        return PermutationDiagnostics(
+            groups=require_int(permutation, "groups"),
+            groups_without_moves=require_int(permutation, "groups_without_moves"),
+            gates_in_preferred_zone=require_int(permutation, "gates_in_preferred_zone"),
+            planning_trace=(
+                None
+                if permutation.get("planning_trace") is None
+                else tuple(GateGroup.from_dict(group) for group in require_list(permutation, "planning_trace"))
+            ),
+            **common,
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class SearchDiagnostics(LinearDiagnostics):
+    """Store statistics of the search-based compilation strategy.
+
+    Attributes:
+        explored_nodes: Number of states that the strategy explored.
+    """
+
+    explored_nodes: int
+
+    def __post_init__(self) -> None:
+        """Validate the search statistics."""
+        super().__post_init__()
+        _require_count(self.explored_nodes, "explored_nodes")
+
+    def to_dict(self) -> dict[str, object]:
+        """Return JSON-compatible search diagnostics."""
+        return {**self._common_dict(), "explored_nodes": self.explored_nodes, "permutation": None}
+
+
+@dataclass(frozen=True, kw_only=True)
+class PermutationDiagnostics(LinearDiagnostics):
     """Store statistics of the permutation-based compilation strategy.
 
     Attributes:
@@ -176,6 +294,7 @@ class PermutationDiagnostics:
             TypeError: If the trace contains another value.
             ValueError: If the counters or trace length are inconsistent.
         """
+        super().__post_init__()
         for name in ("groups", "groups_without_moves", "gates_in_preferred_zone"):
             _require_count(getattr(self, name), name)
         if self.groups_without_moves > self.groups:
@@ -192,139 +311,32 @@ class PermutationDiagnostics:
             object.__setattr__(self, "planning_trace", trace)
 
     def to_dict(self) -> dict[str, object]:
-        """Return JSON-compatible diagnostics.
-
-        The planning trace appears only when it was recorded.
-        """
-        data: dict[str, object] = {
+        """Return JSON-compatible permutation diagnostics."""
+        permutation: dict[str, object] = {
             "groups": self.groups,
             "groups_without_moves": self.groups_without_moves,
             "gates_in_preferred_zone": self.gates_in_preferred_zone,
         }
         if self.planning_trace is not None:
-            data["planning_trace"] = [group.to_dict() for group in self.planning_trace]
-        return data
-
-    @classmethod
-    def from_dict(cls, data: object) -> PermutationDiagnostics:
-        """Restore permutation diagnostics.
-
-        Returns:
-            The restored diagnostics.
-        """
-        mapping = require_mapping(data, "permutation diagnostics")
-        return cls(
-            groups=require_int(mapping, "groups"),
-            groups_without_moves=require_int(mapping, "groups_without_moves"),
-            gates_in_preferred_zone=require_int(mapping, "gates_in_preferred_zone"),
-            planning_trace=(
-                None
-                if mapping.get("planning_trace") is None
-                else tuple(GateGroup.from_dict(group) for group in require_list(mapping, "planning_trace"))
-            ),
-        )
+            permutation["planning_trace"] = [group.to_dict() for group in self.planning_trace]
+        return {**self._common_dict(), "explored_nodes": 0, "permutation": permutation}
 
 
-@dataclass(frozen=True)
-class LinearDiagnostics:
-    """Store statistics from Linear compilation.
-
-    Attributes:
-        score: Schedule time of the final compiler state.
-        explored_nodes: Number of states that the search strategy explored.
-            Zero for the permutation strategy, which does not search.
-        preferred_gate_zones: Processing zone that pre-partitioning preferred
-            for each gate that needs one. The schedule may use another zone.
-        makespan_lower_bound: No complete schedule can be shorter. The bound
-            combines dependency-chain time, processing-zone load, and the load
-            on zones that support two-ion gates. It ignores transport.
-        permutation: Statistics of the permutation strategy. ``None`` for search.
-    """
-
-    score: int
-    explored_nodes: int
-    preferred_gate_zones: tuple[tuple[int, str], ...] = ()
-    makespan_lower_bound: int = 0
-    permutation: PermutationDiagnostics | None = None
-
-    def __post_init__(self) -> None:
-        """Validate the statistics.
-
-        Raises:
-            TypeError: If a statistic is not an integer or the permutation
-                statistics have the wrong type.
-            ValueError: If a statistic is negative.
-        """
-        for name in ("score", "explored_nodes", "makespan_lower_bound"):
-            _require_count(getattr(self, name), name)
-        if self.permutation is not None and not isinstance(self.permutation, PermutationDiagnostics):
-            msg = "permutation must be PermutationDiagnostics or None"
-            raise TypeError(msg)
-        preferred_gate_zones = tuple(sorted(self.preferred_gate_zones))
-        gate_ids: set[int] = set()
-        for gate_id, processing_zone_id in preferred_gate_zones:
-            if isinstance(gate_id, bool) or not isinstance(gate_id, int):
-                msg = "preferred gate IDs must be integers"
-                raise TypeError(msg)
-            if gate_id < 0:
-                msg = "preferred gate IDs must be non-negative"
-                raise ValueError(msg)
-            if not isinstance(processing_zone_id, str):
-                msg = "preferred processing-zone IDs must be strings"
-                raise TypeError(msg)
-            if not processing_zone_id:
-                msg = "preferred processing-zone IDs must be non-empty"
-                raise ValueError(msg)
-            if gate_id in gate_ids:
-                msg = "preferred gate IDs must be unique"
-                raise ValueError(msg)
-            gate_ids.add(gate_id)
-        object.__setattr__(self, "preferred_gate_zones", preferred_gate_zones)
-
-    def to_dict(self) -> dict[str, object]:
-        """Return these diagnostics using JSON-compatible values."""
-        return {
-            "score": self.score,
-            "explored_nodes": self.explored_nodes,
-            "preferred_gate_zones": [list(assignment) for assignment in self.preferred_gate_zones],
-            "makespan_lower_bound": self.makespan_lower_bound,
-            "permutation": None if self.permutation is None else self.permutation.to_dict(),
-        }
-
-    @classmethod
-    def from_dict(cls, data: object) -> LinearDiagnostics:
-        """Restore Linear diagnostics.
-
-        Returns:
-            The restored diagnostics.
-
-        Raises:
-            ValueError: If a preferred gate-zone assignment is malformed.
-        """
-        mapping = require_mapping(data, "linear diagnostics")
-        preferred_gate_zones: list[tuple[int, str]] = []
-        for raw_assignment in require_list(mapping, "preferred_gate_zones"):
-            if not isinstance(raw_assignment, list) or len(raw_assignment) != 2:
-                msg = "preferred_gate_zones entries must be [gate_id, processing_zone_id] pairs"
-                raise ValueError(msg)
-            gate_id, processing_zone_id = raw_assignment
-            if isinstance(gate_id, bool) or not isinstance(gate_id, int):
-                msg = "preferred gate IDs must be integers"
-                raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - JSON format errors use ValueError.
-            if not isinstance(processing_zone_id, str):
-                msg = "preferred processing-zone IDs must be strings"
-                raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - JSON format errors use ValueError.
-            preferred_gate_zones.append((gate_id, processing_zone_id))
-        raw_permutation = mapping.get("permutation")
-        return cls(
-            score=require_int(mapping, "score"),
-            explored_nodes=require_int(mapping, "explored_nodes"),
-            preferred_gate_zones=tuple(preferred_gate_zones),
-            makespan_lower_bound=(
-                require_int(mapping, "makespan_lower_bound") if "makespan_lower_bound" in mapping else 0
-            ),
-            permutation=None if raw_permutation is None else PermutationDiagnostics.from_dict(raw_permutation),
-        )
+def _preferred_gate_zones_from_dict(mapping: dict[str, object]) -> tuple[tuple[int, str], ...]:
+    preferred_gate_zones: list[tuple[int, str]] = []
+    for raw_assignment in require_list(mapping, "preferred_gate_zones"):
+        if not isinstance(raw_assignment, list) or len(raw_assignment) != 2:
+            msg = "preferred_gate_zones entries must be [gate_id, processing_zone_id] pairs"
+            raise ValueError(msg)
+        gate_id, processing_zone_id = raw_assignment
+        if isinstance(gate_id, bool) or not isinstance(gate_id, int):
+            msg = "preferred gate IDs must be integers"
+            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - JSON format errors use ValueError.
+        if not isinstance(processing_zone_id, str):
+            msg = "preferred processing-zone IDs must be strings"
+            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - JSON format errors use ValueError.
+        preferred_gate_zones.append((gate_id, processing_zone_id))
+    return tuple(preferred_gate_zones)
 
 
 def _require_count(value: object, name: str) -> None:
@@ -379,6 +391,7 @@ __all__ = [
     "LinearCompilationResult",
     "LinearDiagnostics",
     "PermutationDiagnostics",
+    "SearchDiagnostics",
     "load_result",
     "result_from_dict",
     "result_from_json",

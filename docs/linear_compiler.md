@@ -190,7 +190,7 @@ The configuration type selects one of two scheduling strategies:
 | `PermutationConfig` | Permutation-based: constructs complete target placements for groups of gates and routes directly between consecutive placements. | Large circuits where action-level search is too costly. |
 
 Both configuration types inherit these settings from
-{py:class}`~mqt.ionshuttler.linear.LinearConfig`:
+{py:class}`~mqt.ionshuttler.linear.LinearCompilerConfig`:
 
 | Shared setting         | User-visible effect                                                                                                                                                                             |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -414,17 +414,21 @@ architecture with additional capabilities. Compiler search progress and
 control-pass provenance are deliberately absent from this execution boundary.
 
 The containing result owns compiler-only information: `result.wall_clock_s`, the
-replayed machine-only `result.final_state`, and `result.diagnostics`. For the
-Linear compiler, the diagnostics are a
-{py:class}`~mqt.ionshuttler.linear.LinearDiagnostics` value with these fields:
+replayed machine-only `result.final_state`, and `result.diagnostics`. Both
+strategy-specific diagnostic types inherit these fields from
+{py:class}`~mqt.ionshuttler.linear.LinearDiagnostics`:
 
 | Field                  | Meaning                                                                                                                                                                          |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `score`                | Schedule time of the final compiler state.                                                                                                                                       |
-| `explored_nodes`       | Number of states that search explored. Zero for permutation.                                                                                                                     |
 | `preferred_gate_zones` | Processing zone that pre-partitioning preferred for each gate that needs one. The schedule can use another zone.                                                                 |
 | `makespan_lower_bound` | Lower bound from dependency-chain time, total processing-zone load, and two-ion-gate load on capable zones. The bound does not include transport.                                |
-| `permutation`          | Permutation statistics, or `None` for search.                                                                                                                                    |
+
+{py:class}`~mqt.ionshuttler.linear.SearchDiagnostics` adds the number of
+explored search states.
+{py:class}`~mqt.ionshuttler.linear.PermutationDiagnostics` adds the number of
+gate groups, groups without transport, and gates that ran in their preferred
+processing zone.
 
 Divide the schedule duration by the lower bound to compare complete schedules
 with the same circuit and architecture. For a `SUCCESS` result, the ratio is at

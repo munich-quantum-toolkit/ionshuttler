@@ -29,7 +29,7 @@ from mqt.ionshuttler.linear import (
 )
 from mqt.ionshuttler.linear.actions import PhysicalSwap, Shuttle
 from mqt.ionshuttler.linear.config import PermutationConfig, SearchConfig
-from mqt.ionshuttler.linear.result import LinearDiagnostics
+from mqt.ionshuttler.linear.result import PermutationDiagnostics, SearchDiagnostics
 from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import create_initial_state
 
@@ -333,7 +333,7 @@ def test_failed_search_result_is_returned(monkeypatch: pytest.MonkeyPatch) -> No
         schedule=schedule,
         architecture=architecture,
         final_state=schedule.initial_state,
-        diagnostics=LinearDiagnostics(score=0, explored_nodes=3),
+        diagnostics=SearchDiagnostics(score=0, explored_nodes=3),
     )
 
     def fail_search(*_args: object, **_kwargs: object) -> CompilationResult:
@@ -347,7 +347,7 @@ def test_failed_search_result_is_returned(monkeypatch: pytest.MonkeyPatch) -> No
 
     assert result.status is CompilationStatus.FAILED
     assert result.schedule is failed.schedule
-    assert result.diagnostics == LinearDiagnostics(score=0, explored_nodes=3, makespan_lower_bound=1)
+    assert result.diagnostics == SearchDiagnostics(score=0, explored_nodes=3, makespan_lower_bound=1)
 
 
 def test_interruption_returns_an_interrupted_result(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -442,10 +442,8 @@ def test_permutation_strategy_runs_through_the_compiler() -> None:
     result = LinearCompiler(architecture, config).compile(circuit)
 
     assert result.status is CompilationStatus.SUCCESS
-    assert result.diagnostics is not None
-    assert result.diagnostics.explored_nodes == 0
-    assert result.diagnostics.permutation is not None
-    assert result.diagnostics.permutation.groups >= 1
+    assert isinstance(result.diagnostics, PermutationDiagnostics)
+    assert result.diagnostics.groups >= 1
     assert {gate_id for gate_id, _zone in result.diagnostics.preferred_gate_zones} == {0, 1, 2}
     result.validate()
 

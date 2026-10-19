@@ -21,7 +21,7 @@ from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.linear.config import SearchConfig
 from mqt.ionshuttler.linear.cost import cost, heuristic, zero_heuristic
 from mqt.ionshuttler.linear.expand import ExpansionOptions, GenerationMode, expand, replay_path
-from mqt.ionshuttler.linear.result import LinearDiagnostics
+from mqt.ionshuttler.linear.result import SearchDiagnostics
 from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, State, normalize_initial_state
 
@@ -789,7 +789,7 @@ def _materialize_result(
         architecture=architecture,
         final_state=architecture.replay_schedule(schedule),
         wall_clock_s=budget.elapsed(),
-        diagnostics=LinearDiagnostics(
+        diagnostics=SearchDiagnostics(
             score=cost(outcome.final_state),
             explored_nodes=outcome.explored_nodes,
         ),

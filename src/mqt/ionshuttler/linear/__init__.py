@@ -14,13 +14,14 @@ from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.linear.actions import DEFAULT_ACTION_TYPES, TransportTiming
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
-from mqt.ionshuttler.linear.config import LinearConfig, PermutationConfig, SearchConfig
+from mqt.ionshuttler.linear.config import LinearCompilerConfig, PermutationConfig, SearchConfig
 from mqt.ionshuttler.linear.cost import HeuristicFn, zero_heuristic
 from mqt.ionshuttler.linear.result import (
     GateGroup,
     LinearCompilationResult,
     LinearDiagnostics,
     PermutationDiagnostics,
+    SearchDiagnostics,
     load_result,
     result_from_dict,
     result_from_json,
@@ -65,7 +66,7 @@ __all__ = [
     "LinearArchitecture",
     "LinearCompilationResult",
     "LinearCompiler",
-    "LinearConfig",
+    "LinearCompilerConfig",
     "LinearDiagnostics",
     "LinearMachineState",
     "PermutationConfig",
@@ -73,6 +74,7 @@ __all__ = [
     "Schedule",
     "ScheduledAction",
     "SearchConfig",
+    "SearchDiagnostics",
     "TransportTiming",
     "load_result",
     "load_schedule",

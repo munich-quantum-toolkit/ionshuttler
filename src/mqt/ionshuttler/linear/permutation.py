@@ -39,7 +39,7 @@ from mqt.ionshuttler.core.gates import GlobalGate, SingleQubitGate, TwoQubitGate
 from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.linear.actions import PhysicalSwap, Shuttle
-from mqt.ionshuttler.linear.result import GateGroup, LinearDiagnostics, PermutationDiagnostics
+from mqt.ionshuttler.linear.result import GateGroup, PermutationDiagnostics
 from mqt.ionshuttler.linear.schedule import LinearMachineState
 from mqt.ionshuttler.linear.state import normalize_initial_state
 
@@ -811,15 +811,12 @@ def _build_result(
         architecture=architecture,
         final_state=final_state,
         wall_clock_s=perf_counter() - compilation_started_at,
-        diagnostics=LinearDiagnostics(
+        diagnostics=PermutationDiagnostics(
             score=final_state.time,
-            explored_nodes=0,
-            permutation=PermutationDiagnostics(
-                groups=compilation.group_count,
-                groups_without_moves=compilation.transport_free_group_count,
-                gates_in_preferred_zone=compilation.preferred_zone_gate_count,
-                planning_trace=(None if compilation.planning_trace is None else tuple(compilation.planning_trace)),
-            ),
+            groups=compilation.group_count,
+            groups_without_moves=compilation.transport_free_group_count,
+            gates_in_preferred_zone=compilation.preferred_zone_gate_count,
+            planning_trace=(None if compilation.planning_trace is None else tuple(compilation.planning_trace)),
         ),
     )
 

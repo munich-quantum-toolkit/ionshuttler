@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import itertools
 from dataclasses import replace
+from inspect import isabstract
 from math import pi
 from typing import TYPE_CHECKING, Any, cast
 
@@ -33,7 +34,7 @@ from mqt.ionshuttler.linear import (
 from mqt.ionshuttler.linear.actions import Shuttle
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.replay import replay_schedule
-from mqt.ionshuttler.linear.result import GateGroup, LinearDiagnostics, PermutationDiagnostics
+from mqt.ionshuttler.linear.result import GateGroup, LinearDiagnostics, PermutationDiagnostics, SearchDiagnostics
 from mqt.ionshuttler.linear.schedule import LinearMachineState, schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 from mqt.ionshuttler.visualization import LinearVisualizer, Visualizer
@@ -60,38 +61,55 @@ def _program(path: Sequence[SearchTransition] | None = None) -> Schedule:
     ("build", "error", "message"),
     [
         pytest.param(
-            lambda: LinearDiagnostics(cast("int", object()), 0),
+            lambda: SearchDiagnostics(score=cast("int", object()), explored_nodes=0),
             TypeError,
             "score must be an integer",
             id="score-type",
         ),
-        pytest.param(lambda: LinearDiagnostics(-1, 0), ValueError, "score must be non-negative", id="score-negative"),
         pytest.param(
-            lambda: LinearDiagnostics(0, 0, ((cast("int", object()), "pz"),)),
+            lambda: SearchDiagnostics(score=-1, explored_nodes=0),
+            ValueError,
+            "score must be non-negative",
+            id="score-negative",
+        ),
+        pytest.param(
+            lambda: SearchDiagnostics(
+                score=0,
+                explored_nodes=0,
+                preferred_gate_zones=((cast("int", object()), "pz"),),
+            ),
             TypeError,
             "preferred gate IDs must be integers",
             id="gate-id-type",
         ),
         pytest.param(
-            lambda: LinearDiagnostics(0, 0, ((-1, "pz"),)),
+            lambda: SearchDiagnostics(score=0, explored_nodes=0, preferred_gate_zones=((-1, "pz"),)),
             ValueError,
             "preferred gate IDs must be non-negative",
             id="gate-id-negative",
         ),
         pytest.param(
-            lambda: LinearDiagnostics(0, 0, ((0, cast("str", 1)),)),
+            lambda: SearchDiagnostics(
+                score=0,
+                explored_nodes=0,
+                preferred_gate_zones=((0, cast("str", 1)),),
+            ),
             TypeError,
             "processing-zone IDs must be strings",
             id="zone-type",
         ),
         pytest.param(
-            lambda: LinearDiagnostics(0, 0, ((0, ""),)),
+            lambda: SearchDiagnostics(score=0, explored_nodes=0, preferred_gate_zones=((0, ""),)),
             ValueError,
             "processing-zone IDs must be non-empty",
             id="zone-empty",
         ),
         pytest.param(
-            lambda: LinearDiagnostics(0, 0, ((0, "left"), (0, "right"))),
+            lambda: SearchDiagnostics(
+                score=0,
+                explored_nodes=0,
+                preferred_gate_zones=((0, "left"), (0, "right")),
+            ),
             ValueError,
             "preferred gate IDs must be unique",
             id="duplicate-gate-id",
@@ -106,6 +124,13 @@ def test_linear_diagnostics_reject_invalid_values(
     """Protect the public validation contract for compiler diagnostics."""
     with pytest.raises(error, match=message):
         build()
+
+
+def test_linear_diagnostics_define_strategy_specific_types() -> None:
+    """Keep shared diagnostics abstract and expose one type per strategy."""
+    assert isabstract(LinearDiagnostics)
+    assert issubclass(SearchDiagnostics, LinearDiagnostics)
+    assert issubclass(PermutationDiagnostics, LinearDiagnostics)
 
 
 @pytest.mark.parametrize(
@@ -184,29 +209,35 @@ def test_gate_group_rejects_invalid_values(changes: dict[str, object], error: ty
 
 
 def test_permutation_diagnostics_reject_invalid_values() -> None:
-    """Reject negative counters, wrong trace entries, and wrong nested diagnostics."""
+    """Reject negative counters and invalid trace entries."""
     with pytest.raises(ValueError, match="groups must be non-negative"):
-        PermutationDiagnostics(groups=-1, groups_without_moves=0, gates_in_preferred_zone=0)
+        PermutationDiagnostics(score=0, groups=-1, groups_without_moves=0, gates_in_preferred_zone=0)
     with pytest.raises(TypeError, match="GateGroup values"):
         PermutationDiagnostics(
+            score=0,
             groups=1,
             groups_without_moves=0,
             gates_in_preferred_zone=0,
             planning_trace=(cast("GateGroup", object()),),
         )
     with pytest.raises(ValueError, match="groups_without_moves must be <= groups"):
-        PermutationDiagnostics(groups=0, groups_without_moves=1, gates_in_preferred_zone=0)
+        PermutationDiagnostics(score=0, groups=0, groups_without_moves=1, gates_in_preferred_zone=0)
     with pytest.raises(ValueError, match="one entry per group"):
         PermutationDiagnostics(
+            score=0,
             groups=2,
             groups_without_moves=0,
             gates_in_preferred_zone=0,
             planning_trace=(_gate_group(),),
         )
-    with pytest.raises(TypeError, match="permutation must be PermutationDiagnostics"):
-        LinearDiagnostics(0, 0, permutation=cast("PermutationDiagnostics", object()))
     with pytest.raises(ValueError, match="makespan_lower_bound must be non-negative"):
-        LinearDiagnostics(0, 0, makespan_lower_bound=-1)
+        PermutationDiagnostics(
+            score=0,
+            groups=0,
+            groups_without_moves=0,
+            gates_in_preferred_zone=0,
+            makespan_lower_bound=-1,
+        )
 
 
 def test_gate_group_rejects_malformed_zone_assignments() -> None:
@@ -220,21 +251,15 @@ def test_gate_group_rejects_malformed_zone_assignments() -> None:
 
 def test_permutation_diagnostics_round_trip_with_and_without_trace() -> None:
     """Restore permutation statistics and the optional planning trace from JSON."""
-    traced = LinearDiagnostics(
+    traced = PermutationDiagnostics(
         score=5,
-        explored_nodes=0,
         makespan_lower_bound=3,
-        permutation=PermutationDiagnostics(
-            groups=1,
-            groups_without_moves=0,
-            gates_in_preferred_zone=2,
-            planning_trace=(_gate_group(),),
-        ),
+        groups=1,
+        groups_without_moves=0,
+        gates_in_preferred_zone=2,
+        planning_trace=(_gate_group(),),
     )
-    untraced = replace(
-        traced,
-        permutation=replace(cast("PermutationDiagnostics", traced.permutation), planning_trace=None),
-    )
+    untraced = replace(traced, planning_trace=None)
 
     assert LinearDiagnostics.from_dict(traced.to_dict()) == traced
     assert LinearDiagnostics.from_dict(untraced.to_dict()) == untraced
@@ -243,7 +268,7 @@ def test_permutation_diagnostics_round_trip_with_and_without_trace() -> None:
 
 def test_linear_diagnostics_loads_version_one_data_without_lower_bound() -> None:
     """Use zero when version 1 diagnostics omit the newer lower-bound field."""
-    data = LinearDiagnostics(score=5, explored_nodes=3).to_dict()
+    data = SearchDiagnostics(score=5, explored_nodes=3).to_dict()
     del data["makespan_lower_bound"]
 
     assert LinearDiagnostics.from_dict(data).makespan_lower_bound == 0
@@ -251,7 +276,7 @@ def test_linear_diagnostics_loads_version_one_data_without_lower_bound() -> None
 
 def test_linear_diagnostics_validates_present_lower_bound() -> None:
     """Reject a malformed lower bound when the serialized field is present."""
-    data = LinearDiagnostics(score=5, explored_nodes=3).to_dict()
+    data = SearchDiagnostics(score=5, explored_nodes=3).to_dict()
     data["makespan_lower_bound"] = "0"
 
     with pytest.raises(ValueError, match="makespan_lower_bound must be an integer"):
@@ -329,7 +354,7 @@ def test_compilation_result_round_trips_only_compiler_diagnostics() -> None:
         architecture=architecture,
         wall_clock_s=0.5,
         final_state=architecture.replay_schedule(program),
-        diagnostics=LinearDiagnostics(
+        diagnostics=SearchDiagnostics(
             score=1,
             explored_nodes=7,
             preferred_gate_zones=((2, "pz"),),

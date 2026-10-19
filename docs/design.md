@@ -107,7 +107,7 @@ site-based model of a linear architecture.
 
 {py:class}`~mqt.ionshuttler.linear.compiler.LinearCompiler` accepts a circuit
 and combines it with a {py:class}`~mqt.ionshuttler.linear.LinearArchitecture`
-and a concrete {py:class}`~mqt.ionshuttler.linear.LinearConfig`: either
+and a concrete {py:class}`~mqt.ionshuttler.linear.LinearCompilerConfig`: either
 `SearchConfig` or `PermutationConfig`. It returns a `LinearCompilationResult`.
 
 `LinearArchitecture` owns sites, maps processing-zone identifiers to contiguous

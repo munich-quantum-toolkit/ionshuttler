@@ -17,7 +17,7 @@ import pytest
 from mqt.ionshuttler.core.gates import Rx
 from mqt.ionshuttler.linear import GateTiming, TransportTiming
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
-from mqt.ionshuttler.linear.config import LinearConfig, PermutationConfig, SearchConfig
+from mqt.ionshuttler.linear.config import LinearCompilerConfig, PermutationConfig, SearchConfig
 from mqt.ionshuttler.linear.cost import zero_heuristic
 
 if TYPE_CHECKING:
@@ -62,9 +62,9 @@ def test_architecture_and_compiler_config_use_ready_to_run_defaults() -> None:
 
 def test_strategy_configs_share_linear_settings() -> None:
     """Keep common settings on a base that cannot select a strategy itself."""
-    assert isabstract(LinearConfig)
-    assert issubclass(SearchConfig, LinearConfig)
-    assert issubclass(PermutationConfig, LinearConfig)
+    assert isabstract(LinearCompilerConfig)
+    assert issubclass(SearchConfig, LinearCompilerConfig)
+    assert issubclass(PermutationConfig, LinearCompilerConfig)
 
 
 def test_gate_timing_supports_alternate_single_qubit_implementations() -> None:

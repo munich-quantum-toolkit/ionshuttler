@@ -28,7 +28,7 @@ from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.config import SearchConfig
 from mqt.ionshuttler.linear.cost import zero_heuristic
 from mqt.ionshuttler.linear.expand import GenerationMode
-from mqt.ionshuttler.linear.result import LinearDiagnostics
+from mqt.ionshuttler.linear.result import SearchDiagnostics
 from mqt.ionshuttler.linear.schedule import (
     LinearMachineState,
 )
@@ -63,9 +63,9 @@ def exhaustive_config(
     )
 
 
-def diagnostics(result: CompilationResult) -> LinearDiagnostics:
+def diagnostics(result: CompilationResult) -> SearchDiagnostics:
     """Return the Linear search statistics of a result."""
-    assert isinstance(result.diagnostics, LinearDiagnostics)
+    assert isinstance(result.diagnostics, SearchDiagnostics)
     return result.diagnostics
 
 
