@@ -19,7 +19,6 @@ from mqt.ionshuttler.linear.actions import (
     DEFAULT_ACTION_TYPES,
     PhysicalSwap,
     Shuttle,
-    is_adjacent,
 )
 from mqt.ionshuttler.linear.state import (
     AdvanceTime,
@@ -324,7 +323,7 @@ def _all_candidates(
         if action_type is Shuttle:
             candidates.extend((shuttle, None) for shuttle in _shuttle_candidates(state, architecture, busy_ions))
         elif action_type is PhysicalSwap:
-            candidates.extend((swap, None) for swap in _swap_candidates(state, busy_ions))
+            candidates.extend((swap, None) for swap in _swap_candidates(state, architecture, busy_ions))
 
     if has_pending_timed_work(state):
         candidates.append((AdvanceTime(), None))
@@ -343,14 +342,18 @@ def _shuttle_candidates(state: State, architecture: LinearArchitecture, busy_ion
     ]
 
 
-def _swap_candidates(state: State, busy_ions: set[int]) -> list[PhysicalSwap]:
+def _swap_candidates(
+    state: State,
+    architecture: LinearArchitecture,
+    busy_ions: set[int],
+) -> list[PhysicalSwap]:
     """Return physical swaps of adjacent free ions."""
     free_ions = [(ion, position) for ion, position in state.positions if ion not in busy_ions]
     return [
         PhysicalSwap(ion_a=ion_a, ion_b=ion_b, pos_a=pos_a, pos_b=pos_b)
         for index, (ion_a, pos_a) in enumerate(free_ions)
         for ion_b, pos_b in free_ions[index + 1 :]
-        if is_adjacent(pos_a, pos_b)
+        if architecture.are_adjacent(pos_a, pos_b)
     ]
 
 

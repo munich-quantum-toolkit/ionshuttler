@@ -346,8 +346,12 @@ def test_machine_state_strips_compiler_progress_and_canonicalizes_availability()
 
 def test_compilation_result_round_trips_only_compiler_diagnostics() -> None:
     """Keep compiler outcome fields outside the nested scheduled program."""
-    program = _program()
-    architecture = LinearArchitecture(num_sites=2, processing_zones={"pz": [0, 1]})
+    architecture = LinearArchitecture(num_sites=4, processing_zones={"pz": [3, 0]}, topology="ring")
+    program = schedule_from_path(
+        [Shuttle(ion=0, src=0, dst=3), AdvanceTime()],
+        create_initial_state(1, architecture, initial_positions=[0]),
+        architecture,
+    )
     result = CompilationResult(
         status=CompilationStatus.SUCCESS,
         schedule=program,
@@ -365,6 +369,7 @@ def test_compilation_result_round_trips_only_compiler_diagnostics() -> None:
 
     assert restored == result
     assert restored.wall_clock_s == result.wall_clock_s
+    assert restored.architecture.topology == "ring"
     serialized = restored.to_dict()
     assert serialized["architecture"] == architecture.to_dict()
     assert serialized["diagnostics"] == {

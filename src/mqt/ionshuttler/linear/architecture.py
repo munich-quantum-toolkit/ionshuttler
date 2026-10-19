@@ -15,7 +15,7 @@ from dataclasses import dataclass, field, replace
 from itertools import combinations, pairwise
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from mqt.ionshuttler.core.actions import Action
 from mqt.ionshuttler.core.gates import (
@@ -33,7 +33,6 @@ from mqt.ionshuttler.linear.actions import (
     PhysicalSwap,
     Shuttle,
     TransportTiming,
-    is_adjacent,
 )
 from mqt.ionshuttler.linear.field_profile import FieldProfile
 from mqt.ionshuttler.linear.replay import replay_schedule as replay_linear_schedule
@@ -51,6 +50,7 @@ _SERIALIZED_FIELDS = frozenset({
     "gate_timing",
     "transport_timing",
     "supported_action_types",
+    "topology",
 })
 
 
@@ -67,8 +67,8 @@ class LinearArchitecture:
     with and without physical swaps. It does not add new operation types.
 
     The architecture stores ``processing_zones`` as a read-only mapping from
-    zone name to sorted site tuple, so later changes to the supplied mapping
-    do not affect it.
+    zone name to normalized site tuple, so later changes to the supplied
+    mapping do not affect it.
     """
 
     num_sites: int
@@ -77,7 +77,9 @@ class LinearArchitecture:
     gate_timing: GateTiming = field(default_factory=GateTiming)
     transport_timing: TransportTiming = field(default_factory=TransportTiming)
     supported_action_types: tuple[type[Action], ...] = DEFAULT_ACTION_TYPES
+    topology: Literal["chain", "ring"] = "chain"
     valid_two_qubit_site_pairs: tuple[tuple[int, int], ...] = field(init=False)
+    _neighbors_by_site: tuple[tuple[int, ...], ...] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Check the hardware description and store zone sites in order.
@@ -92,6 +94,15 @@ class LinearArchitecture:
             raise TypeError(msg)
         if self.num_sites < 1:
             msg = "num_sites must be >= 1"
+            raise ValueError(msg)
+        if not isinstance(self.topology, str):
+            msg = "topology must be a string"
+            raise TypeError(msg)
+        if self.topology not in {"chain", "ring"}:
+            msg = "topology must be 'chain' or 'ring'"
+            raise ValueError(msg)
+        if self.topology == "ring" and self.num_sites < 3:
+            msg = "ring topology requires at least three sites"
             raise ValueError(msg)
         if self.field_profile is not None and not isinstance(self.field_profile, FieldProfile):
             msg = "field_profile must be FieldProfile or None"
@@ -119,7 +130,8 @@ class LinearArchitecture:
             raise ValueError(msg)
         object.__setattr__(self, "supported_action_types", supported_action_types)
 
-        processing_zones = _normalize_processing_zones(self.num_sites, self.processing_zones)
+        object.__setattr__(self, "_neighbors_by_site", _site_neighbors(self.num_sites, self.topology))
+        processing_zones = _normalize_processing_zones(self.num_sites, self.processing_zones, self.topology)
         object.__setattr__(self, "processing_zones", processing_zones)
         field_profile = self.field_profile
         if field_profile is None:
@@ -152,8 +164,33 @@ class LinearArchitecture:
                 self.gate_timing,
                 self.transport_timing,
                 self.supported_action_types,
+                self.topology,
             ),
         )
+
+    def neighbors(self, site: int) -> tuple[int, ...]:
+        """Return directly connected sites in stable transport order.
+
+        Chain neighbors use lower-site-first order. Ring neighbors use the
+        preceding site followed by the next site, modulo the site count.
+        """
+        _validate_site(site, self.num_sites)
+        return self._neighbors_by_site[site]
+
+    def are_adjacent(self, first_site: int, second_site: int) -> bool:
+        """Return whether two valid sites share a transport edge."""
+        _validate_site(first_site, self.num_sites)
+        _validate_site(second_site, self.num_sites)
+        return self._are_adjacent(first_site, second_site)
+
+    def distance(self, first_site: int, second_site: int) -> int:
+        """Return the shortest number of transport edges between two sites."""
+        _validate_site(first_site, self.num_sites)
+        _validate_site(second_site, self.num_sites)
+        separation = abs(first_site - second_site)
+        if self.topology == "ring":
+            return min(separation, self.num_sites - separation)
+        return separation
 
     def get_processing_zone(self, site: int) -> str | None:
         """Return the processing zone containing a site, if any."""
@@ -240,7 +277,7 @@ class LinearArchitecture:
         if isinstance(action, Shuttle):
             return self._is_shuttle_valid(state, action)
         if isinstance(action, PhysicalSwap):
-            return _is_swap_valid(state, action)
+            return self._is_swap_valid(state, action)
         if isinstance(action, GateAction):
             return self._is_gate_valid(state, action)
         msg = f"LinearArchitecture defines no rules for {type(action).__name__}"
@@ -316,6 +353,8 @@ class LinearArchitecture:
             result["supported_action_types"] = [
                 action_type.serialized_type for action_type in self.supported_action_types
             ]
+        if self.topology == "ring":
+            result["topology"] = self.topology
         return result
 
     def to_json(self) -> str:
@@ -373,6 +412,7 @@ class LinearArchitecture:
 
         gate_timing_raw = mapping.get("gate_timing")
         transport_timing_raw = mapping.get("transport_timing")
+        topology = mapping.get("topology", "chain")
 
         supported_action_names = mapping.get("supported_action_types")
         supported_action_types = DEFAULT_ACTION_TYPES
@@ -397,6 +437,7 @@ class LinearArchitecture:
                 TransportTiming() if transport_timing_raw is None else TransportTiming.from_dict(transport_timing_raw)
             ),
             supported_action_types=supported_action_types,
+            topology=cast("Literal['chain', 'ring']", topology),
         )
 
     @classmethod
@@ -422,10 +463,26 @@ class LinearArchitecture:
         return (
             positions.get(action.ion) == action.src
             and 0 <= action.dst < self.num_sites
-            and is_adjacent(action.src, action.dst)
+            and self._are_adjacent(action.src, action.dst)
             and action.dst not in positions.values()
             and dict(state.ions_busy_until).get(action.ion, state.time + 1) <= state.time
         )
+
+    def _is_swap_valid(self, state: State, action: PhysicalSwap) -> bool:
+        positions = dict(state.positions)
+        ions_busy = dict(state.ions_busy_until)
+        return (
+            action.ion_a != action.ion_b
+            and positions.get(action.ion_a) == action.pos_a
+            and positions.get(action.ion_b) == action.pos_b
+            and ions_busy.get(action.ion_a, state.time + 1) <= state.time
+            and ions_busy.get(action.ion_b, state.time + 1) <= state.time
+            and self._are_adjacent(action.pos_a, action.pos_b)
+        )
+
+    def _are_adjacent(self, first_site: int, second_site: int) -> bool:
+        separation = abs(first_site - second_site)
+        return separation == 1 or (self.topology == "ring" and separation == self.num_sites - 1)
 
     def _is_gate_valid(self, state: State, gate: GateAction) -> bool:
         positions = dict(state.positions)
@@ -490,27 +547,15 @@ class LinearArchitecture:
         return cast("FieldProfile", self.field_profile)
 
 
-def _is_swap_valid(state: State, action: PhysicalSwap) -> bool:
-    positions = dict(state.positions)
-    ions_busy = dict(state.ions_busy_until)
-    return (
-        action.ion_a != action.ion_b
-        and positions.get(action.ion_a) == action.pos_a
-        and positions.get(action.ion_b) == action.pos_b
-        and ions_busy.get(action.ion_a, state.time + 1) <= state.time
-        and ions_busy.get(action.ion_b, state.time + 1) <= state.time
-        and is_adjacent(action.pos_a, action.pos_b)
-    )
-
-
 def _normalize_processing_zones(
     num_sites: int,
     processing_zones: Mapping[str, Sequence[int]] | None,
+    topology: Literal["chain", "ring"],
 ) -> Mapping[str, tuple[int, ...]]:
     """Return validated processing zones as a read-only mapping.
 
     Returns:
-        Sorted zone sites keyed by zone name.
+        Normalized zone sites keyed by zone name.
 
     Raises:
         TypeError: If the mapping, a zone name, or a site has the wrong type.
@@ -556,11 +601,40 @@ def _normalize_processing_zones(
                 msg = f"processing zone '{zone_name}' overlaps with another zone at site {site}"
                 raise ValueError(msg)
             seen_sites.add(site)
-        if any(right - left != 1 for left, right in pairwise(sorted_sites)):
+        normalized_sites = _normalize_ring_sites(sorted_sites, num_sites) if topology == "ring" else sorted_sites
+        if normalized_sites is None or (
+            topology == "chain" and any(right - left != 1 for left, right in pairwise(sorted_sites))
+        ):
             msg = f"processing zone '{zone_name}' must contain contiguous sites"
             raise ValueError(msg)
-        normalized[zone_name] = sorted_sites
+        normalized[zone_name] = normalized_sites
     return MappingProxyType(normalized)
+
+
+def _site_neighbors(
+    num_sites: int,
+    topology: Literal["chain", "ring"],
+) -> tuple[tuple[int, ...], ...]:
+    if topology == "ring":
+        return tuple(((site - 1) % num_sites, (site + 1) % num_sites) for site in range(num_sites))
+    return tuple(
+        tuple(neighbor for neighbor in (site - 1, site + 1) if 0 <= neighbor < num_sites) for site in range(num_sites)
+    )
+
+
+def _normalize_ring_sites(sorted_sites: tuple[int, ...], num_sites: int) -> tuple[int, ...] | None:
+    if len(sorted_sites) == num_sites:
+        return sorted_sites
+    # A connected proper ring run has one missing edge, which becomes the tuple boundary.
+    breaks = [
+        index
+        for index, site in enumerate(sorted_sites)
+        if (sorted_sites[(index + 1) % len(sorted_sites)] - site) % num_sites != 1
+    ]
+    if len(breaks) != 1:
+        return None
+    start = (breaks[0] + 1) % len(sorted_sites)
+    return sorted_sites[start:] + sorted_sites[:start]
 
 
 def _valid_two_qubit_site_pairs(

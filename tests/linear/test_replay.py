@@ -47,6 +47,18 @@ def test_replay_runs_a_zero_duration_gate_before_a_transport_of_its_ion() -> Non
     assert architecture.replay_schedule(schedule).positions == ((0, 1),)
 
 
+def test_replay_accepts_a_ring_wrap_shuttle() -> None:
+    """Replay transport across the edge between the first and last ring sites."""
+    architecture = LinearArchitecture(num_sites=4, topology="ring")
+    schedule = schedule_from_path(
+        [Shuttle(ion=0, src=0, dst=3), AdvanceTime()],
+        create_initial_state(1, architecture, initial_positions=[0]),
+        architecture,
+    )
+
+    assert replay_schedule(schedule, architecture).positions == ((0, 3),)
+
+
 def test_replay_rejects_a_gate_stored_after_a_transport_of_its_ion() -> None:
     """Keep a transported ion busy for later actions at the same start time."""
     architecture = _zero_duration_rx_architecture()

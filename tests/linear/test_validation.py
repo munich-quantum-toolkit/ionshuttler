@@ -21,7 +21,6 @@ from mqt.ionshuttler.linear.actions import (
     PhysicalSwap,
     Shuttle,
     TransportAction,
-    is_adjacent,
 )
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.state import State, has_pending_timed_work
@@ -56,14 +55,6 @@ def _state(
     )
 
 
-def test_adjacency_uses_linear_neighbor_distance() -> None:
-    """Treat only sites one position apart as adjacent."""
-    assert is_adjacent(2, 3)
-    assert is_adjacent(3, 2)
-    assert not is_adjacent(2, 2)
-    assert not is_adjacent(2, 4)
-
-
 def test_action_validation_enforces_transport_occupancy_and_busy_times() -> None:
     """Move or swap ions only when their sites and ions are available."""
     architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [1, 2, 3]})
@@ -77,6 +68,22 @@ def test_action_validation_enforces_transport_occupancy_and_busy_times() -> None
     assert not architecture.is_action_valid(busy_state, Shuttle(ion=0, src=0, dst=1))
     assert architecture.is_action_valid(swap_state, PhysicalSwap(ion_a=0, ion_b=1, pos_a=1, pos_b=2))
     assert not architecture.is_action_valid(free_state, PhysicalSwap(ion_a=0, ion_b=1, pos_a=0, pos_b=3))
+
+
+def test_ring_action_validation_accepts_only_wrap_neighbors() -> None:
+    """Accept wrap-edge transport on a ring without changing chain validity."""
+    chain = LinearArchitecture(num_sites=5)
+    ring = LinearArchitecture(num_sites=5, topology="ring")
+    shuttle_state = _state(((0, 0),), pzs_busy_until=(("all_sites", 0),))
+    swap_state = _state(((0, 0), (1, 4)), pzs_busy_until=(("all_sites", 0),))
+    wrap_shuttle = Shuttle(ion=0, src=0, dst=4)
+    wrap_swap = PhysicalSwap(ion_a=0, ion_b=1, pos_a=0, pos_b=4)
+
+    assert not chain.is_action_valid(shuttle_state, wrap_shuttle)
+    assert ring.is_action_valid(shuttle_state, wrap_shuttle)
+    assert not chain.is_action_valid(swap_state, wrap_swap)
+    assert ring.is_action_valid(swap_state, wrap_swap)
+    assert is_transport_layer_valid(shuttle_state, (wrap_shuttle,), ring)
 
 
 def test_action_validation_enforces_gate_processing_zone_resources() -> None:
