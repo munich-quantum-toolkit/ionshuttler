@@ -12,7 +12,7 @@ from __future__ import annotations
 import itertools
 from dataclasses import replace
 from inspect import isabstract
-from math import pi
+from math import isnan, pi
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -31,7 +31,7 @@ from mqt.ionshuttler.linear import (
     schedule_from_dict,
     schedule_from_json,
 )
-from mqt.ionshuttler.linear.actions import Shuttle
+from mqt.ionshuttler.linear.actions import PhysicalSwap, Shuttle
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.replay import replay_schedule
 from mqt.ionshuttler.linear.result import GateGroup, LinearDiagnostics, PermutationDiagnostics, SearchDiagnostics
@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from matplotlib.figure import Figure
+    from matplotlib.patches import Rectangle
 
     from mqt.ionshuttler.linear.state import SearchTransition
 
@@ -490,6 +491,84 @@ def test_result_visualization_builds_linear_trajectory_plot() -> None:
     assert any(text.get_text() == "Rzz" for text in axis.texts)
     assert any(text.get_text() == "Rx [1]" for text in axis.texts)
     assert [patch.get_label() for patch in axis.patches].count("PZ") == 1
+    pyplot.close(figure)
+
+
+def test_ring_visualization_splits_wrapping_zones_and_wrap_shuttles() -> None:
+    """Show both sides of a wrapping zone without a full-array transport line."""
+    pyplot = pytest.importorskip("matplotlib.pyplot")
+    architecture = LinearArchitecture(
+        num_sites=5,
+        processing_zones={"wrap": [4, 0]},
+        topology="ring",
+    )
+    program = schedule_from_path(
+        [Shuttle(ion=0, src=0, dst=4), AdvanceTime()],
+        create_initial_state(1, architecture, initial_positions=[0]),
+        architecture,
+    )
+    result = CompilationResult(
+        status=CompilationStatus.SUCCESS,
+        schedule=program,
+        architecture=architecture,
+        final_state=architecture.replay_schedule(program),
+    )
+
+    figure = cast("Figure", visualize(result))
+
+    axis = figure.axes[0]
+    zone_rectangles = tuple(cast("Rectangle", patch) for patch in axis.patches)
+    zone_spans = tuple((rectangle.get_y(), rectangle.get_y() + rectangle.get_height()) for rectangle in zone_rectangles)
+    assert zone_spans == ((-0.45, 0.45), (3.55, 4.45))
+    seam_lines = [line for line in axis.lines if line.get_label() in {"ring seam", "_nolegend_"}]
+    assert [tuple(cast("Sequence[float]", line.get_ydata())) for line in seam_lines[:2]] == [
+        (-0.5, -0.5),
+        (4.5, 4.5),
+    ]
+    ion_line = next(line for line in axis.lines if line.get_label() == "ion 0")
+    ion_sites = tuple(cast("Sequence[float]", ion_line.get_ydata()))
+    assert ion_sites[0] == 0
+    assert isnan(ion_sites[1])
+    assert ion_sites[2] == 4
+    wrap_markers = [collection for collection in axis.collections if collection.get_label() == "ring transport"]
+    assert len(wrap_markers) == 1
+    assert cast("Any", wrap_markers[0].get_offsets()).tolist() == [[0.0, 0.0]]
+    assert cast("Any", axis.collections[1].get_offsets()).tolist() == [[1.0, 4.0]]
+    pyplot.close(figure)
+
+
+def test_ring_visualization_breaks_both_wrap_swap_trajectories() -> None:
+    """Break both ion trajectories when a physical swap crosses the ring seam."""
+    pyplot = pytest.importorskip("matplotlib.pyplot")
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2]}, topology="ring")
+    program = schedule_from_path(
+        [PhysicalSwap(ion_a=0, ion_b=1, pos_a=0, pos_b=4)],
+        create_initial_state(2, architecture, initial_positions=[0, 4]),
+        architecture,
+    )
+    result = CompilationResult(
+        status=CompilationStatus.SUCCESS,
+        schedule=program,
+        architecture=architecture,
+        final_state=architecture.replay_schedule(program),
+    )
+
+    figure = cast("Figure", visualize(result))
+
+    axis = figure.axes[0]
+    ion_lines = {line.get_label(): tuple(cast("Sequence[float]", line.get_ydata())) for line in axis.lines}
+    assert isnan(ion_lines["ion 0"][1])
+    assert isnan(ion_lines["ion 1"][1])
+    assert len(axis.collections) == 4
+    swap_end = architecture.transport_timing.swap
+    assert sorted(
+        tuple(offset) for collection in axis.collections for offset in cast("Any", collection.get_offsets()).tolist()
+    ) == [
+        (0.0, 0.0),
+        (0.0, 4.0),
+        (swap_end, 0.0),
+        (swap_end, 4.0),
+    ]
     pyplot.close(figure)
 
 

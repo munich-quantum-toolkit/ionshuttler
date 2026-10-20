@@ -371,6 +371,37 @@ def test_sadd_optimizes_a_window_in_which_every_ion_is_partly_busy() -> None:
     assert output.result.schedule is not schedule
 
 
+@pytest.mark.skipif(importlib.util.find_spec("ortools") is None, reason="OR-Tools not installed")
+def test_full_sadd_uses_the_ring_wrap_edge() -> None:
+    """Expose wrap-edge transport through the public SADD workflow."""
+    architecture = LinearArchitecture(
+        num_sites=4,
+        processing_zones={"pz": [3]},
+        topology="ring",
+        field_profile=FieldProfile(num_sites=4, site_field=((0, 5.0), (1, 5.0), (2, 5.0), (3, 0.1))),
+    )
+    schedule = _idle_result(architecture, initial_positions=[0], timesteps=5)
+
+    output = run_sadd(
+        _compilation(schedule, architecture),
+        SADDMethod.FULL,
+        SADDConfig(
+            min_window_length=5,
+            max_window_length=5,
+            max_accepted_windows=1,
+            allow_pulses=False,
+            timeout_s=5.0,
+            num_search_workers=1,
+        ),
+    )
+
+    assert Shuttle(ion=0, src=0, dst=3) in output.result.schedule.path
+    assert Shuttle(ion=0, src=3, dst=0) in output.result.schedule.path
+    assert output.result.final_state.positions == ((0, 0),)
+    assert output.report.opportunities[0].accepted
+    output.result.validate()
+
+
 def test_sadd_reports_transport_changes_by_action_type(monkeypatch: pytest.MonkeyPatch) -> None:
     """Describe schedule transport changes rather than only synthesized actions."""
     architecture = LinearArchitecture(num_sites=3, processing_zones={"pz": [1]})

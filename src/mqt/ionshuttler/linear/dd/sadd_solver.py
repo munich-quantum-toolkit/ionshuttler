@@ -453,7 +453,7 @@ def _add_position_and_movement_constraints(
             if rel_t == 0:
                 move[ion, rel_t] = _add_initial_transition_constraints(
                     model,
-                    problem.architecture.num_sites,
+                    problem.architecture,
                     problem.start_positions[ion],
                     destination,
                     f"move_i{ion}_t{rel_t}",
@@ -462,7 +462,7 @@ def _add_position_and_movement_constraints(
                 source = {site: x[ion, rel_t - 1, site] for site in range(problem.architecture.num_sites)}
                 move[ion, rel_t] = _add_transition_constraints(
                     model,
-                    problem.architecture.num_sites,
+                    problem.architecture,
                     source,
                     destination,
                     f"move_i{ion}_t{rel_t}",
@@ -472,13 +472,14 @@ def _add_position_and_movement_constraints(
 
 def _add_initial_transition_constraints(
     model: SolverObject,
-    num_sites: int,
+    architecture: LinearArchitecture,
     source_site: int,
     destination: dict[int, SolverObject],
     name: str,
 ) -> SolverObject:
-    for dst in range(num_sites):
-        if abs(source_site - dst) > 1:
+    reachable_sites = {source_site, *architecture.neighbors(source_site)}
+    for dst in range(architecture.num_sites):
+        if dst not in reachable_sites:
             model.Add(destination[dst] == 0)
     moved = model.NewBoolVar(name)
     model.Add(destination[source_site] == 0).OnlyEnforceIf(moved)
@@ -488,17 +489,18 @@ def _add_initial_transition_constraints(
 
 def _add_transition_constraints(
     model: SolverObject,
-    num_sites: int,
+    architecture: LinearArchitecture,
     source: dict[int, SolverObject],
     destination: dict[int, SolverObject],
     name: str,
 ) -> SolverObject:
-    for src in range(num_sites):
-        for dst in range(num_sites):
-            if abs(src - dst) > 1:
+    for src in range(architecture.num_sites):
+        reachable_sites = {src, *architecture.neighbors(src)}
+        for dst in range(architecture.num_sites):
+            if dst not in reachable_sites:
                 model.Add(source[src] + destination[dst] <= 1)
     same_terms = []
-    for site in range(num_sites):
+    for site in range(architecture.num_sites):
         same = model.NewBoolVar(f"{name}_same_s{site}")
         model.Add(same <= source[site])
         model.Add(same <= destination[site])
@@ -518,6 +520,13 @@ def _add_transport_kind_constraints(
 ) -> tuple[dict[tuple[int, int], SolverObject], dict[tuple[int, int, int], SolverObject]]:
     ions = problem.participating_ions
     num_sites = problem.architecture.num_sites
+    # The numeric ordering retains each undirected architecture edge once.
+    transport_edges = tuple(
+        (site, neighbor)
+        for site in range(num_sites)
+        for neighbor in problem.architecture.neighbors(site)
+        if site < neighbor
+    )
     shuttle = {}
     swap = {}
     for rel_t in range(problem.duration):
@@ -535,7 +544,7 @@ def _add_transport_kind_constraints(
                 if rel_t == 0:
                     src_a = problem.start_positions[ion_a]
                     src_b = problem.start_positions[ion_b]
-                    if abs(src_a - src_b) == 1:
+                    if problem.architecture.are_adjacent(src_a, src_b):
                         patterns.append(
                             _add_bool_and(
                                 model,
@@ -544,9 +553,8 @@ def _add_transport_kind_constraints(
                             )
                         )
                 else:
-                    for left in range(num_sites - 1):
-                        right = left + 1
-                        for src_a, src_b in ((left, right), (right, left)):
+                    for first_site, second_site in transport_edges:
+                        for src_a, src_b in ((first_site, second_site), (second_site, first_site)):
                             patterns.append(
                                 _add_bool_and(
                                     model,

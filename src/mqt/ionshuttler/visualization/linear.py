@@ -31,6 +31,7 @@ class _LinearArchitectureView(Protocol):
 
     num_sites: int
     processing_zones: Mapping[str, Sequence[int]]
+    topology: str
 
 
 _FIGURE_WIDTH_INCHES = 10.0
@@ -91,35 +92,39 @@ class LinearVisualizer:
             )
 
         trajectory_times = {ion: [initial_time] for ion in initial_positions}
-        trajectory_sites = {ion: [site] for ion, site in initial_positions.items()}
+        trajectory_sites: dict[int, list[float]] = {ion: [site] for ion, site in initial_positions.items()}
+        wrap_movements: list[tuple[int, int, int, int, int]] = []
+        ring_size = architecture.num_sites if architecture.topology == "ring" else None
         for item in result.schedule.scheduled_actions:
             action = item.action
             if isinstance(action, Shuttle):
-                _append_linear_movement(
-                    trajectory_times,
-                    trajectory_sites,
+                _append_movement(
+                    trajectory_times[action.ion],
+                    trajectory_sites[action.ion],
+                    wrap_movements,
                     action.ion,
                     item.start_time,
                     item.end_time,
+                    action.src,
                     action.dst,
+                    ring_size,
                 )
             elif isinstance(action, PhysicalSwap):
-                _append_linear_movement(
-                    trajectory_times,
-                    trajectory_sites,
-                    action.ion_a,
-                    item.start_time,
-                    item.end_time,
-                    action.pos_b,
-                )
-                _append_linear_movement(
-                    trajectory_times,
-                    trajectory_sites,
-                    action.ion_b,
-                    item.start_time,
-                    item.end_time,
-                    action.pos_a,
-                )
+                for ion, source, destination in (
+                    (action.ion_a, action.pos_a, action.pos_b),
+                    (action.ion_b, action.pos_b, action.pos_a),
+                ):
+                    _append_movement(
+                        trajectory_times[ion],
+                        trajectory_sites[ion],
+                        wrap_movements,
+                        ion,
+                        item.start_time,
+                        item.end_time,
+                        source,
+                        destination,
+                        ring_size,
+                    )
 
         for ion in initial_positions:
             _append_hold(trajectory_times[ion], trajectory_sites[ion], display_final_time)
@@ -128,12 +133,30 @@ class LinearVisualizer:
         for row, (axis, (window_start, window_end)) in enumerate(zip(axes, time_windows, strict=True)):
             show_legend = row == 0
             for zone_index, zone_sites in enumerate(architecture.processing_zones.values()):
-                axis.axhspan(
-                    min(zone_sites) - 0.45,
-                    max(zone_sites) + 0.45,
-                    alpha=0.1,
-                    label="PZ" if show_legend and zone_index == 0 else "_nolegend_",
-                    zorder=0,
+                for run_index, (first_site, last_site) in enumerate(_consecutive_site_runs(zone_sites)):
+                    axis.axhspan(
+                        first_site - 0.45,
+                        last_site + 0.45,
+                        alpha=0.1,
+                        label="PZ" if show_legend and zone_index == 0 and run_index == 0 else "_nolegend_",
+                        zorder=0,
+                    )
+            if architecture.topology == "ring":
+                axis.axhline(
+                    -0.5,
+                    color="0.35",
+                    linestyle=":",
+                    linewidth=1.2,
+                    label="ring seam" if show_legend else "_nolegend_",
+                    zorder=1,
+                )
+                axis.axhline(
+                    architecture.num_sites - 0.5,
+                    color="0.35",
+                    linestyle=":",
+                    linewidth=1.2,
+                    label="_nolegend_",
+                    zorder=1,
                 )
             for ion in sorted(initial_positions):
                 color = ion_colors.get(ion)
@@ -148,6 +171,26 @@ class LinearVisualizer:
                     zorder=2,
                 )
                 ion_colors.setdefault(ion, line.get_color())
+            wrap_label_available = show_legend
+            for ion, start_time, end_time, source, destination in wrap_movements:
+                for timestep, site in ((start_time, source), (end_time, destination)):
+                    visible = window_start <= timestep < window_end or (
+                        row == len(time_windows) - 1 and timestep == window_end
+                    )
+                    if not visible:
+                        continue
+                    axis.scatter(
+                        timestep,
+                        site,
+                        marker="v" if site == 0 else "^",
+                        s=70,
+                        facecolor=ion_colors[ion],
+                        edgecolor="white",
+                        linewidth=0.8,
+                        label="ring transport" if wrap_label_available else "_nolegend_",
+                        zorder=4,
+                    )
+                    wrap_label_available = False
 
             for item in result.schedule.scheduled_actions:
                 action = item.action
@@ -254,25 +297,52 @@ def _time_windows(initial_time: int, final_time: int) -> tuple[tuple[int, int], 
     )
 
 
-def _append_linear_movement(
-    trajectory_times: dict[int, list[int]],
-    trajectory_sites: dict[int, list[int]],
+def _append_movement(
+    times: list[int],
+    sites: list[float],
+    wrap_movements: list[tuple[int, int, int, int, int]],
     ion: int,
     start_time: int,
     end_time: int,
+    source: int,
     destination: int,
+    ring_size: int | None,
 ) -> None:
-    """Append one hold and movement segment to an ion trajectory."""
-    _append_hold(trajectory_times[ion], trajectory_sites[ion], start_time)
-    trajectory_times[ion].append(end_time)
-    trajectory_sites[ion].append(destination)
+    """Append one transport to an ion trajectory."""
+    _append_hold(times, sites, start_time)
+    if ring_size is not None and abs(destination - source) == ring_size - 1:
+        # A NaN breaks the line so a wrap move cannot look like full-array travel.
+        times.extend((start_time, end_time))
+        sites.extend((float("nan"), destination))
+        wrap_movements.append((ion, start_time, end_time, source, destination))
+    else:
+        times.append(end_time)
+        sites.append(destination)
 
 
-def _append_hold(times: list[int], sites: list[int], until: int) -> None:
+def _append_hold(times: list[int], sites: list[float], until: int) -> None:
     """Extend a trajectory horizontally to one time boundary."""
     if times[-1] < until:
         times.append(until)
         sites.append(sites[-1])
+
+
+def _consecutive_site_runs(sites: Sequence[int]) -> tuple[tuple[int, int], ...]:
+    """Return the consecutive numeric runs that form one processing zone.
+
+    Returns:
+        The inclusive first and last site of each run.
+    """
+    ordered_sites = sorted(sites)
+    runs: list[tuple[int, int]] = []
+    first_site = previous_site = ordered_sites[0]
+    for site in ordered_sites[1:]:
+        if site != previous_site + 1:
+            runs.append((first_site, previous_site))
+            first_site = site
+        previous_site = site
+    runs.append((first_site, previous_site))
+    return tuple(runs)
 
 
 def _draw_gate_interval(axis: Axes, start_time: int, end_time: int, site: int, color: object) -> None:
