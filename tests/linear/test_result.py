@@ -44,7 +44,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from matplotlib.figure import Figure
-    from matplotlib.patches import Rectangle
 
     from mqt.ionshuttler.linear.state import SearchTransition
 
@@ -517,9 +516,13 @@ def test_ring_visualization_splits_wrapping_zones_and_wrap_shuttles() -> None:
     figure = cast("Figure", visualize(result))
 
     axis = figure.axes[0]
-    zone_rectangles = tuple(cast("Rectangle", patch) for patch in axis.patches)
-    zone_spans = tuple((rectangle.get_y(), rectangle.get_y() + rectangle.get_height()) for rectangle in zone_rectangles)
-    assert zone_spans == ((-0.45, 0.45), (3.55, 4.45))
+    # Matplotlib versions represent axhspan regions with different patch classes.
+    zone_spans = tuple(
+        coordinate
+        for patch in axis.patches
+        for coordinate in patch.get_extents().transformed(axis.transData.inverted()).intervaly
+    )
+    assert zone_spans == pytest.approx((-0.45, 0.45, 3.55, 4.45))
     seam_lines = [line for line in axis.lines if line.get_linestyle() == ":"]
     assert [tuple(cast("Sequence[float]", line.get_ydata())) for line in seam_lines] == [
         (-0.5, -0.5),
