@@ -219,13 +219,21 @@ class LinearVisualizer:
                         for ion, site in zip(action.ions, sites, strict=True):
                             _draw_gate_interval(axis, item.start_time, item.end_time, site, ion_colors[ion])
                     if starts_in_window:
-                        axis.plot(
-                            [item.start_time, item.start_time],
-                            [min(sites), max(sites)],
-                            color="0.2",
-                            linewidth=1.5,
-                            zorder=3,
+                        crosses_seam = _crosses_ring_seam(sites, architecture)
+                        connectors = (
+                            ((min(sites), -0.5), (max(sites), architecture.num_sites - 0.5))
+                            if crosses_seam
+                            else ((min(sites), max(sites)),)
                         )
+                        for connector in connectors:
+                            axis.plot(
+                                [item.start_time, item.start_time],
+                                connector,
+                                color="0.2",
+                                linewidth=1.5,
+                                zorder=3,
+                                gid="ring gate connector" if crosses_seam else None,
+                            )
                         axis.scatter(
                             [item.start_time] * len(sites),
                             sites,
@@ -236,12 +244,15 @@ class LinearVisualizer:
                             linewidth=1.5,
                             zorder=4,
                         )
-                        _label_two_qubit_gate(
-                            axis,
-                            item.start_time,
-                            sum(sites) / len(sites),
-                            type(action).__name__,
-                        )
+                        if crosses_seam:
+                            _label_gate(axis, item.start_time, min(sites), type(action).__name__)
+                        else:
+                            _label_two_qubit_gate(
+                                axis,
+                                item.start_time,
+                                sum(sites) / len(sites),
+                                type(action).__name__,
+                            )
                 elif isinstance(action, GlobalGate):
                     if overlaps_window:
                         axis.axvspan(item.start_time, item.end_time, color="0.2", alpha=0.08, zorder=1)
@@ -328,6 +339,25 @@ def _append_hold(times: list[int], sites: list[float], until: int) -> None:
     if times[-1] < until:
         times.append(until)
         sites.append(sites[-1])
+
+
+def _crosses_ring_seam(sites: Sequence[int], architecture: _LinearArchitectureView) -> bool:
+    """Return whether the zone path between gate ions crosses the ring seam.
+
+    A ring zone lists its sites in ring order. A zone that wraps starts on the
+    high side of the seam, so its first site splits the zone into two sides.
+
+    Returns:
+        True if the ions sit on opposite sides of the seam in one wrapping zone.
+    """
+    if architecture.topology != "ring":
+        return False
+    low_site, high_site = min(sites), max(sites)
+    for zone_sites in architecture.processing_zones.values():
+        if low_site in zone_sites and high_site in zone_sites:
+            first_site = zone_sites[0]
+            return first_site != min(zone_sites) and low_site < first_site <= high_site
+    return False
 
 
 def _consecutive_site_runs(sites: Sequence[int]) -> tuple[tuple[int, int], ...]:

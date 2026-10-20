@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from matplotlib.figure import Figure
+    from matplotlib.text import Annotation
 
     from mqt.ionshuttler.linear.state import SearchTransition
 
@@ -581,6 +582,38 @@ def test_ring_visualization_breaks_both_wrap_swap_trajectories() -> None:
         (-0.5, 0),
     ]
     assert len(axis.collections) == 0
+    pyplot.close(figure)
+
+
+def test_ring_visualization_connects_wrap_gates_through_the_seam() -> None:
+    """Draw a two-ion gate in a wrapping zone through the seam, not across the array."""
+    pyplot = pytest.importorskip("matplotlib.pyplot")
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"wrap": [3, 4, 0]}, topology="ring")
+    program = schedule_from_path(
+        [Rzz(ion_a=0, ion_b=1, theta=0.2), AdvanceTime(), AdvanceTime(), Rzz(ion_a=1, ion_b=2, theta=0.2)],
+        create_initial_state(3, architecture, initial_positions=[0, 4, 3]),
+        architecture,
+    )
+    result = CompilationResult(
+        status=CompilationStatus.SUCCESS,
+        schedule=program,
+        architecture=architecture,
+        final_state=architecture.replay_schedule(program),
+    )
+
+    figure = cast("Figure", visualize(result))
+
+    axis = figure.axes[0]
+    wrap_gate, inner_gate = program.scheduled_actions
+    seam_connectors = [line for line in axis.lines if line.get_gid() == "ring gate connector"]
+    assert [tuple(cast("Sequence[float]", line.get_xdata())) for line in seam_connectors] == [
+        (wrap_gate.start_time, wrap_gate.start_time),
+    ] * 2
+    assert [tuple(cast("Sequence[float]", line.get_ydata())) for line in seam_connectors] == [(0, -0.5), (4, 4.5)]
+    connectors = [line for line in axis.lines if line.get_color() == "0.2" and line.get_gid() is None]
+    assert [tuple(cast("Sequence[float]", line.get_ydata())) for line in connectors] == [(3, 4)]
+    labels = {cast("Annotation", text).xy: text.get_text() for text in axis.texts}
+    assert labels == {(wrap_gate.start_time, 0): "Rzz", (inner_gate.start_time, 3.5): "Rzz"}
     pyplot.close(figure)
 
 
