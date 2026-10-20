@@ -39,6 +39,8 @@ _AXIS_WIDTH_INCHES = 8.0
 _ROW_HEIGHT_INCHES = 3.4
 _MIN_TIMESTEP_WIDTH_INCHES = 0.3
 _MAJOR_TICK_INTERVAL = 5
+_RING_SEAM_MARGIN = 0.25
+_WRAP_STUB_DURATION = 0.25
 _MAX_TIMESTEPS_PER_ROW = max(1, int(_AXIS_WIDTH_INCHES / _MIN_TIMESTEP_WIDTH_INCHES))
 _TIMESTEPS_PER_ROW = max(
     _MAJOR_TICK_INTERVAL,
@@ -173,23 +175,19 @@ class LinearVisualizer:
                 ion_colors.setdefault(ion, line.get_color())
             wrap_label_available = show_legend
             for ion, start_time, end_time, source, destination in wrap_movements:
-                for timestep, site in ((start_time, source), (end_time, destination)):
-                    visible = window_start <= timestep < window_end or (
-                        row == len(time_windows) - 1 and timestep == window_end
-                    )
-                    if not visible:
-                        continue
-                    axis.scatter(
-                        timestep,
-                        site,
-                        marker="v" if site == 0 else "^",
-                        s=70,
-                        facecolor=ion_colors[ion],
-                        edgecolor="white",
-                        linewidth=0.8,
-                        label="ring transport" if wrap_label_available else "_nolegend_",
-                        zorder=4,
-                    )
+                if end_time < window_start or start_time > window_end:
+                    continue
+                _draw_wrap_movement(
+                    axis,
+                    start_time,
+                    end_time,
+                    source,
+                    destination,
+                    architecture.num_sites,
+                    ion_colors[ion],
+                    show_label=wrap_label_available,
+                )
+                if wrap_label_available:
                     wrap_label_available = False
 
             for item in result.schedule.scheduled_actions:
@@ -256,9 +254,14 @@ class LinearVisualizer:
                             _global_gate_label(action, tuple(sorted(initial_positions))),
                         )
 
+            site_limits = (
+                (-0.5 - _RING_SEAM_MARGIN, architecture.num_sites - 0.5 + _RING_SEAM_MARGIN)
+                if architecture.topology == "ring"
+                else (-0.5, architecture.num_sites - 0.5)
+            )
             axis.set(
                 xlim=(window_start, window_end),
-                ylim=(-0.5, architecture.num_sites - 0.5),
+                ylim=site_limits,
                 yticks=range(architecture.num_sites),
                 ylabel="site",
             )
@@ -343,6 +346,43 @@ def _consecutive_site_runs(sites: Sequence[int]) -> tuple[tuple[int, int], ...]:
         previous_site = site
     runs.append((first_site, previous_site))
     return tuple(runs)
+
+
+def _draw_wrap_movement(
+    axis: Axes,
+    start_time: int,
+    end_time: int,
+    source: int,
+    destination: int,
+    num_sites: int,
+    color: object,
+    *,
+    show_label: bool,
+) -> None:
+    """Draw short trajectory segments that leave and re-enter at the ring seam."""
+    source_seam = -0.5 if source == 0 else num_sites - 0.5
+    destination_seam = -0.5 if destination == 0 else num_sites - 0.5
+    stub_duration = min(_WRAP_STUB_DURATION, (end_time - start_time) / 2)
+    exit_time = start_time + stub_duration
+    entry_time = end_time - stub_duration
+    axis.plot(
+        [start_time, exit_time],
+        [source, source_seam],
+        color=color,
+        linewidth=1.8,
+        label="ring transport" if show_label else "_nolegend_",
+        zorder=2,
+        gid="ring transport",
+    )
+    axis.plot(
+        [entry_time, end_time],
+        [destination_seam, destination],
+        color=color,
+        linewidth=1.8,
+        label="_nolegend_",
+        zorder=2,
+        gid="ring transport",
+    )
 
 
 def _draw_gate_interval(axis: Axes, start_time: int, end_time: int, site: int, color: object) -> None:

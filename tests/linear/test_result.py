@@ -520,20 +520,24 @@ def test_ring_visualization_splits_wrapping_zones_and_wrap_shuttles() -> None:
     zone_rectangles = tuple(cast("Rectangle", patch) for patch in axis.patches)
     zone_spans = tuple((rectangle.get_y(), rectangle.get_y() + rectangle.get_height()) for rectangle in zone_rectangles)
     assert zone_spans == ((-0.45, 0.45), (3.55, 4.45))
-    seam_lines = [line for line in axis.lines if line.get_label() in {"ring seam", "_nolegend_"}]
-    assert [tuple(cast("Sequence[float]", line.get_ydata())) for line in seam_lines[:2]] == [
+    seam_lines = [line for line in axis.lines if line.get_linestyle() == ":"]
+    assert [tuple(cast("Sequence[float]", line.get_ydata())) for line in seam_lines] == [
         (-0.5, -0.5),
         (4.5, 4.5),
     ]
+    assert axis.get_ylim() == (-0.75, 4.75)
     ion_line = next(line for line in axis.lines if line.get_label() == "ion 0")
     ion_sites = tuple(cast("Sequence[float]", ion_line.get_ydata()))
     assert ion_sites[0] == 0
     assert isnan(ion_sites[1])
     assert ion_sites[2] == 4
-    wrap_markers = [collection for collection in axis.collections if collection.get_label() == "ring transport"]
-    assert len(wrap_markers) == 1
-    assert cast("Any", wrap_markers[0].get_offsets()).tolist() == [[0.0, 0.0]]
-    assert cast("Any", axis.collections[1].get_offsets()).tolist() == [[1.0, 4.0]]
+    wrap_lines = [line for line in axis.lines if line.get_gid() == "ring transport"]
+    assert [tuple(cast("Sequence[float]", line.get_xdata())) for line in wrap_lines] == [(0, 0.25), (0.75, 1)]
+    assert [tuple(cast("Sequence[float]", line.get_ydata())) for line in wrap_lines] == [
+        (0, -0.5),
+        (4.5, 4),
+    ]
+    assert len(axis.collections) == 0
     pyplot.close(figure)
 
 
@@ -559,16 +563,21 @@ def test_ring_visualization_breaks_both_wrap_swap_trajectories() -> None:
     ion_lines = {line.get_label(): tuple(cast("Sequence[float]", line.get_ydata())) for line in axis.lines}
     assert isnan(ion_lines["ion 0"][1])
     assert isnan(ion_lines["ion 1"][1])
-    assert len(axis.collections) == 4
     swap_end = architecture.transport_timing.swap
-    assert sorted(
-        tuple(offset) for collection in axis.collections for offset in cast("Any", collection.get_offsets()).tolist()
-    ) == [
-        (0.0, 0.0),
-        (0.0, 4.0),
-        (swap_end, 0.0),
-        (swap_end, 4.0),
+    wrap_lines = [line for line in axis.lines if line.get_gid() == "ring transport"]
+    assert [tuple(cast("Sequence[float]", line.get_xdata())) for line in wrap_lines] == [
+        (0, 0.25),
+        (swap_end - 0.25, swap_end),
+        (0, 0.25),
+        (swap_end - 0.25, swap_end),
     ]
+    assert [tuple(cast("Sequence[float]", line.get_ydata())) for line in wrap_lines] == [
+        (0, -0.5),
+        (4.5, 4),
+        (4, 4.5),
+        (-0.5, 0),
+    ]
+    assert len(axis.collections) == 0
     pyplot.close(figure)
 
 
