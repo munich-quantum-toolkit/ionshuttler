@@ -381,6 +381,20 @@ def test_permutation_with_one_implicit_zone_needs_no_transport() -> None:
     assert diagnostics.groups == diagnostics.groups_without_moves
 
 
+def test_ring_permutation_needs_no_transport_when_ions_start_in_a_wrapping_zone() -> None:
+    """Run every gate in place when all ions start in a zone that crosses the numbered-site boundary."""
+    architecture = LinearArchitecture(num_sites=6, processing_zones={"wrap": [5, 0, 1]}, topology="ring")
+    circuit = _random_circuit(num_ions=3, num_gates=30, seed=0)
+
+    result = LinearCompiler(architecture, PermutationConfig()).compile(circuit, initial_placement=[5, 0, 1])
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert all(isinstance(action, GateAction) for action in result.path)
+    diagnostics = _permutation_diagnostics(result)
+    assert diagnostics.groups == diagnostics.groups_without_moves
+    result.validate()
+
+
 def test_planning_trace_records_every_group_in_schedule_order() -> None:
     """Record each group once, with its gates, moves, and final placement."""
     circuit = _random_circuit(num_ions=6, num_gates=80, seed=1)

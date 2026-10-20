@@ -244,6 +244,26 @@ def _first_sites_after_ring_cuts(
     return tuple(site for site in range(architecture.num_sites) if site not in forbidden_first_sites)
 
 
+def _shifted_zones_by_first_site(
+    architecture: LinearArchitecture,
+    processing_zones: Sequence[_ProcessingZone],
+) -> dict[int, dict[_ProcessingZone, _ProcessingZone]]:
+    """Return each processing zone in the site order of each valid ring cut.
+
+    Returns:
+        For the first physical site after each valid cut, the zones with sites
+        shifted so that this site becomes position zero.
+    """
+    num_sites = architecture.num_sites
+    return {
+        first_site: {
+            zone: _ProcessingZone(zone.name, tuple((site - first_site) % num_sites for site in zone.sites))
+            for zone in processing_zones
+        }
+        for first_site in _first_sites_after_ring_cuts(architecture, processing_zones)
+    }
+
+
 def _actions_at_physical_sites(
     actions: Sequence[TransportAction],
     first_site: int,
@@ -303,7 +323,8 @@ class _PermutationCompilation:
     architecture: LinearArchitecture
     circuit: Circuit
     processing_zones: tuple[_ProcessingZone, ...]
-    first_sites_after_ring_cuts: tuple[int, ...]
+    # Empty on a chain. See _shifted_zones_by_first_site.
+    shifted_zones_by_first_site: dict[int, dict[_ProcessingZone, _ProcessingZone]]
     gate_kind: list[_GateKind]
     gate_duration: list[int]
     preferred_zone: list[_ProcessingZone | None]
@@ -638,46 +659,45 @@ class _PermutationCompilation:
                 raise _UnavailableTransportError
             return target_site_of_ion, actions
 
-        best: tuple[tuple[int, int, int, int], list[int], list[TransportAction]] | None = None
+        # Every cut keeps the current placement when all group ions already sit in their zones.
+        if all(self.site_of_ion[ion] in zone.sites for ion, zone in zone_by_ion.items()):
+            return list(self.site_of_ion), []
+
+        best: tuple[tuple[int, int, int, int], int, list[int], list[TransportAction]] | None = None
         num_sites = self.architecture.num_sites
-        for first_site in self.first_sites_after_ring_cuts:
+        for first_site, shifted_zones in self.shifted_zones_by_first_site.items():
             if deadline is not None and perf_counter() >= deadline:
                 return None
             # Shift sites so the first site after the cut becomes position zero.
             position_of_ion = [(site - first_site) % num_sites for site in self.site_of_ion]
             ion_at_position = _ion_at_site(position_of_ion, num_sites)
-            positioned_zones = {
-                zone: _ProcessingZone(
-                    zone.name,
-                    tuple((site - first_site) % num_sites for site in zone.sites),
-                )
-                for zone in self.processing_zones
-            }
-            positioned_zone_by_ion = {ion: positioned_zones[zone] for ion, zone in zone_by_ion.items()}
+            shifted_zone_by_ion = {ion: shifted_zones[zone] for ion, zone in zone_by_ion.items()}
             target_position_of_ion = self._target_placement_in_site_order(
                 position_of_ion,
                 ion_at_position,
-                positioned_zone_by_ion,
+                shifted_zone_by_ion,
             )
             position_actions = _route_in_site_order(ion_at_position, target_position_of_ion)
-            actions = _actions_at_physical_sites(position_actions, first_site, num_sites)
+            # Availability and score depend only on action types, so only the selected route needs physical sites.
             if not _route_uses_available_actions(
-                actions,
+                position_actions,
                 swaps_enabled=self.swaps_enabled,
                 shuttles_enabled=self.shuttles_enabled,
             ):
                 continue
-            target_site_of_ion = [(first_site + position) % num_sites for position in target_position_of_ion]
             # Compare work before action counts so configured transport timing decides the cut.
-            score = _route_score(actions, self.architecture, first_site)
-            candidate = score, target_site_of_ion, actions
+            score = _route_score(position_actions, self.architecture, first_site)
             if best is None or score < best[0]:
-                best = candidate
+                best = score, first_site, target_position_of_ion, position_actions
             if deadline is not None and perf_counter() >= deadline:
                 return None
         if best is None:
             raise _UnavailableTransportError
-        return best[1], best[2]
+        _, first_site, target_position_of_ion, position_actions = best
+        return (
+            [(first_site + position) % num_sites for position in target_position_of_ion],
+            _actions_at_physical_sites(position_actions, first_site, num_sites),
+        )
 
     def schedule_move_to(
         self,
@@ -924,8 +944,8 @@ def _initialize_compilation(
         architecture=architecture,
         circuit=circuit,
         processing_zones=processing_zones,
-        first_sites_after_ring_cuts=(
-            _first_sites_after_ring_cuts(architecture, processing_zones) if architecture.topology == "ring" else ()
+        shifted_zones_by_first_site=(
+            _shifted_zones_by_first_site(architecture, processing_zones) if architecture.topology == "ring" else {}
         ),
         gate_kind=gate_kind,
         gate_duration=[architecture.action_duration(gate) for gate in circuit.gates],
