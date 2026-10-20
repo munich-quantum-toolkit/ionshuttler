@@ -100,18 +100,22 @@ def _assert_dependencies_hold(result: LinearCompilationResult, circuit: QuantumC
             assert windows[predecessor][1] <= start
 
 
-def _apply_route(source: Sequence[int], actions: Sequence[Action]) -> list[int]:
+def _apply_route(
+    source: Sequence[int],
+    actions: Sequence[Action],
+    architecture: LinearArchitecture,
+) -> list[int]:
     sites = list(source)
     for action in actions:
         if isinstance(action, Shuttle):
             assert sites[action.ion] == action.src
             assert action.dst not in sites
-            assert abs(action.dst - action.src) == 1
+            assert architecture.are_adjacent(action.src, action.dst)
             sites[action.ion] = action.dst
         else:
             assert isinstance(action, PhysicalSwap)
             assert (sites[action.ion_a], sites[action.ion_b]) == (action.pos_a, action.pos_b)
-            assert abs(action.pos_a - action.pos_b) == 1
+            assert architecture.are_adjacent(action.pos_a, action.pos_b)
             sites[action.ion_a], sites[action.ion_b] = action.pos_b, action.pos_a
     return sites
 
@@ -119,7 +123,7 @@ def _apply_route(source: Sequence[int], actions: Sequence[Action]) -> list[int]:
 def _minimum_move_count(
     source: tuple[int, ...],
     target: tuple[int, ...],
-    num_sites: int,
+    architecture: LinearArchitecture,
 ) -> int:
     distances = {source: 0}
     queue = deque([source])
@@ -129,9 +133,7 @@ def _minimum_move_count(
             return distances[sites]
         ion_at_site = {site: ion for ion, site in enumerate(sites)}
         for ion, site in enumerate(sites):
-            for neighbor in (site - 1, site + 1):
-                if not 0 <= neighbor < num_sites:
-                    continue
+            for neighbor in architecture.neighbors(site):
                 moved = list(sites)
                 other = ion_at_site.get(neighbor)
                 moved[ion] = neighbor
@@ -147,28 +149,50 @@ def _minimum_move_count(
 
 def test_route_to_the_current_placement_is_empty() -> None:
     """Return no transports when every ion already sits on its target site."""
-    assert route_to_placement((1, 2, 4), (1, 2, 4), num_sites=6) == []
+    assert route_to_placement((1, 2, 4), (1, 2, 4), LinearArchitecture(num_sites=6)) == []
 
 
 def test_route_reverses_a_full_line_with_one_swap_per_ion_pair() -> None:
     """Use only physical swaps, one for each pair, when the line has no empty site."""
     source = (0, 1, 2, 3)
     target = (3, 2, 1, 0)
+    architecture = LinearArchitecture(num_sites=4)
 
-    actions = route_to_placement(source, target, num_sites=4)
+    actions = route_to_placement(source, target, architecture)
 
     assert all(isinstance(action, PhysicalSwap) for action in actions)
     assert len(actions) == len(list(combinations(source, 2)))
-    assert _apply_route(source, actions) == list(target)
+    assert _apply_route(source, actions, architecture) == list(target)
 
 
 def test_route_keeps_ion_order_with_shuttles_only() -> None:
     """Move ions with shuttles when the target keeps their order."""
-    actions = route_to_placement((0, 1, 2), (3, 4, 5), num_sites=6)
+    architecture = LinearArchitecture(num_sites=6)
+    actions = route_to_placement((0, 1, 2), (3, 4, 5), architecture)
 
     assert all(isinstance(action, Shuttle) for action in actions)
     assert len(actions) == 9
-    assert _apply_route((0, 1, 2), actions) == [3, 4, 5]
+    assert _apply_route((0, 1, 2), actions, architecture) == [3, 4, 5]
+
+
+def test_ring_route_can_cross_the_numbered_site_boundary() -> None:
+    """Select a line view that retains the wrap edge needed by the route."""
+    architecture = LinearArchitecture(num_sites=5, topology="ring")
+
+    actions = route_to_placement((0,), (4,), architecture)
+
+    assert actions == [Shuttle(ion=0, src=0, dst=4)]
+    assert _apply_route((0,), actions, architecture) == [4]
+
+
+def test_ring_route_breaks_equal_cost_ties_by_first_physical_site() -> None:
+    """Choose the same direction when two ring line views have equal cost."""
+    architecture = LinearArchitecture(num_sites=4, topology="ring")
+
+    assert route_to_placement((0,), (2,), architecture) == [
+        Shuttle(ion=0, src=0, dst=1),
+        Shuttle(ion=0, src=1, dst=2),
+    ]
 
 
 @pytest.mark.parametrize("seed", range(40))
@@ -179,23 +203,24 @@ def test_route_uses_the_fewest_adjacent_moves(seed: int) -> None:
     num_ions = int(rng.integers(1, num_sites + 1))
     source = tuple(int(site) for site in rng.choice(num_sites, size=num_ions, replace=False))
     target = tuple(int(site) for site in rng.choice(num_sites, size=num_ions, replace=False))
+    architecture = LinearArchitecture(num_sites=num_sites)
 
-    actions = route_to_placement(source, target, num_sites=num_sites)
+    actions = route_to_placement(source, target, architecture)
 
-    assert _apply_route(source, actions) == list(target)
-    assert len(actions) == _minimum_move_count(source, target, num_sites)
+    assert _apply_route(source, actions, architecture) == list(target)
+    assert len(actions) == _minimum_move_count(source, target, architecture)
 
 
 def test_route_rejects_repeated_sites() -> None:
     """Reject a placement that puts two ions on one site."""
     with pytest.raises(ValueError, match="distinct sites"):
-        route_to_placement((0, 0), (0, 1), num_sites=3)
+        route_to_placement((0, 0), (0, 1), LinearArchitecture(num_sites=3))
 
 
 def test_route_rejects_placements_of_different_ions() -> None:
     """Reject a target that places a different number of ions than the source."""
     with pytest.raises(ValueError, match="same ions"):
-        route_to_placement((0, 1), (0,), num_sites=3)
+        route_to_placement((0, 1), (0,), LinearArchitecture(num_sites=3))
 
 
 def test_permutation_runs_a_two_ion_gate_in_a_processing_zone() -> None:
@@ -213,6 +238,30 @@ def test_permutation_runs_a_two_ion_gate_in_a_processing_zone() -> None:
     assert [type(item.action) for item in gates] == [Rz, Rx, Rzz]
     assert {item.processing_zone_id for item in gates} == {None, "zone"}
     assert result.final_state.positions == ((0, 4), (1, 5))
+    result.validate()
+
+
+def test_permutation_routes_into_a_wrapping_ring_zone() -> None:
+    """Compile and replay a two-ion gate after transport across the wrap edge."""
+    architecture = LinearArchitecture(
+        num_sites=6,
+        processing_zones={"wrap": [5, 0]},
+        topology="ring",
+    )
+    circuit = QuantumCircuit(2)
+    circuit.rzz(0.3, 0, 1)
+
+    result = LinearCompiler(architecture, PermutationConfig(record_planning_trace=True)).compile(
+        circuit,
+        initial_placement=[0, 1],
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert Shuttle(ion=0, src=0, dst=5) in result.path
+    assert result.final_state.positions == ((0, 5), (1, 0))
+    trace = _permutation_diagnostics(result).planning_trace
+    assert trace is not None
+    assert trace[0].target_site_of_ion == (5, 0)
     result.validate()
 
 
@@ -384,11 +433,49 @@ def test_permutation_fails_when_a_needed_swap_is_unavailable() -> None:
     result.validate()
 
 
+def test_ring_permutation_fails_when_every_cut_needs_an_unavailable_swap() -> None:
+    """Reject all ring routes when full occupancy requires disabled swaps."""
+    architecture = LinearArchitecture(num_sites=3, processing_zones={"wrap": [2, 0]}, topology="ring")
+    circuit = QuantumCircuit(3)
+    circuit.rzz(0.2, 1, 2)
+
+    result = LinearCompiler(
+        architecture,
+        PermutationConfig(action_types=(Shuttle, Rzz)),
+    ).compile(circuit, initial_placement=[0, 1, 2])
+
+    assert result.status is CompilationStatus.FAILED
+    assert result.path == []
+    result.validate()
+
+
 def test_permutation_returns_an_empty_valid_result_without_time() -> None:
     """Report a timeout before the first group when the budget is zero."""
     circuit = _random_circuit(num_ions=3, num_gates=10, seed=0)
 
     result = _compile(circuit, LinearArchitecture(num_sites=6, processing_zones={"zone": [2, 3]}), max_compile_time=0.0)
+
+    assert result.status is CompilationStatus.TIMEOUT
+    assert result.path == []
+    result.validate()
+
+
+def test_ring_permutation_checks_the_deadline_between_cut_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stop ring planning when one evaluated cut exhausts the time budget."""
+    times = iter((0.0, 0.0, 0.0, 2.0, 2.0))
+    monkeypatch.setattr(permutation_module, "perf_counter", lambda: next(times))
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [4]}, topology="ring")
+    circuit = QuantumCircuit(1)
+    circuit.rx(0.2, 0)
+
+    result = compile_with_permutations(
+        create_initial_state(1, architecture, initial_positions=[0]),
+        parse_circuit(circuit),
+        architecture,
+        PermutationConfig(max_compile_time=1.0),
+    )
 
     assert result.status is CompilationStatus.TIMEOUT
     assert result.path == []
