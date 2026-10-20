@@ -103,17 +103,20 @@ on Python class names.
 ## The Linear backend
 
 The {py:mod}`mqt.ionshuttler.linear` package implements this design for a
-site-based model of a linear architecture.
+site-based model with a one-dimensional chain or ring topology (the latter is
+also commonly referred to as a "racetrack" architecture).
 
 {py:class}`~mqt.ionshuttler.linear.compiler.LinearCompiler` accepts a circuit
 and combines it with a {py:class}`~mqt.ionshuttler.linear.LinearArchitecture`
 and a concrete {py:class}`~mqt.ionshuttler.linear.LinearCompilerConfig`: either
 `SearchConfig` or `PermutationConfig`. It returns a `LinearCompilationResult`.
 
-`LinearArchitecture` owns sites, maps processing-zone identifiers to contiguous
-sites, and defines gate and transport timing, the supported action catalog, and
-the rules used to validate and apply each action. Linear-specific transport
-actions and timing live beside that backend; shared gates remain in `core`.
+`LinearArchitecture` owns the site topology and the sites assigned to each
+processing zone. Each processing zone must form one connected region. The
+architecture also defines gate and transport timing, the supported action
+catalog, and the rules used to validate and apply each action. Linear-specific
+transport actions and timing live beside that backend; shared gates remain in
+`core`.
 
 The private Linear search state records ion positions, device time, resource
 availability, and circuit progress. Search advances time with an internal

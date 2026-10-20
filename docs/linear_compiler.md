@@ -126,15 +126,31 @@ architecture = LinearArchitecture.from_json(
 ```
 
 Use `LinearArchitecture.load("architecture.json")` to read the same JSON
-representation from a file. The JSON object may also contain `gate_timing`,
-`transport_timing`, `field_profile`, and `supported_action_types`; omitted
-fields use their defaults. The architecture, `gate_timing`, and
-`transport_timing` objects reject unknown fields.
+representation from a file. The JSON object may also contain `topology`,
+`gate_timing`, `transport_timing`, `field_profile`, and
+`supported_action_types`; omitted fields use their defaults. The architecture,
+`gate_timing`, and `transport_timing` objects reject unknown fields.
 
-Site numbers start at zero. Each processing zone must contain one or more
-contiguous sites, and processing zones may not overlap. A one-qubit gate needs
+Site numbers start at zero. The default `"chain"` topology connects consecutive
+site numbers. The `"ring"` topology requires at least three sites and also
+connects the last site to site zero. Both compiler strategies use these
+connections for shuttles, swaps, and distance calculations.
+
+This minimal ring has a processing zone that crosses the numeric boundary:
+
+```{code-cell} ipython3
+ring_architecture = LinearArchitecture(
+    num_sites=6,
+    processing_zones={"gate_zone": [5, 0]},
+    topology="ring",
+)
+```
+
+Each processing zone must contain one or more sites that form a connected run,
+and processing zones may not overlap. A ring zone can cross the boundary between
+the last site and site zero or cover the complete ring. A one-qubit gate needs
 its ion in a processing zone. A two-qubit gate needs both ions in the same zone;
-they do not need to occupy adjacent sites within that zone. If
+they do not need to occupy connected sites within that zone. If
 `processing_zones` is omitted, all sites form one processing zone.
 
 An architecture may also contain a site-dependent `field_profile`. The Linear
@@ -209,16 +225,21 @@ The permutation strategy works as follows:
    {py:func}`~mqt.ionshuttler.partitioning.compute_fine_grained_gate_partition`
    to assign each gate to a preferred processing zone.
 2. It groups ready gates that fit one ion placement.
-3. It analytically computes a target placement and a minimum-length sequence of
-   adjacent exchanges from the current placement.
+3. It analytically computes a target placement and a sequence of connected-site
+   exchanges from the current placement.
 4. It schedules the exchanges as swaps and shuttles, runs the gates, and
    repeats.
 
 Pre-partitioning uses the number of sites in each processing zone as a soft
 capacity. Scheduling still enforces the physical capacity.
 
-Independent actions from neighboring groups can overlap. The exchange sequence
-for a fixed source and target is minimal; the complete schedule is heuristic.
+Independent actions from neighboring groups can overlap. On a chain, the
+exchange sequence for a fixed source and target is minimal. On a ring, the
+compiler cuts the ring at each valid position, i.e., those that do not cut into
+a processing zone. The compiler treats the remaining site order as a chain and
+selects the lowest-cost resulting route. This route is the best among those
+evaluated cuts, but it is not guaranteed to be the global minimum over all ring
+routes. The complete schedule is heuristic for both topologies.
 
 The permutation strategy always assigns preferred processing zones before
 scheduling.
@@ -484,7 +505,9 @@ axis. Each ion follows a colored trajectory, transport appears as movement
 between sites, processing zones form horizontal bands, and markers identify gate
 applications. Long schedules wrap onto consecutive 25-timestep rows with major
 ticks every five timesteps. A partial final row is proportionally narrower so
-that every row uses the same timestep scale.
+that every row uses the same timestep scale. For a ring, dotted lines mark the
+boundary between the last site and site zero. A transport across this boundary
+leaves and re-enters the plot instead of crossing every intermediate site.
 
 ## See also
 
