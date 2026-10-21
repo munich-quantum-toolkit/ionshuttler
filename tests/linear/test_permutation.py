@@ -463,6 +463,22 @@ def test_ring_permutation_fails_when_every_cut_needs_an_unavailable_swap() -> No
     result.validate()
 
 
+def test_ring_permutation_swaps_ions_when_full_occupancy_blocks_shuttles() -> None:
+    """Swap ions at physical ring sites when no empty site allows a shuttle."""
+    architecture = LinearArchitecture(num_sites=3, processing_zones={"wrap": [2, 0]}, topology="ring")
+    circuit = QuantumCircuit(3)
+    circuit.rzz(0.2, 1, 2)
+
+    result = LinearCompiler(architecture, PermutationConfig()).compile(circuit, initial_placement=[0, 1, 2])
+
+    assert result.status is CompilationStatus.SUCCESS
+    swaps = [action for action in result.path if isinstance(action, PhysicalSwap)]
+    assert len(swaps) == 1
+    assert all(isinstance(action, PhysicalSwap | Rzz) for action in result.path)
+    assert {site for ion, site in result.final_state.positions if ion in {1, 2}} == {2, 0}
+    result.validate()
+
+
 def test_permutation_returns_an_empty_valid_result_without_time() -> None:
     """Report a timeout before the first group when the budget is zero."""
     circuit = _random_circuit(num_ions=3, num_gates=10, seed=0)

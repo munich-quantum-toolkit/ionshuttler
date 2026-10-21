@@ -545,6 +545,29 @@ def test_ring_visualization_splits_wrapping_zones_and_wrap_shuttles() -> None:
     pyplot.close(figure)
 
 
+def test_ring_visualization_draws_wrap_shuttles_only_in_overlapping_rows() -> None:
+    """Draw the seam segments of a wrap shuttle only in the plot rows that contain it."""
+    pyplot = pytest.importorskip("matplotlib.pyplot")
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2]}, topology="ring")
+    program = schedule_from_path(
+        [Shuttle(ion=0, src=0, dst=4), *[AdvanceTime()] * 30],
+        create_initial_state(1, architecture, initial_positions=[0]),
+        architecture,
+    )
+    result = CompilationResult(
+        status=CompilationStatus.SUCCESS,
+        schedule=program,
+        architecture=architecture,
+        final_state=architecture.replay_schedule(program),
+    )
+
+    figure = cast("Figure", visualize(result))
+
+    assert len(figure.axes) == 2
+    assert [sum(line.get_gid() == "ring transport" for line in axis.lines) for axis in figure.axes] == [2, 0]
+    pyplot.close(figure)
+
+
 def test_ring_visualization_breaks_both_wrap_swap_trajectories() -> None:
     """Break both ion trajectories when a physical swap crosses the ring seam."""
     pyplot = pytest.importorskip("matplotlib.pyplot")

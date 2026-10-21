@@ -689,8 +689,6 @@ class _PermutationCompilation:
             score = _route_score(position_actions, self.architecture, first_site)
             if best is None or score < best[0]:
                 best = score, first_site, target_position_of_ion, position_actions
-            if deadline is not None and perf_counter() >= deadline:
-                return None
         if best is None:
             raise _UnavailableTransportError
         _, first_site, target_position_of_ion, position_actions = best

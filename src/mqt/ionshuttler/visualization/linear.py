@@ -353,11 +353,10 @@ def _crosses_ring_seam(sites: Sequence[int], architecture: _LinearArchitectureVi
     if architecture.topology != "ring":
         return False
     low_site, high_site = min(sites), max(sites)
-    for zone_sites in architecture.processing_zones.values():
-        if low_site in zone_sites and high_site in zone_sites:
-            first_site = zone_sites[0]
-            return first_site != min(zone_sites) and low_site < first_site <= high_site
-    return False
+    return any(
+        low_site in zone_sites and high_site in zone_sites and low_site < zone_sites[0] <= high_site
+        for zone_sites in architecture.processing_zones.values()
+    )
 
 
 def _consecutive_site_runs(sites: Sequence[int]) -> tuple[tuple[int, int], ...]:
