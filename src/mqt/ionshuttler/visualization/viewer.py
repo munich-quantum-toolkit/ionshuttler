@@ -203,7 +203,13 @@ def _page(token: str) -> str:
     Returns:
         The HTML document.
     """
-    return viewer_page(token, {"GridDrawing": files("mqt.ionshuttler.visualization.grid").joinpath("draw.js")})
+    return viewer_page(
+        token,
+        {
+            "GridDrawing": files("mqt.ionshuttler.visualization.grid").joinpath("draw.js"),
+            "LinearDrawing": files("mqt.ionshuttler.visualization.linear").joinpath("draw.js"),
+        },
+    )
 
 
 def _open_result(data: object, title: str) -> Mapping[str, object]:
@@ -222,14 +228,22 @@ def _open_result(data: object, title: str) -> Mapping[str, object]:
         msg = "the file is not an IonShuttler compilation result"
         raise ValueError(msg)
     architecture = data.get("architecture")
-    if not isinstance(architecture, dict) or architecture.get("schema") != GRID_ARCHITECTURE_SCHEMA:
-        msg = "the viewer can show Grid results only; Linear results are not supported yet"
-        raise ValueError(msg)
+    if not isinstance(architecture, dict):
+        msg = "the result has no architecture"
+        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - JSON format errors use ValueError.
+    if architecture.get("schema") == GRID_ARCHITECTURE_SCHEMA:
+        from mqt.ionshuttler.grid.result import result_from_dict  # ruff: ignore[import-outside-top-level]
+        from mqt.ionshuttler.visualization.grid import GridVisualizer  # ruff: ignore[import-outside-top-level]
 
-    from mqt.ionshuttler.grid.result import result_from_dict  # ruff: ignore[import-outside-top-level]
-    from mqt.ionshuttler.visualization.grid import GridVisualizer  # ruff: ignore[import-outside-top-level]
+        view = GridVisualizer().visualize(result_from_dict(data)).player_data()
+    else:
+        # Linear architectures store their sites and no schema name.
+        from mqt.ionshuttler.linear.result import (  # ruff: ignore[import-outside-top-level]
+            result_from_dict as linear_result_from_dict,
+        )
+        from mqt.ionshuttler.visualization.linear import LinearVisualizer  # ruff: ignore[import-outside-top-level]
 
-    view = GridVisualizer().visualize(result_from_dict(data)).player_data()
+        view = LinearVisualizer().visualize(linear_result_from_dict(data)).player_data()
     view["title"] = title
     return view
 

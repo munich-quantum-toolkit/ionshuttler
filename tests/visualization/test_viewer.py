@@ -21,6 +21,10 @@ import mqt.ionshuttler.visualization.viewer as viewer_module
 from mqt.ionshuttler.core.result import RESULT_SCHEMA, CompilationResult, CompilationStatus
 from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.grid import GridArchitecture, GridMachineState, Junction, JunctionMove, Segment
+from mqt.ionshuttler.linear.actions import Shuttle
+from mqt.ionshuttler.linear.architecture import LinearArchitecture
+from mqt.ionshuttler.linear.schedule import schedule_from_path
+from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 from mqt.ionshuttler.visualization import GridVisualizer, open_viewer
 
 if TYPE_CHECKING:
@@ -43,6 +47,21 @@ def _grid_result() -> CompilationResult:
     scheduled: ScheduledAction[Action] = ScheduledAction(0, move, 0, architecture.action_duration(move))
     schedule: Schedule[Action, GridMachineState] = Schedule(
         (scheduled,), scheduled.end_time, architecture.initial_state({"left": (0,)})
+    )
+    return CompilationResult(
+        status=CompilationStatus.SUCCESS,
+        schedule=schedule,
+        architecture=architecture,
+        final_state=architecture.replay_schedule(schedule),
+    )
+
+
+def _linear_result() -> CompilationResult:
+    architecture = LinearArchitecture(num_sites=2, processing_zones={"pz": [1]})
+    schedule = schedule_from_path(
+        [Shuttle(ion=0, src=0, dst=1), AdvanceTime()],
+        create_initial_state(1, architecture, initial_positions=[0]),
+        architecture,
     )
     return CompilationResult(
         status=CompilationStatus.SUCCESS,
@@ -137,25 +156,31 @@ def test_server_turns_uploaded_files_into_views(server: viewer_module._ViewerSer
     assert (status, body) == (400, {"error": "cannot show this result"})
 
 
-def test_viewer_opens_saved_grid_results() -> None:
-    """Replay saved Grid results and refuse other files with a clear message."""
-    view = viewer_module._open_result(json.loads(_grid_result().to_json()), "saved")
+def test_viewer_opens_saved_grid_and_linear_results() -> None:
+    """Replay saved Grid and Linear results and refuse other files with a clear message."""
+    grid = viewer_module._open_result(json.loads(_grid_result().to_json()), "saved")
+    linear = viewer_module._open_result(json.loads(_linear_result().to_json()), "chain")
 
-    assert view["title"] == "saved"
-    assert view["drawing_name"] == "GridDrawing"
-    assert cast("dict[str, Any]", view["drawing"])["panels"][0]["end"] == 1
+    assert grid["title"] == "saved"
+    assert grid["drawing_name"] == "GridDrawing"
+    assert cast("dict[str, Any]", grid["drawing"])["panels"][0]["end"] == 1
+    assert linear["title"] == "chain"
+    assert linear["drawing_name"] == "LinearDrawing"
+    assert cast("dict[str, Any]", linear["drawing"])["panels"][0]["sites"] == 2
     with pytest.raises(ValueError, match="not an IonShuttler compilation result"):
         viewer_module._open_result({"schema": "other"}, "other")
-    with pytest.raises(ValueError, match="Linear results are not supported yet"):
-        viewer_module._open_result({"schema": RESULT_SCHEMA, "architecture": {"num_sites": 2}}, "linear")
+    with pytest.raises(ValueError, match="the result has no architecture"):
+        viewer_module._open_result({"schema": RESULT_SCHEMA}, "empty")
 
 
-def test_viewer_page_contains_the_player_and_the_grid_drawing() -> None:
+def test_viewer_page_contains_the_player_and_every_drawing() -> None:
     """Serve one page with the player, the file picker, and every drawing script."""
     page = viewer_module._page("secret")
 
+    assert "const PlayerStyle" in page
     assert "const GridDrawing" in page
-    assert 'Viewer.start("secret", { GridDrawing });' in page
+    assert "const LinearDrawing" in page
+    assert 'Viewer.start("secret", { GridDrawing, LinearDrawing });' in page
     assert 'class="viewer-file"' in page
     assert '<template class="viewer-player"><main class="player"' in page
 

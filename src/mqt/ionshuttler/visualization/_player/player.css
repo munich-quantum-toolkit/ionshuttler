@@ -37,19 +37,19 @@
 
 .player[data-theme="dark"],
 .viewer[data-theme="dark"] {
-  --player-background: #0d0f12;
-  --player-card: #121418;
-  --player-surface: #1a1d22;
-  --player-surface-hover: #23272d;
-  --player-border: #23272d;
-  --player-text: #e4e7eb;
-  --player-muted: #8b939e;
-  --player-accent: #e4e7eb;
-  --player-accent-soft: rgb(228 231 235 / 9%);
-  --player-on-accent: #121418;
+  --player-background: #0b0e13;
+  --player-card: #0f1218;
+  --player-surface: #161b23;
+  --player-surface-hover: #1e2430;
+  --player-border: #1e2430;
+  --player-text: #e2e8f0;
+  --player-muted: #8b95a5;
+  --player-accent: #e2e8f0;
+  --player-accent-soft: rgb(226 232 240 / 9%);
+  --player-on-accent: #0f1218;
   --player-focus: #7aa2d6;
   --player-switch-on: #30a957;
-  --player-switch-off: #3a3f47;
+  --player-switch-off: #2f3745;
   --player-shadow: none;
   color-scheme: dark;
 }
@@ -57,19 +57,19 @@
 @media (prefers-color-scheme: dark) {
   .player[data-theme="auto"],
   .viewer[data-theme="auto"] {
-    --player-background: #0d0f12;
-    --player-card: #121418;
-    --player-surface: #1a1d22;
-    --player-surface-hover: #23272d;
-    --player-border: #23272d;
-    --player-text: #e4e7eb;
-    --player-muted: #8b939e;
-    --player-accent: #e4e7eb;
-    --player-accent-soft: rgb(228 231 235 / 9%);
-    --player-on-accent: #121418;
+    --player-background: #0b0e13;
+    --player-card: #0f1218;
+    --player-surface: #161b23;
+    --player-surface-hover: #1e2430;
+    --player-border: #1e2430;
+    --player-text: #e2e8f0;
+    --player-muted: #8b95a5;
+    --player-accent: #e2e8f0;
+    --player-accent-soft: rgb(226 232 240 / 9%);
+    --player-on-accent: #0f1218;
     --player-focus: #7aa2d6;
     --player-switch-on: #30a957;
-    --player-switch-off: #3a3f47;
+    --player-switch-off: #2f3745;
     --player-shadow: none;
     color-scheme: dark;
   }
@@ -107,10 +107,18 @@ body {
   outline-offset: 2px;
 }
 
+/* The canvas card and the optional side bar share one row. */
+.player-main {
+  display: flex;
+  gap: 10px;
+}
+
 /* Canvas card. The canvas keeps the configured aspect ratio but never grows
    taller than the window minus the controls. The drawing fits any shape. */
 .player-stage {
   position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   border: 1px solid var(--player-border);
   border-radius: var(--player-radius);
@@ -156,6 +164,23 @@ body {
 
 .player-edit-hint {
   color: var(--player-muted);
+}
+
+.player-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--player-muted);
+}
+
+.player-size[hidden] {
+  display: none;
+}
+
+.player-size-input {
+  width: 7rem;
+  accent-color: var(--player-accent);
+  cursor: pointer;
 }
 
 /* Control dock */
@@ -650,6 +675,109 @@ body {
 .player-paint-field input::-webkit-color-swatch {
   border: 0;
   border-radius: 5px;
+}
+
+/* Side bar. Its content scrolls, so the canvas card alone sets the row height. */
+.player-sidebar {
+  position: relative;
+  flex: 0 0 min(22rem, 38%);
+}
+
+.player-sidebar-inner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--player-border);
+  border-radius: var(--player-radius);
+  background: var(--player-card);
+  box-shadow: var(--player-shadow);
+}
+
+.player-sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 8px 8px 14px;
+  border-bottom: 1px solid var(--player-border);
+}
+
+.player .player-sidebar-close {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+.player-sidebar-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 4px 14px 12px;
+  font-size: 0.85em;
+}
+
+.player-details + .player-details {
+  border-top: 1px solid var(--player-border);
+}
+
+.player-details h3 {
+  margin: 10px 0 2px;
+  font-size: 1em;
+}
+
+.player-details dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 5px 12px;
+  margin: 8px 0;
+}
+
+.player-details dt {
+  color: var(--player-muted);
+}
+
+.player-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.player-details dd > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  line-height: 1.6;
+}
+
+.player-details dd > div + div {
+  margin-top: 3px;
+}
+
+/* A short label in a rounded frame, such as an ion or a processing zone. */
+.player-pill {
+  display: inline-block;
+  padding: 0 0.5em;
+  border: 1.5px solid var(--pill-border, var(--player-border));
+  border-radius: 999px;
+  background: var(--pill-fill, transparent);
+  color: var(--pill-ink, inherit);
+  font-weight: 600;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .player-main {
+    flex-direction: column;
+  }
+
+  .player-sidebar {
+    flex-basis: auto;
+  }
+
+  .player-sidebar-inner {
+    position: static;
+    max-height: 45vh;
+  }
 }
 
 /* Local viewer page */

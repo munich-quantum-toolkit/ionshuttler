@@ -1,43 +1,76 @@
 <main class="player" data-theme="dark">
-  <div class="player-stage">
-    <canvas
-      class="player-canvas"
-      role="img"
-      aria-label="Schedule drawing"
-    ></canvas>
-    <div class="player-edit-bar" hidden>
-      <span class="player-edit-hint"
-        >Drag junctions. Click an ion or processing zone to color it.</span
-      >
-      <button type="button" class="player-button player-copy">
-        Copy settings
-      </button>
-      <button type="button" class="player-button player-reset">Reset</button>
-      <button type="button" class="player-button player-primary player-done">
-        Done
-      </button>
-    </div>
-    <div class="player-paint" role="dialog" aria-label="Colors" hidden>
-      <div class="player-paint-head">
-        <strong class="player-paint-title"></strong>
-        <button
-          type="button"
-          class="player-icon player-paint-close"
-          aria-label="Close"
-          title="Close"
+  <div class="player-main">
+    <div class="player-stage">
+      <canvas
+        class="player-canvas"
+        role="img"
+        aria-label="Schedule drawing"
+      ></canvas>
+      <div class="player-edit-bar" hidden>
+        <span class="player-edit-hint"
+          >Drag junctions. Click an ion or processing zone to color it.</span
         >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4z"
-            />
-          </svg>
+        <label class="player-size" title="Size of ions and junctions" hidden>
+          <span>Size</span>
+          <input
+            type="range"
+            class="player-size-input"
+            min="0.25"
+            max="2"
+            step="0.05"
+            aria-label="Size of ions and junctions"
+          />
+        </label>
+        <button type="button" class="player-button player-copy">
+          Copy settings
+        </button>
+        <button type="button" class="player-button player-reset">Reset</button>
+        <button type="button" class="player-button player-primary player-done">
+          Done
         </button>
       </div>
-      <div class="player-paint-fields"></div>
-      <button type="button" class="player-button player-paint-reset">
-        Use original colors
-      </button>
+      <div class="player-paint" role="dialog" aria-label="Colors" hidden>
+        <div class="player-paint-head">
+          <strong class="player-paint-title"></strong>
+          <button
+            type="button"
+            class="player-icon player-paint-close"
+            aria-label="Close"
+            title="Close"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4z"
+              />
+            </svg>
+          </button>
+        </div>
+        <div class="player-paint-fields"></div>
+        <button type="button" class="player-button player-paint-reset">
+          Use original colors
+        </button>
+      </div>
     </div>
+    <aside class="player-sidebar" hidden>
+      <div class="player-sidebar-inner">
+        <div class="player-sidebar-head">
+          <strong class="player-sidebar-title"></strong>
+          <button
+            type="button"
+            class="player-icon player-sidebar-close"
+            aria-label="Close"
+            title="Close"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4z"
+              />
+            </svg>
+          </button>
+        </div>
+        <div class="player-sidebar-body"></div>
+      </div>
+    </aside>
   </div>
   <div class="player-dock">
     <div class="player-transport">
@@ -125,6 +158,19 @@
       <div class="player-choices"></div>
       <div class="player-chips" role="group" aria-label="Labels"></div>
       <span class="player-spacer"></span>
+      <button
+        type="button"
+        class="player-button player-sidebar-toggle"
+        aria-expanded="false"
+        hidden
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm10 2v12h5V6z"
+          />
+        </svg>
+        <span class="player-sidebar-label"></span>
+      </button>
       <button
         type="button"
         class="player-button player-edit-toggle"

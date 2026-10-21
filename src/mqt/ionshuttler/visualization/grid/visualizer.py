@@ -23,11 +23,12 @@ from .._player.settings import (
     check_display_settings,
     check_flag,
     require_positive_int,
-    require_time,
+    require_positive_number,
     video_frame_times,
     video_range,
 )
-from ._scene import COLORS, build_scene
+from .._player.style import COLORS, color_changes, color_mode, color_mode_option, zone_colors
+from ._scene import build_scene
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
     from mqt.ionshuttler.core.result import CompilationResult
 
     from .._player.page import PlayerOption
-    from ._colors import ColorChange
+    from .._player.style import IonColors
     from ._matplotlib import GridDrawing
     from ._scene import Scene
 
@@ -48,44 +49,8 @@ _FLAGS = (
     ("show_processing_zone_labels", "Processing-zone labels"),
     ("show_hardware_ids", "Segment and junction IDs"),
 )
-_COLOR_MODES = (("distinct", "Distinct"), ("single", "Single"), ("custom", "Custom"))
-
-
-@dataclass(frozen=True)
-class IonColor:
-    """Colors and an optional legend label for one ion.
-
-    Colors accept any Matplotlib color, for example ``"#e11d48"``,
-    ``"crimson"``, or ``"tab:blue"``.
-
-    Attributes:
-        border: Color of the ion's ring. ``None`` keeps a neutral gray ring.
-        fill: Color inside the ring. ``None`` keeps it white. The ion label
-            switches to white text on dark fills.
-        label: Legend entry for ions with these colors, for example
-            ``"ancilla"``. Ions with the same label share one entry.
-    """
-
-    border: str | None = None
-    fill: str | None = None
-    label: str | None = None
-
-    def __post_init__(self) -> None:
-        """Validate the colors and the label.
-
-        Raises:
-            TypeError: If the label is not a string.
-        """
-        for name in ("border", "fill"):
-            value = getattr(self, name)
-            if value is not None:
-                _hex_color(value, name)
-        if self.label is not None and not isinstance(self.label, str):
-            msg = "label must be a string"
-            raise TypeError(msg)
-
-
-IonColors = Literal["distinct", "single"] | Mapping[int, IonColor | Sequence[tuple[int, IonColor]]]
+# The view offers this side bar only for results with a compiler planning trace.
+_PLANNING_SIDEBAR = ("show_compiler_planning", "Compiler planning")
 
 
 @dataclass(frozen=True)
@@ -121,13 +86,25 @@ class GridVisualizer:
             schedule end.
         ion_colors: ``"distinct"`` gives every ion its own ring color,
             ``"single"`` gives all ions one color, and a mapping sets the
-            colors of chosen ions. A mapping value is an :class:`IonColor` for
+            colors of chosen ions. A mapping value is an
+            :class:`~mqt.ionshuttler.visualization.IonColor` for
             the whole schedule, or ``(time, IonColor)`` pairs in increasing
             time order: each pair applies from its time on. Ions without an
             entry, and ions before their first time, have a gray ring. The
             view can switch between all three modes.
         processing_zone_colors: Colors of chosen processing zones, keyed by
             zone ID. Other zones take distinct colors.
+        show_compiler_planning: Whether the interactive view starts with the
+            compiler planning side bar open. The side bar and marks on the
+            drawing show what the compiler intended to do at the latest
+            decision before the current time. Only results compiled with
+            ``record_planning_trace=True`` have them. Matplotlib figures and
+            videos do not draw them.
+        marker_size: Size of ions, junctions, and segment lines relative to
+            the automatic size. At 1, the ions of the fullest segment fit side
+            by side with a small gap. Use a smaller value for dense layouts. The size does
+            not move any junction. The view's layout editor has a slider for
+            it.
     """
 
     junction_coordinates: JunctionCoordinates | None = None
@@ -143,6 +120,8 @@ class GridVisualizer:
     video_end_time: int | None = None
     ion_colors: IonColors = "distinct"
     processing_zone_colors: Mapping[str, str] | None = None
+    show_compiler_planning: bool = False
+    marker_size: float = 1.0
 
     def __post_init__(self) -> None:
         """Validate the display settings.
@@ -159,10 +138,11 @@ class GridVisualizer:
             video_start_time=self.video_start_time,
             video_end_time=self.video_end_time,
         )
-        for name, _label in _FLAGS:
+        for name, _label in (*_FLAGS, _PLANNING_SIDEBAR):
             check_flag(getattr(self, name), name)
-        _color_changes(self)
-        _zone_colors(self)
+        require_positive_number(self.marker_size, "marker_size")
+        color_changes(self.ion_colors)
+        zone_colors(self.processing_zone_colors)
 
     def visualize(self, result: CompilationResult, /) -> GridView:
         """Return an interactive view of a Grid result.
@@ -339,22 +319,25 @@ class GridView:
                 "show_ion_labels": settings.show_ion_labels,
                 "show_processing_zone_labels": settings.show_processing_zone_labels,
                 "show_hardware_ids": settings.show_hardware_ids,
+                "show_compiler_planning": settings.show_compiler_planning,
+                "marker_size": settings.marker_size,
                 "timesteps_per_second": settings.timesteps_per_second,
                 "width": settings.width,
                 "height": settings.height,
                 "frames_per_second": settings.frames_per_second,
                 "video_start_time": start,
                 "video_end_time": end,
-                "ion_colors": _color_mode(settings),
+                "ion_colors": color_mode(settings.ion_colors),
             },
             options=_options(settings),
             drawing={
                 "colors": COLORS,
                 "panels": [scene.to_dict() for scene in self._scenes],
-                "ion_colors": {str(ion): changes for ion, changes in _color_changes(settings).items()},
-                "zone_colors": _zone_colors(settings),
+                "ion_colors": {str(ion): changes for ion, changes in color_changes(settings.ion_colors).items()},
+                "zone_colors": zone_colors(settings.processing_zone_colors),
             },
             drawing_name="GridDrawing",
+            sidebar=_PLANNING_SIDEBAR if any(scene.planning is not None for scene in self._scenes) else None,
         )
 
     def save(self, path: str | Path) -> Path:
@@ -398,7 +381,7 @@ class GridView:
         from matplotlib.backends.backend_agg import FigureCanvasAgg  # ruff: ignore[import-outside-top-level]
         from matplotlib.figure import Figure  # ruff: ignore[import-outside-top-level]
 
-        from ._matplotlib import save_video  # ruff: ignore[import-outside-top-level]
+        from .._player.video import save_video  # ruff: ignore[import-outside-top-level]
 
         settings = self.visualizer
         start, end = self._video_range(start_time, end_time)
@@ -457,118 +440,20 @@ def _drawing(settings: GridVisualizer, figure: Figure, scenes: tuple[Scene, ...]
         show_ion_labels=settings.show_ion_labels,
         show_processing_zone_labels=settings.show_processing_zone_labels,
         show_hardware_ids=settings.show_hardware_ids,
-        ion_color_mode=_color_mode(settings),
-        ion_color_changes=_color_changes(settings),
-        zone_colors=_zone_colors(settings),
+        ion_color_mode=color_mode(settings.ion_colors),
+        ion_color_changes=color_changes(settings.ion_colors),
+        zone_colors=zone_colors(settings.processing_zone_colors),
+        marker_size=settings.marker_size,
     )
-
-
-def _color_mode(settings: GridVisualizer) -> str:
-    """Return the ion color mode: ``"distinct"``, ``"single"``, or ``"custom"``.
-
-    Returns:
-        The mode.
-    """
-    return settings.ion_colors if isinstance(settings.ion_colors, str) else "custom"
 
 
 def _options(settings: GridVisualizer) -> list[PlayerOption]:
     """Return the label checkboxes and the ion color choice of the browser player.
 
-    The color choice offers "Custom" only when the settings define ion colors.
-
     Returns:
         The player options.
     """
-    modes = [mode for mode in _COLOR_MODES if mode[0] != "custom" or _color_mode(settings) == "custom"]
-    return [*_FLAGS, ("ion_colors", "Ion colors", modes)]
+    return [*_FLAGS, color_mode_option(settings.ion_colors)]
 
 
-def _color_changes(settings: GridVisualizer) -> dict[int, list[ColorChange]]:
-    """Validate the custom ion colors and list each ion's color changes in time order.
-
-    Returns:
-        The changes keyed by ion.
-
-    Raises:
-        TypeError: If an entry has the wrong type.
-        ValueError: If a mode name is unknown or times are not increasing.
-    """
-    colors = settings.ion_colors
-    if isinstance(colors, str):
-        if colors not in {"distinct", "single"}:
-            msg = "ion_colors must be 'distinct', 'single', or a mapping from ions to colors"
-            raise ValueError(msg)
-        return {}
-    if not isinstance(colors, Mapping):
-        msg = "ion_colors must be 'distinct', 'single', or a mapping from ions to colors"
-        raise TypeError(msg)
-    changes: dict[int, list[ColorChange]] = {}
-    for ion, entry in colors.items():
-        if isinstance(ion, bool) or not isinstance(ion, int) or ion < 0:
-            msg = "ion_colors keys must be non-negative ion IDs"
-            raise TypeError(msg)
-        timeline = [(0, entry)] if isinstance(entry, IonColor) else list(entry)
-        times = []
-        for item in timeline:
-            if not (isinstance(item, tuple) and len(item) == 2 and isinstance(item[1], IonColor)):
-                msg = f"colors of ion {ion} must be an IonColor or (time, IonColor) pairs"
-                raise TypeError(msg)
-            require_time(item[0], f"color time of ion {ion}")
-            times.append(item[0])
-        if times != sorted(set(times)):
-            msg = f"color times of ion {ion} must increase"
-            raise ValueError(msg)
-        changes[ion] = [
-            (
-                time,
-                None if color.border is None else _hex_color(color.border, "border"),
-                None if color.fill is None else _hex_color(color.fill, "fill"),
-                color.label,
-            )
-            for time, color in timeline
-        ]
-    return changes
-
-
-def _zone_colors(settings: GridVisualizer) -> dict[str, str]:
-    """Validate the processing-zone colors.
-
-    Returns:
-        Colors as ``#rrggbb`` keyed by zone ID.
-
-    Raises:
-        TypeError: If the setting is not a mapping.
-    """
-    zones = settings.processing_zone_colors
-    if zones is None:
-        return {}
-    if not isinstance(zones, Mapping):
-        msg = "processing_zone_colors must be a mapping from zone IDs to colors"
-        raise TypeError(msg)
-    return {str(zone): _hex_color(color, f"color of {zone!r}") for zone, color in zones.items()}
-
-
-def _hex_color(value: object, label: str) -> str:
-    """Convert any Matplotlib color to ``#rrggbb``.
-
-    Returns:
-        The color.
-
-    Raises:
-        TypeError: If the value is not a string.
-        ValueError: If Matplotlib does not know the color.
-    """
-    from matplotlib.colors import to_hex  # ruff: ignore[import-outside-top-level]
-
-    if not isinstance(value, str):
-        msg = f"{label} must be a color string"
-        raise TypeError(msg)
-    try:
-        return to_hex(value, keep_alpha=False)
-    except ValueError as error:
-        msg = f"{label} {value!r} is not a known color"
-        raise ValueError(msg) from error
-
-
-__all__ = ["GridView", "GridVisualizer", "IonColor", "JunctionCoordinates"]
+__all__ = ["GridView", "GridVisualizer", "JunctionCoordinates"]

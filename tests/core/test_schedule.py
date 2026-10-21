@@ -79,6 +79,10 @@ class _Counts:
         """Return the diagnostics using JSON-compatible values."""
         return {"attempts": self.attempts}
 
+    def statistics(self) -> tuple[tuple[str, int | float | str], ...]:
+        """Return the number of attempts."""
+        return (("Attempts", self.attempts),)
+
     @classmethod
     def from_dict(cls, data: object) -> _Counts:
         """Restore diagnostics."""

@@ -16,6 +16,7 @@ import math
 import re
 import shutil
 import subprocess
+from dataclasses import dataclass, replace
 from importlib.resources import files
 from typing import TYPE_CHECKING, Any, cast
 
@@ -27,7 +28,11 @@ from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.grid import (
     GridArchitecture,
+    GridCompiler,
+    GridCompilerConfig,
+    GridDiagnostics,
     GridMachineState,
+    GridStopReason,
     Junction,
     JunctionMove,
     ProcessingZone,
@@ -35,20 +40,25 @@ from mqt.ionshuttler.grid import (
 )
 from mqt.ionshuttler.visualization import GridView, GridVisualizer, IonColor
 from mqt.ionshuttler.visualization._player.settings import video_frame_times
-from mqt.ionshuttler.visualization.grid._colors import (
-    DARK_TEXT,
+from mqt.ionshuttler.visualization._player.style import (
     ION_PALETTE,
-    NEUTRAL_BORDER,
-    WHITE,
-    distinct_color,
+    ZONE_PALETTE,
     ion_colors,
+    text_color,
 )
-from mqt.ionshuttler.visualization.grid._scene import build_scene, geometry, track_position
+from mqt.ionshuttler.visualization.grid._scene import (
+    build_scene,
+    geometry,
+    hardware_id_font_size,
+    panel_layout,
+    track_position,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from mqt.ionshuttler.core.actions import Action
+    from mqt.ionshuttler.grid.planning_trace import PlanningSnapshot
 
 
 def _result_from_layers(
@@ -307,6 +317,8 @@ def test_view_embeds_every_setting() -> None:
         frames_per_second=24,
         video_start_time=1,
         video_end_time=2,
+        show_compiler_planning=True,
+        marker_size=0.5,
     )
 
     settings = _embedded(visualizer.visualize(_busy_result()))["settings"]
@@ -316,6 +328,8 @@ def test_view_embeds_every_setting() -> None:
         "show_ion_labels": False,
         "show_processing_zone_labels": False,
         "show_hardware_ids": True,
+        "show_compiler_planning": True,
+        "marker_size": 0.5,
         "timesteps_per_second": 2.5,
         "width": 640,
         "height": 480,
@@ -324,6 +338,29 @@ def test_view_embeds_every_setting() -> None:
         "video_end_time": 2,
         "ion_colors": "distinct",
     }
+
+
+def test_ions_of_the_fullest_segment_fit_side_by_side_at_full_marker_size() -> None:
+    """Size ions from the tightest segment and scale them with the marker size, without moving junctions."""
+    shape = build_scene(_busy_result(), _BUSY_COORDINATES).geometry
+    full = panel_layout(shape, 0, 0, 960, 600)
+    half = panel_layout(shape, 0, 0, 960, 600, 0.5)
+    tightest = min(
+        math.dist(start, end) / (segment.capacity + 1)
+        for segment, (start, end) in zip(_busy_result().architecture.segments, shape.segments, strict=True)
+        if math.dist(start, end) > 0
+    )
+
+    assert 2 * full.ion_radius <= tightest * full.scale
+    assert half.ion_radius == pytest.approx(full.ion_radius / 2)
+    assert [half.point(point) for point in shape.junctions] == [full.point(point) for point in shape.junctions]
+
+
+def test_hardware_ids_shrink_with_the_ions() -> None:
+    """Keep segment and junction IDs no larger than about one ion across, but readable."""
+    assert hardware_id_font_size(20, 15) == pytest.approx(0.72 * 15)
+    assert hardware_id_font_size(8, 15) == pytest.approx(8.8)
+    assert hardware_id_font_size(2, 15) == 7
 
 
 def test_views_start_in_the_dark_theme() -> None:
@@ -345,6 +382,9 @@ def test_video_range_defaults_to_the_schedule_bounds() -> None:
         ({"show_ion_labels": 1}, TypeError, "show_ion_labels must be a boolean"),
         ({"show_processing_zone_labels": None}, TypeError, "show_processing_zone_labels must be a boolean"),
         ({"show_hardware_ids": "yes"}, TypeError, "show_hardware_ids must be a boolean"),
+        ({"show_compiler_planning": 0}, TypeError, "show_compiler_planning must be a boolean"),
+        ({"marker_size": 0}, ValueError, "marker_size must be positive"),
+        ({"marker_size": "small"}, TypeError, "marker_size must be a number"),
         ({"timesteps_per_second": 0}, ValueError, "timesteps_per_second must be positive"),
         ({"timesteps_per_second": math.inf}, ValueError, "timesteps_per_second must be positive and finite"),
         ({"timesteps_per_second": True}, TypeError, "timesteps_per_second must be a number"),
@@ -424,28 +464,6 @@ def test_custom_ion_colors_reach_the_view() -> None:
     assert data["drawing"]["zone_colors"] == {"pz-a": "#008080"}
 
 
-def test_ion_colors_follow_the_mode_and_switch_at_their_times() -> None:
-    """Pick distinct, single, or custom colors, and switch custom colors at their times."""
-    changes = {1: [(0, "#999999", None, "idle"), (2, "#2ca02c", "#000000", None)]}
-
-    assert ion_colors(0, 0, "distinct", "#123456", changes) == (ION_PALETTE[0], WHITE, DARK_TEXT)
-    assert ion_colors(30, 0, "distinct", "#123456", changes)[0] == distinct_color(30, ION_PALETTE)
-    assert ion_colors(30, 0, "single", "#123456", changes)[0] == "#123456"
-    assert ion_colors(1, 1.9, "custom", "#123456", changes) == ("#999999", WHITE, DARK_TEXT)
-    assert ion_colors(1, 2, "custom", "#123456", changes) == ("#2ca02c", "#000000", WHITE)
-    assert ion_colors(5, 2, "custom", "#123456", changes) == (NEUTRAL_BORDER, WHITE, DARK_TEXT)
-    assert ion_colors(5, 2, "custom", "#123456", changes, "#1b1f25") == (NEUTRAL_BORDER, "#1b1f25", WHITE)
-    assert len({distinct_color(index, ION_PALETTE) for index in range(60)}) == 60
-
-
-def test_ion_color_validates_colors_and_labels() -> None:
-    """Reject unknown colors and labels that are not text."""
-    with pytest.raises(ValueError, match="border 'nope' is not a known color"):
-        IonColor(border="nope")
-    with pytest.raises(TypeError, match="label must be a string"):
-        IonColor(label=cast("Any", 3))
-
-
 def test_plot_draws_custom_ion_colors_and_a_legend() -> None:
     """Color ion rings and fills in Matplotlib figures and list labeled colors in a legend."""
     visualizer = GridVisualizer(
@@ -455,12 +473,17 @@ def test_plot_draws_custom_ion_colors_and_a_legend() -> None:
     early = visualizer.plot(_busy_result(), 1)
     late = visualizer.plot(_busy_result(), 2)
 
-    def ion_ring(figure: Any) -> tuple[float, ...]:
-        rings = [collection for collection in figure.axes[0].collections if len(collection.get_offsets()) == 4]
-        return tuple(round(value, 3) for value in rings[-1].get_edgecolor()[1][:3])
+    def ring_colors(figure: Any) -> set[tuple[float, ...]]:
+        # Ion rings are the only per-ion markers with an outline. Matplotlib
+        # draws each ring in two parts: a darker outer part and the ring color.
+        return {
+            tuple(round(value, 3) for value in collection.get_edgecolor()[1][:3])
+            for collection in figure.axes[0].collections
+            if len(collection.get_offsets()) == 4 and collection.get_linewidths()[0] > 0
+        }
 
-    assert ion_ring(early) == (0.6, 0.6, 0.6)
-    assert ion_ring(late) == (round(0x2C / 255, 3), round(0xA0 / 255, 3), round(0x2C / 255, 3))
+    assert (0.6, 0.6, 0.6) in ring_colors(early)
+    assert (round(0x2C / 255, 3), round(0xA0 / 255, 3), round(0x2C / 255, 3)) in ring_colors(late)
     assert any(text.get_text() == "idle" for text in early.axes[0].texts)
     _close(early)
     _close(late)
@@ -639,7 +662,12 @@ const times = JSON.parse(timesJson);
 
 const calls = [];
 const context = new Proxy({}, {
-  get: (target, name) => (name in target ? target[name] : (...args) => calls.push([name, ...args])),
+  get: (target, name) => {
+    if (name in target) return target[name];
+    // Gate halos fill with radial gradients.
+    if (name === "createRadialGradient") return () => ({ addColorStop() {} });
+    return (...args) => calls.push([name, ...args]);
+  },
   set: (target, name, value) => { target[name] = value; return true; },
 });
 const drawnText = (settings) => {
@@ -653,6 +681,7 @@ const output = {
   bounds: GridDrawing.timeBounds(view),
   steps: GridDrawing.stepTimes(view),
   shape: { bounds: shape.bounds, ionRadius: shape.ionRadius },
+  layoutRadii: [1, 0.4, 2].map((size) => GridDrawing.panelLayout(shape, 0, 0, 400, 300, size).ionRadius),
   positions: times.map((time) => panel.ions.map((track) => GridDrawing.trackPosition(track, time, shape))),
   gates: times.map((time) => GridDrawing.runningGates(panel, time).map((gate) => gate.ions)),
   labels: drawnText({ ...settings, show_ion_labels: true }),
@@ -674,7 +703,8 @@ output.movedIon = GridDrawing.trackPosition(panel.ions[0], 2, GridDrawing.geomet
 GridDrawing.paint(view, { kind: "ion", panel, ion: 0 }, "border", "#ff0000");
 GridDrawing.paint(view, { kind: "zone", panel, zone: "pz-b" }, "color", "#00ff00");
 output.painted = GridDrawing.ionColors(view, 0, 1, "distinct", "#000000");
-output.layout = GridDrawing.settingsText(view);
+output.layout = GridDrawing.settingsText(view, { marker_size: 0.6 });
+output.layoutAtFullSize = GridDrawing.settingsText(view, { marker_size: 1 });
 GridDrawing.resetLayout(view);
 output.reset = panel.junctions[north];
 output.unpainted = GridDrawing.ionColors(view, 0, 1, "distinct", "#000000");
@@ -730,6 +760,8 @@ def test_browser_drawing_matches_the_python_drawing_data(tmp_path: Path) -> None
     assert math.dist(output["shape"]["bounds"][:2], scene.geometry.bounds[:2]) < 1e-9
     assert math.dist(output["shape"]["bounds"][2:], scene.geometry.bounds[2:]) < 1e-9
     assert abs(output["shape"]["ionRadius"] - scene.geometry.ion_radius) < 1e-9
+    for size, radius in zip((1, 0.4, 2), output["layoutRadii"], strict=True):
+        assert abs(radius - panel_layout(scene.geometry, 0, 0, 400, 300, size).ion_radius) < 1e-9
 
 
 def test_browser_ion_colors_match_the_python_colors(tmp_path: Path) -> None:
@@ -800,8 +832,223 @@ def test_browser_layout_editing_moves_junctions_and_reports_coordinates(tmp_path
     assert math.dist(output["movedIon"], top_after_drag) < 1e-3
     assert output["layout"].startswith("junction_coordinates={\n")
     assert '    "north": (0.5, 0),' in output["layout"]
+    assert "\nmarker_size=0.6,\n" in output["layout"]
+    assert "marker_size" not in output["layoutAtFullSize"]
     assert 'ion_colors={\n    0: IonColor(border="#ff0000"),\n},' in output["layout"]
     assert 'processing_zone_colors={\n    "pz-b": "#00ff00",\n},' in output["layout"]
     assert output["painted"]["border"] == "#ff0000"
     assert output["unpainted"]["border"] == ION_PALETTE[0]
     assert output["reset"] == list(junctions["north"])
+
+
+def _traced_result(max_iterations: int = 10_000) -> CompilationResult:
+    """Compile ``rx q0; rz q0`` from a memory segment with a planning trace.
+
+    The compiler moves the ion at time 0, starts ``rx`` at time 1, and starts
+    ``rz`` at time 2. Each decision has its own snapshot.
+    """
+    memory = Segment("memory")
+    processor = Segment("processor", processing_zones=(ProcessingZone("pz"),))
+    architecture = GridArchitecture((memory, processor), (Junction("entry", (memory.end, processor.start)),))
+    return GridCompiler(
+        architecture,
+        GridCompilerConfig(max_iterations=max_iterations, record_planning_trace=True),
+    ).compile(
+        'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.5) q[0];\nrz(0.5) q[0];',
+        initial_placement={"memory": (0,)},
+    )
+
+
+def test_planning_trace_reaches_the_view_data() -> None:
+    """Embed each snapshot with segment indices and offer the planning side bar."""
+    data = _embedded(GridVisualizer().visualize(_traced_result()))
+
+    planning = data["drawing"]["panels"][0]["planning"]
+    assert planning["stop_reason"] == "completed"
+    assert planning["gates"] == [[0, "rx", [0]], [1, "rz", [0]]]
+    assert planning["snapshots"][0] == [
+        1,
+        0,
+        [0],
+        [0],
+        [0, 1],
+        [],
+        [[0, 1], [1, None]],
+        [[0, 1, "selected", [[[0], 0, 1]]]],
+        [],
+        [[[0], 0, 1]],
+        None,
+    ]
+    assert [snapshot[:2] for snapshot in planning["snapshots"]] == [[1, 0], [2, 1], [3, 2]]
+    assert data["sidebar"] == ["show_compiler_planning", "Compiler planning"]
+    assert data["settings"]["show_compiler_planning"] is False
+    assert all(option[0] != "show_compiler_planning" for option in data["options"])
+
+
+def test_results_without_a_planning_trace_have_no_planning_side_bar() -> None:
+    """Keep the view free of planning data and controls without a trace."""
+    data = _embedded(GridVisualizer(show_compiler_planning=True).visualize(_busy_result()))
+
+    assert "planning" not in data["drawing"]["panels"][0]
+    assert "sidebar" not in data
+    assert build_scene(_busy_result(), _BUSY_COORDINATES).planning is None
+
+
+@dataclass(frozen=True)
+class _OtherMethodDiagnostics:
+    """Diagnostics of another Grid compiler method that records a planning trace."""
+
+    planning_trace: tuple[PlanningSnapshot, ...] | None
+    stop_reason: GridStopReason
+
+    def to_dict(self) -> dict[str, object]:
+        """Return no data."""
+        return {}
+
+    def statistics(self) -> tuple[tuple[str, int | float | str], ...]:
+        """Return no statistics."""
+        return ()
+
+
+def test_planning_trace_of_any_compiler_method_reaches_the_scene() -> None:
+    """Read the planning trace and the stop reason from diagnostics of another class."""
+    traced = _traced_result()
+    assert isinstance(traced.diagnostics, GridDiagnostics)
+    trace = traced.diagnostics.planning_trace
+    other = replace(traced, diagnostics=_OtherMethodDiagnostics(trace, GridStopReason.NO_PROGRESS))
+
+    planning = build_scene(other, None).planning
+
+    assert planning is not None
+    assert planning.snapshots == trace
+    assert planning.stop_reason is GridStopReason.NO_PROGRESS
+
+
+def test_planning_snapshot_is_the_latest_decision_at_or_before_the_time() -> None:
+    """Show the most recent decision while the schedule plays between two decisions."""
+    planning = build_scene(_traced_result(), None).planning
+
+    assert planning is not None
+    shown = [planning.snapshot_at(time) for time in (-0.5, 0, 0.5, 0.99, 1, 1.5, 2)]
+    assert [None if snapshot is None else snapshot.iteration for snapshot in shown] == [None, 1, 1, 1, 2, 2, 3]
+
+
+_PLANNING_NODE_CHECK = r"""
+const fs = require("fs");
+const [scriptPath, dataPath, timesJson] = process.argv.slice(2);
+const GridDrawing = require(scriptPath);
+const data = JSON.parse(fs.readFileSync(dataPath, "utf8"));
+const view = GridDrawing.prepare(data.drawing);
+const times = JSON.parse(timesJson);
+
+const calls = [];
+const context = new Proxy({}, {
+  get: (target, name) => {
+    if (name in target) return target[name];
+    // Gate halos fill with radial gradients.
+    if (name === "createRadialGradient") return () => ({ addColorStop() {} });
+    return (...args) => calls.push([name, ...args]);
+  },
+  set: (target, name, value) => { target[name] = value; return true; },
+});
+const settings = { ...data.settings, theme: "dark", editing: false, highlight: null };
+const drawnText = (planning, time) => {
+  calls.length = 0;
+  GridDrawing.drawAtTime(context, view, time, { ...settings, show_compiler_planning: planning }, 1200, 700);
+  return calls.filter((call) => call[0] === "fillText").map((call) => call[1]);
+};
+const details = (time) => {
+  const sections = GridDrawing.details(view, time, settings);
+  return sections === null
+    ? null
+    : sections.map(({ title, rows }) => ({ title, rows: Object.fromEntries(rows) }));
+};
+const end = GridDrawing.timeBounds(view)[1];
+console.log(JSON.stringify({
+  snapshots: view.panels.map((panel) =>
+    times.map((time) => {
+      const snapshot = GridDrawing.planningSnapshot(panel, time);
+      return snapshot === null ? null : snapshot.iteration;
+    }),
+  ),
+  start: details(0),
+  middle: details(end / 2),
+  end: details(end),
+  marked: drawnText(true, 0),
+  unmarked: drawnText(false, 0),
+}));
+"""
+
+
+def _run_planning_check(tmp_path: Path, view: GridView, times: list[float]) -> dict[str, Any]:
+    """Run the browser drawing of a view in Node.js and return what it drew."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is not installed")
+    data = tmp_path / "data.json"
+    data.write_text(json.dumps(_embedded(view)), encoding="utf-8")
+    check = tmp_path / "check.js"
+    check.write_text(_PLANNING_NODE_CHECK, encoding="utf-8")
+    script = str(files("mqt.ionshuttler.visualization.grid").joinpath("draw.js"))
+    completed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+        [node, str(check), script, str(data), json.dumps(times)],
+        capture_output=True,
+        check=True,
+        text=True,
+        timeout=60,
+    )
+    return cast("dict[str, Any]", json.loads(completed.stdout))
+
+
+def test_browser_planning_side_bar_follows_the_python_snapshot_selection(tmp_path: Path) -> None:
+    """Pick the same snapshot as Python, list it in the side bar, and mark it only while the side bar is open."""
+    result = _traced_result()
+    scene = build_scene(result, None)
+    times = [0, 0.5, 0.99, 1, 1.5, 2]
+
+    output = _run_planning_check(tmp_path, GridVisualizer().visualize(result), times)
+
+    assert scene.planning is not None
+    expected = [snapshot.iteration for time in times if (snapshot := scene.planning.snapshot_at(time)) is not None]
+    assert output["snapshots"] == [expected]
+    [start] = output["start"]
+    # Ions are framed in their ring color; the target is filled with its zone color.
+    ion = {"text": "q0", "border": ION_PALETTE[0]}
+    zone = {"text": "pz", "fill": ZONE_PALETTE[0], "border": ZONE_PALETTE[0], "ink": text_color(ZONE_PALETTE[0])}
+    assert start == {
+        "title": "",
+        "rows": {
+            "Decision": ["iteration 1 · t 0"],
+            "Gates": [["g0 rx", ion, "→", zone, "selected"], ["g1 rz", ion, "→", "no target"]],
+            "Priority": [["1.", ion, "→", zone, "moves"]],
+            "Retained": [],
+            "Moves": [[ion, "memory → processor"]],
+            "Ready": ["g0"],
+        },
+    }
+    assert output["middle"][0]["rows"]["Retained"] == [[ion]]
+    assert "Stopped" not in output["end"][0]["rows"]
+    # The priority rank of q0 marks the drawing only while the side bar is open.
+    assert "1" in output["marked"]
+    assert "1" not in output["unmarked"]
+
+
+def test_browser_planning_side_bar_shows_the_stop_reason_at_the_end(tmp_path: Path) -> None:
+    """Explain at the schedule end why a failed compilation stopped."""
+    output = _run_planning_check(tmp_path, GridVisualizer().visualize(_traced_result(max_iterations=1)), [0, 1])
+
+    assert output["snapshots"] == [[1, 1]]
+    assert output["end"][0]["rows"]["Stopped"] == ["iteration limit reached"]
+    assert "Stopped" not in output["start"][0]["rows"]
+
+
+def test_browser_planning_side_bar_skips_panels_without_a_trace(tmp_path: Path) -> None:
+    """List only the panels whose results have a trace, under their titles."""
+    traced = _run_planning_check(
+        tmp_path, GridVisualizer().compare({"traced": _traced_result(), "plain": _line_result()}), [0]
+    )
+    plain = _run_planning_check(tmp_path, GridVisualizer().visualize(_line_result()), [0])
+
+    assert traced["snapshots"] == [[1], [None]]
+    assert [section["title"] for section in traced["start"]] == ["traced"]
+    assert plain["start"] is None

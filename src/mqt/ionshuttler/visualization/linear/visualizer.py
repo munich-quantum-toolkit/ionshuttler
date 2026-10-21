@@ -5,455 +5,465 @@
 #
 # Licensed under the MIT License
 
-"""Visualize Linear compilation results."""
+"""Show Linear compilation results as interactive views, figures, and videos."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, cast
+import math
+from dataclasses import dataclass
+from importlib.resources import files
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal
+
+from .._player.page import notebook_frame, player_page, view_data
+from .._player.settings import (
+    check_display_settings,
+    check_flag,
+    require_positive_int,
+    require_positive_number,
+    video_frame_times,
+    video_range,
+)
+from .._player.style import COLORS, color_changes, color_mode, color_mode_option, zone_colors
+from ._trajectories import plot_trajectories
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Mapping
 
-    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
 
-    from mqt.ionshuttler.core.gates import GlobalGate
     from mqt.ionshuttler.core.result import CompilationResult
 
+    from .._player.page import PlayerOption
+    from .._player.style import IonColors
+    from ._matplotlib import LinearDrawing
+    from ._scene import Scene
 
-class _LocatedState(Protocol):
-    """Expose ion positions to a Linear visualizer."""
-
-    positions: tuple[tuple[int, int], ...]
-
-
-class _LinearArchitectureView(Protocol):
-    """Expose the architecture fields used by the Linear visualizer."""
-
-    num_sites: int
-    processing_zones: Mapping[str, Sequence[int]]
-    topology: str
-
-
-_FIGURE_WIDTH_INCHES = 10.0
-_AXIS_WIDTH_INCHES = 8.0
-_ROW_HEIGHT_INCHES = 3.4
-_MIN_TIMESTEP_WIDTH_INCHES = 0.3
-_MAJOR_TICK_INTERVAL = 5
-_RING_SEAM_MARGIN = 0.25
-_WRAP_STUB_DURATION = 0.25
-_MAX_TIMESTEPS_PER_ROW = max(1, int(_AXIS_WIDTH_INCHES / _MIN_TIMESTEP_WIDTH_INCHES))
-_TIMESTEPS_PER_ROW = max(
-    _MAJOR_TICK_INTERVAL,
-    (_MAX_TIMESTEPS_PER_ROW // _MAJOR_TICK_INTERVAL) * _MAJOR_TICK_INTERVAL,
+Theme = Literal["auto", "light", "dark"]
+_FLAGS = (
+    ("show_ion_labels", "Ion labels"),
+    ("show_processing_zone_labels", "Processing-zone labels"),
+    ("show_site_numbers", "Site numbers"),
 )
+# The view offers this switch only for results with a field profile.
+_FIELD_FLAG = ("show_field_profile", "Field profile")
+_DETAILS_SIDEBAR = ("show_schedule_details", "Schedule details")
 
 
+@dataclass(frozen=True)
 class LinearVisualizer:
-    """Plot ion trajectories and gates for a Linear compilation result."""
+    """Show Linear compilation results with one set of display settings.
 
-    @staticmethod
-    def visualize(result: CompilationResult) -> object:
-        """Return a Matplotlib figure for a Linear compilation result.
+    :meth:`visualize` returns an interactive :class:`LinearView` for notebooks
+    and browsers. The view shows the ion chain on its trap sites, with the
+    field profile behind it. Ions swap past each other, and running gates glow
+    in the color of their processing zone. :meth:`compare` stacks several
+    results. :meth:`plot` draws one schedule time as a Matplotlib figure, and
+    :meth:`plot_trajectories` draws every ion's site over time. The view, its
+    video export, and :meth:`plot` use the same layout, colors, and labels.
+
+    Attributes:
+        theme: Color theme: ``"dark"``, ``"light"``, or ``"auto"``. Matplotlib
+            figures and videos use the same theme; ``"auto"`` follows the
+            browser setting and draws them light. Use ``"light"`` for print.
+        show_ion_labels: Whether to write each ion ID inside its circle.
+        show_processing_zone_labels: Whether to write processing-zone IDs.
+        show_site_numbers: Whether to number the trap sites.
+        show_field_profile: Whether to draw the field profile behind the
+            chain. Results whose sites all have the same field have no
+            profile.
+        show_schedule_details: Whether the interactive view starts with the
+            schedule side bar open. The side bar lists the running and next
+            gates with their ions and processing zones, the moving ions, each
+            ion's site, and the outcome of the compilation with the run
+            statistics that the compiler reports. Matplotlib figures and
+            videos do not show it.
+        timesteps_per_second: Playback speed in schedule timesteps per second.
+            Videos use the same speed.
+        width: View and video width in pixels.
+        height: View and video height in pixels. Compared results share it.
+        frames_per_second: Video frame rate. It sets smoothness, not duration.
+        video_start_time: First timestep of exported videos. ``None`` selects
+            the schedule start.
+        video_end_time: Last timestep of exported videos. ``None`` selects the
+            schedule end.
+        ion_colors: ``"distinct"`` gives every ion its own ring color,
+            ``"single"`` gives all ions one color, and a mapping sets the
+            colors of chosen ions. A mapping value is an
+            :class:`~mqt.ionshuttler.visualization.IonColor` for the whole
+            schedule, or ``(time, IonColor)`` pairs in increasing time order:
+            each pair applies from its time on. Ions without an entry, and ions
+            before their first time, have a gray ring. The view can switch
+            between all three modes.
+        processing_zone_colors: Colors of chosen processing zones, keyed by
+            zone ID. Other zones take distinct colors.
+        marker_size: Size of ions, sites, and chain lines relative to the
+            automatic size. The view's layout editor has a slider for it.
+    """
+
+    theme: Theme = "dark"
+    show_ion_labels: bool = True
+    show_processing_zone_labels: bool = True
+    show_site_numbers: bool = True
+    show_field_profile: bool = False
+    show_schedule_details: bool = False
+    timesteps_per_second: float = 4.0
+    width: int = 960
+    height: int = 420
+    frames_per_second: int = 30
+    video_start_time: int | None = None
+    video_end_time: int | None = None
+    ion_colors: IonColors = "distinct"
+    processing_zone_colors: Mapping[str, str] | None = None
+    marker_size: float = 1.0
+
+    def __post_init__(self) -> None:
+        """Validate the display settings.
+
+        A setting of the wrong type raises :class:`TypeError`. A setting with
+        an invalid value raises :class:`ValueError`.
+        """
+        check_display_settings(
+            theme=self.theme,
+            timesteps_per_second=self.timesteps_per_second,
+            width=self.width,
+            height=self.height,
+            frames_per_second=self.frames_per_second,
+            video_start_time=self.video_start_time,
+            video_end_time=self.video_end_time,
+        )
+        for name, _label in (*_FLAGS, _FIELD_FLAG, _DETAILS_SIDEBAR):
+            check_flag(getattr(self, name), name)
+        require_positive_number(self.marker_size, "marker_size")
+        color_changes(self.ion_colors)
+        zone_colors(self.processing_zone_colors)
+
+    def visualize(self, result: CompilationResult, /) -> LinearView:
+        """Return an interactive view of a Linear result.
+
+        A result without a Linear architecture and state raises
+        :class:`TypeError`. A video range outside the schedule raises
+        :class:`ValueError`.
 
         Args:
-            result: Linear compilation result to visualize.
+            result: Linear compilation result to show.
 
         Returns:
-            A Matplotlib figure with ion trajectories and gate applications.
+            The view. It displays itself in notebooks and can be saved as a
+            standalone HTML file.
+        """
+        return LinearView(self, (_scene(result),))
+
+    def compare(self, results: Mapping[str, CompilationResult], /) -> LinearView:
+        """Return a view that plays several Linear results one above the other.
+
+        All panels share one clock in absolute schedule time. A panel shows its
+        initial state before its schedule starts and its final state after its
+        schedule ends.
+
+        A result that is not a Linear result raises :class:`TypeError`.
+
+        Args:
+            results: Linear results keyed by the title of their panel.
+
+        Returns:
+            The view with one panel per result, in mapping order.
+
+        Raises:
+            TypeError: If a title is not a string.
+            ValueError: If fewer than two results are given or a title is empty.
+        """
+        if len(results) < 2:
+            msg = "compare needs at least two results"
+            raise ValueError(msg)
+        for title in results:
+            if not isinstance(title, str):
+                msg = "result titles must be strings"
+                raise TypeError(msg)
+            if not title:
+                msg = "result titles must be non-empty"
+                raise ValueError(msg)
+        return LinearView(self, tuple(_scene(result, title) for title, result in results.items()))
+
+    def plot(self, result: CompilationResult, time: float, /) -> Figure:
+        """Draw a Linear result at one schedule time as a Matplotlib figure.
+
+        Args:
+            result: Linear compilation result to draw.
+            time: Schedule time to draw. Fractional times show ions in motion.
+
+        Returns:
+            A Matplotlib figure of ``width`` by ``height`` pixels.
+
+        Raises:
+            TypeError: If the result is not a Linear result or the time is not a number.
+            ValueError: If the time lies outside the schedule.
         """
         import matplotlib.pyplot as plt  # ruff: ignore[import-outside-top-level]
 
-        from mqt.ionshuttler.core.gates import (  # ruff: ignore[import-outside-top-level]
-            GlobalGate,
-            SingleQubitGate,
-            TwoQubitGate,
-        )
-        from mqt.ionshuttler.linear.actions import (  # ruff: ignore[import-outside-top-level]
-            PhysicalSwap,
-            Shuttle,
-        )
-        from mqt.ionshuttler.linear.timeline import build_timeline  # ruff: ignore[import-outside-top-level]
-
-        architecture = cast("_LinearArchitectureView", result.architecture)
-        initial_positions = dict(cast("_LocatedState", result.initial_state).positions)
-        initial_time = result.initial_state.time
-        final_time = result.end_time
-        display_final_time = max(final_time, initial_time + 1)
-        time_windows = _time_windows(initial_time, display_final_time)
-        figure = plt.figure(
-            figsize=(_FIGURE_WIDTH_INCHES, _ROW_HEIGHT_INCHES * len(time_windows)),
-            layout="constrained",
-        )
-        if len(time_windows) == 1:
-            axes = (figure.add_subplot(),)
-        else:
-            grid = figure.add_gridspec(len(time_windows), _TIMESTEPS_PER_ROW)
-            axes = tuple(
-                figure.add_subplot(grid[row, : window_end - window_start])
-                for row, (window_start, window_end) in enumerate(time_windows)
-            )
-
-        trajectory_times = {ion: [initial_time] for ion in initial_positions}
-        trajectory_sites: dict[int, list[float]] = {ion: [site] for ion, site in initial_positions.items()}
-        wrap_movements: list[tuple[int, int, int, int, int]] = []
-        ring_size = architecture.num_sites if architecture.topology == "ring" else None
-        for item in result.schedule.scheduled_actions:
-            action = item.action
-            if isinstance(action, Shuttle):
-                _append_movement(
-                    trajectory_times[action.ion],
-                    trajectory_sites[action.ion],
-                    wrap_movements,
-                    action.ion,
-                    item.start_time,
-                    item.end_time,
-                    action.src,
-                    action.dst,
-                    ring_size,
-                )
-            elif isinstance(action, PhysicalSwap):
-                for ion, source, destination in (
-                    (action.ion_a, action.pos_a, action.pos_b),
-                    (action.ion_b, action.pos_b, action.pos_a),
-                ):
-                    _append_movement(
-                        trajectory_times[ion],
-                        trajectory_sites[ion],
-                        wrap_movements,
-                        ion,
-                        item.start_time,
-                        item.end_time,
-                        source,
-                        destination,
-                        ring_size,
-                    )
-
-        for ion in initial_positions:
-            _append_hold(trajectory_times[ion], trajectory_sites[ion], display_final_time)
-        timeline = build_timeline(result.schedule, result.architecture)
-        ion_colors: dict[int, object] = {}
-        for row, (axis, (window_start, window_end)) in enumerate(zip(axes, time_windows, strict=True)):
-            show_legend = row == 0
-            for zone_index, zone_sites in enumerate(architecture.processing_zones.values()):
-                for run_index, (first_site, last_site) in enumerate(_consecutive_site_runs(zone_sites)):
-                    axis.axhspan(
-                        first_site - 0.45,
-                        last_site + 0.45,
-                        alpha=0.1,
-                        label="PZ" if show_legend and zone_index == 0 and run_index == 0 else "_nolegend_",
-                        zorder=0,
-                    )
-            if architecture.topology == "ring":
-                axis.axhline(
-                    -0.5,
-                    color="0.35",
-                    linestyle=":",
-                    linewidth=1.2,
-                    label="ring seam" if show_legend else "_nolegend_",
-                    zorder=1,
-                )
-                axis.axhline(
-                    architecture.num_sites - 0.5,
-                    color="0.35",
-                    linestyle=":",
-                    linewidth=1.2,
-                    label="_nolegend_",
-                    zorder=1,
-                )
-            for ion in sorted(initial_positions):
-                color = ion_colors.get(ion)
-                (line,) = axis.plot(
-                    trajectory_times[ion],
-                    trajectory_sites[ion],
-                    color=color,
-                    marker="o",
-                    markersize=4,
-                    linewidth=1.8,
-                    label=f"ion {ion}" if show_legend else "_nolegend_",
-                    zorder=2,
-                )
-                ion_colors.setdefault(ion, line.get_color())
-            wrap_label_available = show_legend
-            for ion, start_time, end_time, source, destination in wrap_movements:
-                if end_time < window_start or start_time > window_end:
-                    continue
-                _draw_wrap_movement(
-                    axis,
-                    start_time,
-                    end_time,
-                    source,
-                    destination,
-                    architecture.num_sites,
-                    ion_colors[ion],
-                    show_label=wrap_label_available,
-                )
-                if wrap_label_available:
-                    wrap_label_available = False
-
-            for item in result.schedule.scheduled_actions:
-                action = item.action
-                starts_in_window = window_start <= item.start_time < window_end or (
-                    row == len(time_windows) - 1 and item.start_time == window_end
-                )
-                overlaps_window = item.end_time > window_start and item.start_time < window_end
-                if isinstance(action, SingleQubitGate):
-                    site = timeline.ion_position(action.ion, item.start_time)
-                    color = ion_colors[action.ion]
-                    if overlaps_window:
-                        _draw_gate_interval(axis, item.start_time, item.end_time, site, color)
-                    if starts_in_window:
-                        axis.scatter(
-                            item.start_time,
-                            site,
-                            marker="D",
-                            s=50,
-                            facecolor="white",
-                            edgecolor=color,
-                            linewidth=1.5,
-                            zorder=4,
-                        )
-                        _label_gate(axis, item.start_time, site, type(action).__name__)
-                elif isinstance(action, TwoQubitGate):
-                    sites = tuple(timeline.ion_position(ion, item.start_time) for ion in action.ions)
-                    if overlaps_window:
-                        for ion, site in zip(action.ions, sites, strict=True):
-                            _draw_gate_interval(axis, item.start_time, item.end_time, site, ion_colors[ion])
-                    if starts_in_window:
-                        crosses_seam = _crosses_ring_seam(sites, architecture)
-                        connectors = (
-                            ((min(sites), -0.5), (max(sites), architecture.num_sites - 0.5))
-                            if crosses_seam
-                            else ((min(sites), max(sites)),)
-                        )
-                        for connector in connectors:
-                            axis.plot(
-                                [item.start_time, item.start_time],
-                                connector,
-                                color="0.2",
-                                linewidth=1.5,
-                                zorder=3,
-                                gid="ring gate connector" if crosses_seam else None,
-                            )
-                        axis.scatter(
-                            [item.start_time] * len(sites),
-                            sites,
-                            marker="D",
-                            s=50,
-                            facecolor="white",
-                            edgecolor="0.2",
-                            linewidth=1.5,
-                            zorder=4,
-                        )
-                        if crosses_seam:
-                            _label_gate(axis, item.start_time, min(sites), type(action).__name__)
-                        else:
-                            _label_two_qubit_gate(
-                                axis,
-                                item.start_time,
-                                sum(sites) / len(sites),
-                                type(action).__name__,
-                            )
-                elif isinstance(action, GlobalGate):
-                    if overlaps_window:
-                        axis.axvspan(item.start_time, item.end_time, color="0.2", alpha=0.08, zorder=1)
-                    if starts_in_window:
-                        axis.axvline(item.start_time, color="0.2", linestyle="--", linewidth=1.2, zorder=1)
-                        _label_gate(
-                            axis,
-                            item.start_time,
-                            architecture.num_sites - 0.5,
-                            _global_gate_label(action, tuple(sorted(initial_positions))),
-                        )
-
-            site_limits = (
-                (-0.5 - _RING_SEAM_MARGIN, architecture.num_sites - 0.5 + _RING_SEAM_MARGIN)
-                if architecture.topology == "ring"
-                else (-0.5, architecture.num_sites - 0.5)
-            )
-            axis.set(
-                xlim=(window_start, window_end),
-                ylim=site_limits,
-                yticks=range(architecture.num_sites),
-                ylabel="site",
-            )
-            first_major_tick = (
-                (window_start + _MAJOR_TICK_INTERVAL - 1) // _MAJOR_TICK_INTERVAL
-            ) * _MAJOR_TICK_INTERVAL
-            axis.set_xticks(range(first_major_tick, window_end + 1, _MAJOR_TICK_INTERVAL))
-            axis.grid(axis="both", color="0.9", linewidth=0.7, zorder=-1)
-        axes[0].set_title("Linear ion trajectories")
-        axes[-1].set_xlabel("timestep")
-        axes[0].legend(loc="upper left", bbox_to_anchor=(1.01, 1), frameon=False)
+        scene = _scene(result)
+        if isinstance(time, bool) or not isinstance(time, int | float) or not math.isfinite(time):
+            msg = "time must be a finite number"
+            raise TypeError(msg)
+        if not scene.start_time <= time <= scene.end_time:
+            msg = f"time must lie within the schedule ({scene.start_time} to {scene.end_time})"
+            raise ValueError(msg)
+        figure = plt.figure(figsize=(self.width / 100, self.height / 100), dpi=100)
+        _drawing(self, figure, (scene,)).draw_at(time)
         return figure
 
+    @staticmethod
+    def plot_trajectories(result: CompilationResult, /) -> Figure:
+        """Draw every ion's site over the whole schedule as a Matplotlib figure.
 
-def _global_gate_label(gate: GlobalGate, all_ions: tuple[int, ...]) -> str:
-    """Name a global rotation and, unless it targets every ion, its ions.
+        The figure marks each gate on its ions. Long schedules wrap into
+        several rows. The figure uses Matplotlib's own style, not the display
+        settings.
 
-    Returns:
-        The label for the plotted gate.
+        Args:
+            result: Linear compilation result to draw.
+
+        Returns:
+            The figure.
+        """
+        return plot_trajectories(result)
+
+    def open(self, result: CompilationResult, /, *, wait: bool | None = None) -> str:
+        """Show a Linear result in the result viewer in the browser.
+
+        This is ``visualize(result).open(wait=wait)``. In a notebook the call
+        returns at once; in a plain script it blocks until Ctrl+C so the viewer
+        keeps running.
+
+        Args:
+            result: Linear compilation result to show.
+            wait: Whether to block until Ctrl+C. ``None`` waits in plain scripts only.
+
+        Returns:
+            The viewer address of the result.
+        """
+        return self.visualize(result).open(wait=wait)
+
+
+class LinearView:
+    """Interactive view of one or more Linear results.
+
+    The view is a self-contained HTML page with a canvas, playback controls,
+    a time slider, display options, a schedule side bar, and a video export
+    panel. It needs no network access and no web server. Create views with
+    :meth:`LinearVisualizer.visualize` or :meth:`LinearVisualizer.compare`.
     """
-    name = gate.gate_name.capitalize()
-    if gate.ions == all_ions:
-        return name
-    return f"{name} {list(gate.ions)}"
 
+    def __init__(self, visualizer: LinearVisualizer, scenes: tuple[Scene, ...]) -> None:
+        """Store the settings and drawing data, and check the video range against the schedules."""
+        self.visualizer = visualizer
+        self._scenes = scenes
+        self._video_range()
 
-def _time_windows(initial_time: int, final_time: int) -> tuple[tuple[int, int], ...]:
-    """Split a long schedule into readable consecutive plot rows.
+    @property
+    def start_time(self) -> int:
+        """Earliest schedule start of all shown results."""
+        return min(scene.start_time for scene in self._scenes)
 
-    Returns:
-        Ordered inclusive-start, exclusive-end plot windows.
-    """
-    return tuple(
-        (window_start, min(window_start + _TIMESTEPS_PER_ROW, final_time))
-        for window_start in range(initial_time, final_time, _TIMESTEPS_PER_ROW)
-    )
+    @property
+    def end_time(self) -> int:
+        """Latest schedule end of all shown results."""
+        return max(scene.end_time for scene in self._scenes)
 
+    def to_html(self) -> str:
+        """Return the view as a standalone HTML document.
 
-def _append_movement(
-    times: list[int],
-    sites: list[float],
-    wrap_movements: list[tuple[int, int, int, int, int]],
-    ion: int,
-    start_time: int,
-    end_time: int,
-    source: int,
-    destination: int,
-    ring_size: int | None,
-) -> None:
-    """Append one transport to an ion trajectory."""
-    _append_hold(times, sites, start_time)
-    if ring_size is not None and abs(destination - source) == ring_size - 1:
-        # A NaN breaks the line so a wrap move cannot look like full-array travel.
-        times.extend((start_time, end_time))
-        sites.extend((float("nan"), destination))
-        wrap_movements.append((ion, start_time, end_time, source, destination))
-    else:
-        times.append(end_time)
-        sites.append(destination)
+        Returns:
+            The HTML document.
+        """
+        return player_page(self.player_data(), files("mqt.ionshuttler.visualization.linear").joinpath("draw.js"))
 
+    def open(self, *, wait: bool | None = None) -> str:
+        """Show the view in the result viewer in the browser.
 
-def _append_hold(times: list[int], sites: list[float], until: int) -> None:
-    """Extend a trajectory horizontally to one time boundary."""
-    if times[-1] < until:
-        times.append(until)
-        sites.append(sites[-1])
+        The viewer runs in this Python process; see
+        :func:`~mqt.ionshuttler.visualization.viewer.open_viewer`.
 
+        Args:
+            wait: Whether to block until Ctrl+C so the viewer keeps running.
+                ``None`` waits in plain scripts only.
 
-def _crosses_ring_seam(sites: Sequence[int], architecture: _LinearArchitectureView) -> bool:
-    """Return whether the zone path between gate ions crosses the ring seam.
+        Returns:
+            The viewer address of this view.
+        """
+        from ..viewer import show_in_viewer  # ruff: ignore[import-outside-top-level]
 
-    A ring zone lists its sites in ring order. A zone that wraps starts on the
-    high side of the seam, so its first site splits the zone into two sides.
+        return show_in_viewer(self.player_data(), wait=wait)
 
-    Returns:
-        True if the ions sit on opposite sides of the seam in one wrapping zone.
-    """
-    if architecture.topology != "ring":
-        return False
-    low_site, high_site = min(sites), max(sites)
-    return any(
-        low_site in zone_sites and high_site in zone_sites and low_site < zone_sites[0] <= high_site
-        for zone_sites in architecture.processing_zones.values()
-    )
+    def player_data(self) -> dict[str, object]:
+        """Return the title, settings, and drawing data that the browser player shows.
 
-
-def _consecutive_site_runs(sites: Sequence[int]) -> tuple[tuple[int, int], ...]:
-    """Return the consecutive numeric runs that form one processing zone.
-
-    Returns:
-        The inclusive first and last site of each run.
-    """
-    ordered_sites = sorted(sites)
-    runs: list[tuple[int, int]] = []
-    first_site = previous_site = ordered_sites[0]
-    for site in ordered_sites[1:]:
-        if site != previous_site + 1:
-            runs.append((first_site, previous_site))
-            first_site = site
-        previous_site = site
-    runs.append((first_site, previous_site))
-    return tuple(runs)
-
-
-def _draw_wrap_movement(
-    axis: Axes,
-    start_time: int,
-    end_time: int,
-    source: int,
-    destination: int,
-    num_sites: int,
-    color: object,
-    *,
-    show_label: bool,
-) -> None:
-    """Draw short trajectory segments that leave and re-enter at the ring seam."""
-    source_seam = -0.5 if source == 0 else num_sites - 0.5
-    destination_seam = -0.5 if destination == 0 else num_sites - 0.5
-    stub_duration = min(_WRAP_STUB_DURATION, (end_time - start_time) / 2)
-    exit_time = start_time + stub_duration
-    entry_time = end_time - stub_duration
-    axis.plot(
-        [start_time, exit_time],
-        [source, source_seam],
-        color=color,
-        linewidth=1.8,
-        label="ring transport" if show_label else "_nolegend_",
-        zorder=2,
-        gid="ring transport",
-    )
-    axis.plot(
-        [entry_time, end_time],
-        [destination_seam, destination],
-        color=color,
-        linewidth=1.8,
-        label="_nolegend_",
-        zorder=2,
-        gid="ring transport",
-    )
-
-
-def _draw_gate_interval(axis: Axes, start_time: int, end_time: int, site: int, color: object) -> None:
-    """Emphasize the interval during which a gate occupies an ion."""
-    if end_time > start_time:
-        axis.plot(
-            [start_time, end_time],
-            [site, site],
-            color=color,
-            linewidth=6,
-            alpha=0.3,
-            solid_capstyle="butt",
-            zorder=3,
+        Returns:
+            JSON-compatible data.
+        """
+        settings = self.visualizer
+        start, end = self._video_range()
+        return view_data(
+            title=" vs. ".join(scene.title for scene in self._scenes) or "Linear schedule",
+            settings={
+                "theme": settings.theme,
+                "show_ion_labels": settings.show_ion_labels,
+                "show_processing_zone_labels": settings.show_processing_zone_labels,
+                "show_site_numbers": settings.show_site_numbers,
+                "show_field_profile": settings.show_field_profile,
+                "show_schedule_details": settings.show_schedule_details,
+                "marker_size": settings.marker_size,
+                "timesteps_per_second": settings.timesteps_per_second,
+                "width": settings.width,
+                "height": settings.height,
+                "frames_per_second": settings.frames_per_second,
+                "video_start_time": start,
+                "video_end_time": end,
+                "ion_colors": color_mode(settings.ion_colors),
+            },
+            options=self._options(),
+            drawing={
+                "colors": COLORS,
+                "panels": [scene.to_dict() for scene in self._scenes],
+                "ion_colors": {str(ion): changes for ion, changes in color_changes(settings.ion_colors).items()},
+                "zone_colors": zone_colors(settings.processing_zone_colors),
+            },
+            drawing_name="LinearDrawing",
+            sidebar=_DETAILS_SIDEBAR,
         )
 
+    def save(self, path: str | Path) -> Path:
+        """Write the view as a standalone HTML file.
 
-def _label_gate(axis: Axes, timestep: int, site: float, label: str) -> None:
-    """Place a compact gate label above its trajectory marker."""
-    axis.annotate(
-        label,
-        (timestep, site),
-        xytext=(3, 6),
-        textcoords="offset points",
-        fontsize="small",
-        rotation=35,
-        ha="left",
-        va="bottom",
-        zorder=5,
+        Returns:
+            The written path.
+        """
+        target = Path(path)
+        target.write_text(self.to_html(), encoding="utf-8")
+        return target
+
+    def export_video(
+        self,
+        path: str | Path,
+        *,
+        start_time: int | None = None,
+        end_time: int | None = None,
+        frames_per_second: int | None = None,
+    ) -> Path:
+        """Write a video of a time range with Matplotlib.
+
+        The video uses the visualizer settings. It shows
+        ``timesteps_per_second`` schedule timesteps per video second. Its first
+        frame shows ``start_time`` and its last frame shows ``end_time``. The
+        ``.gif`` format needs no further software. The ``.mp4``, ``.m4v``,
+        ``.mov``, ``.mkv``, and ``.webm`` formats need FFmpeg.
+
+        An unsupported format or an invalid range raises :class:`ValueError`.
+        A missing FFmpeg program raises :class:`RuntimeError`.
+
+        Args:
+            path: Video file to write. Its suffix selects the format.
+            start_time: First timestep. ``None`` uses the visualizer setting.
+            end_time: Last timestep. ``None`` uses the visualizer setting.
+            frames_per_second: Frame rate. ``None`` uses the visualizer setting.
+
+        Returns:
+            The written path.
+        """
+        from matplotlib.backends.backend_agg import FigureCanvasAgg  # ruff: ignore[import-outside-top-level]
+        from matplotlib.figure import Figure  # ruff: ignore[import-outside-top-level]
+
+        from .._player.video import save_video  # ruff: ignore[import-outside-top-level]
+
+        settings = self.visualizer
+        start, end = self._video_range(start_time, end_time)
+        rate = settings.frames_per_second if frames_per_second is None else frames_per_second
+        require_positive_int(rate, "frames_per_second")
+        target = Path(path)
+        figure = Figure(figsize=(settings.width / 100, settings.height / 100), dpi=100)
+        FigureCanvasAgg(figure)
+        drawing = _drawing(settings, figure, self._scenes)
+        save_video(
+            figure,
+            target,
+            video_frame_times(start, end, settings.timesteps_per_second, rate),
+            rate,
+            drawing.draw_at,
+            drawing.colors["background"],
+        )
+        return target
+
+    def _repr_html_(self) -> str:  # ruff: ignore[bad-dunder-method-name] - Jupyter calls this display method.
+        """Return the view for notebook display.
+
+        Returns:
+            An inline frame that contains the standalone document.
+        """
+        return notebook_frame(self.to_html(), self.visualizer.height)
+
+    def _options(self) -> list[PlayerOption]:
+        """Return the label switches and the ion color choice of the browser player.
+
+        The field profile switch appears only if a result has a field profile.
+
+        Returns:
+            The player options.
+        """
+        has_field = any(scene.field is not None for scene in self._scenes)
+        flags = [*_FLAGS, _FIELD_FLAG] if has_field else list(_FLAGS)
+        return [*flags, color_mode_option(self.visualizer.ion_colors)]
+
+    def _video_range(self, start_time: int | None = None, end_time: int | None = None) -> tuple[int, int]:
+        """Return a validated video range.
+
+        Missing bounds use the visualizer settings, then the schedule bounds.
+
+        Returns:
+            The first and last timestep of the video.
+        """
+        settings = self.visualizer
+        if start_time is None:
+            start_time = self.start_time if settings.video_start_time is None else settings.video_start_time
+        if end_time is None:
+            end_time = self.end_time if settings.video_end_time is None else settings.video_end_time
+        return video_range(start_time, end_time, self.start_time, self.end_time)
+
+
+def _scene(result: CompilationResult, title: str = "") -> Scene:
+    """Replay a result for drawing.
+
+    The Linear compiler modules load only here, so importing the package
+    stays light.
+
+    Returns:
+        The scene.
+    """
+    from ._scene import build_scene  # ruff: ignore[import-outside-top-level]
+
+    return build_scene(result, title)
+
+
+def _drawing(settings: LinearVisualizer, figure: Figure, scenes: tuple[Scene, ...]) -> LinearDrawing:
+    """Create a Matplotlib drawing with the given settings.
+
+    Returns:
+        The drawing.
+    """
+    from ._matplotlib import LinearDrawing  # ruff: ignore[import-outside-top-level]
+
+    return LinearDrawing(
+        figure,
+        scenes,
+        theme=settings.theme,
+        show_ion_labels=settings.show_ion_labels,
+        show_processing_zone_labels=settings.show_processing_zone_labels,
+        show_site_numbers=settings.show_site_numbers,
+        show_field_profile=settings.show_field_profile,
+        ion_color_mode=color_mode(settings.ion_colors),
+        ion_color_changes=color_changes(settings.ion_colors),
+        zone_colors=zone_colors(settings.processing_zone_colors),
+        marker_size=settings.marker_size,
     )
 
 
-def _label_two_qubit_gate(axis: Axes, timestep: int, site: float, label: str) -> None:
-    """Center a two-ion gate label on its connector."""
-    axis.annotate(
-        label,
-        (timestep, site),
-        fontsize="small",
-        ha="center",
-        va="center",
-        bbox={"boxstyle": "round,pad=0.15", "facecolor": "white", "edgecolor": "none", "alpha": 0.9},
-        zorder=5,
-    )
-
-
-__all__ = ["LinearVisualizer"]
+__all__ = ["LinearView", "LinearVisualizer"]

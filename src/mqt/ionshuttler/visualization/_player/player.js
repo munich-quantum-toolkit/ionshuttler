@@ -15,6 +15,13 @@
 // The player calls `drawAtTime` for the visible canvas and for every video
 // frame, so playback, the time slider, and export show the same picture. The
 // settings it passes always name a concrete theme, "light" or "dark".
+//
+// A view can name a side bar as `[setting, label]`. The setting is true while
+// the side bar is open. The drawing then supplies one more function:
+//   details(view, time, settings) -> [{ title, rows: [[label, [lines]]] }]
+// A line is a string or a list of parts. A part is a string or a pill
+// `{ text, border, fill, ink }`: text in a rounded frame with optional border,
+// background, and text colors. The player writes all parts as text.
 
 "use strict";
 
@@ -233,6 +240,13 @@ const Player = (() => {
     const progress = element("progress");
     const message = element("export-message");
     const canEdit = typeof drawing.pick === "function";
+    const sidebar =
+      data.sidebar !== undefined && typeof drawing.details === "function"
+        ? data.sidebar
+        : null;
+    const sidebarPanel = element("sidebar");
+    const sidebarToggle = element("sidebar-toggle");
+    let shownDetails = null;
     let time = startTime;
     let playing = false;
     let lastFrame = null;
@@ -254,6 +268,7 @@ const Player = (() => {
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       const shown = { ...settings, theme: resolveTheme(settings.theme) };
       drawing.drawAtTime(context, view, time, shown, width, height);
+      renderDetails(shown);
       timeInput.value = String(time);
       const span = Math.max(endTime - startTime, 1e-9);
       timeInput.style.setProperty(
@@ -261,6 +276,75 @@ const Player = (() => {
         `${((time - startTime) / span) * 100}%`,
       );
       timeLabel.textContent = `${time.toFixed(1)} / ${endTime}`;
+    }
+
+    // Write the drawing's details into the open side bar. The page changes
+    // only when the details change, not on every frame.
+    function renderDetails(shown) {
+      if (sidebar === null || !settings[sidebar[0]]) return;
+      const sections = drawing.details(view, time, shown) ?? [];
+      const key = JSON.stringify(sections);
+      if (key === shownDetails) return;
+      shownDetails = key;
+      element("sidebar-body").replaceChildren(
+        ...sections.map(({ title, rows }) => {
+          const section = document.createElement("section");
+          section.className = "player-details";
+          if (title) {
+            const heading = document.createElement("h3");
+            heading.textContent = title;
+            section.append(heading);
+          }
+          const list = document.createElement("dl");
+          for (const [label, lines] of rows) {
+            const term = document.createElement("dt");
+            term.textContent = label;
+            const value = document.createElement("dd");
+            value.append(
+              ...(lines.length === 0 ? ["none"] : lines).map((parts) => {
+                const line = document.createElement("div");
+                line.append(
+                  ...(typeof parts === "string" ? [parts] : parts).map(
+                    detailPart,
+                  ),
+                );
+                return line;
+              }),
+            );
+            list.append(term, value);
+          }
+          section.append(list);
+          return section;
+        }),
+      );
+    }
+
+    // Each part is its own element, so the line keeps a gap between parts.
+    function detailPart(part) {
+      if (typeof part === "string") {
+        const text = document.createElement("span");
+        text.textContent = part;
+        return text;
+      }
+      const pill = document.createElement("span");
+      pill.className = "player-pill";
+      pill.textContent = part.text;
+      for (const [name, color] of [
+        ["border", part.border],
+        ["fill", part.fill],
+        ["ink", part.ink],
+      ]) {
+        if (color) pill.style.setProperty(`--pill-${name}`, color);
+      }
+      return pill;
+    }
+
+    function setSidebar(open) {
+      settings[sidebar[0]] = open;
+      sidebarPanel.hidden = !open;
+      sidebarToggle.setAttribute("aria-expanded", String(open));
+      shownDetails = null;
+      render();
     }
 
     // Redraw once per animation frame, however many events arrive.
@@ -490,7 +574,7 @@ const Player = (() => {
     }
 
     async function copySettings() {
-      const text = drawing.settingsText(view);
+      const text = drawing.settingsText(view, settings);
       const button = element("copy");
       try {
         await navigator.clipboard.writeText(text);
@@ -600,13 +684,36 @@ const Player = (() => {
     exportToggle.addEventListener("click", () => {
       exportPanel.hidden = !exportPanel.hidden;
       exportToggle.setAttribute("aria-expanded", String(!exportPanel.hidden));
+      // The canvas can fill the window, so the panel can open below its
+      // bottom edge. Scroll the opened panel into view.
+      if (!exportPanel.hidden)
+        exportPanel.scrollIntoView({ block: "nearest", behavior: "smooth" });
     });
     if (canEdit) {
       editToggle.hidden = false;
+      // The drawing says what the editor can change.
+      if (typeof drawing.editHint === "string")
+        element("edit-hint").textContent = drawing.editHint;
       editToggle.addEventListener("click", () => setEditing(!settings.editing));
       element("done").addEventListener("click", () => setEditing(false));
+      // A drawing with a `marker_size` setting gets a size slider. It scales
+      // the drawn ions and junctions without moving any junction.
+      const sizeInput = element("size-input");
+      const hasSize = typeof settings.marker_size === "number";
+      element("size").hidden = !hasSize;
+      if (hasSize) {
+        sizeInput.value = String(settings.marker_size);
+        sizeInput.addEventListener("input", () => {
+          settings.marker_size = Number(sizeInput.value);
+          requestRender();
+        });
+      }
       element("reset").addEventListener("click", () => {
         drawing.resetLayout(view);
+        if (hasSize) {
+          settings.marker_size = data.settings.marker_size;
+          sizeInput.value = String(settings.marker_size);
+        }
         render();
       });
       element("copy").addEventListener("click", copySettings);
@@ -618,6 +725,21 @@ const Player = (() => {
       canvas.addEventListener("pointermove", onPointerMove);
       canvas.addEventListener("pointerup", onPointerUp);
       canvas.addEventListener("pointercancel", onPointerUp);
+    }
+    if (sidebar !== null) {
+      const [setting, label] = sidebar;
+      element("sidebar-label").textContent = label;
+      element("sidebar-title").textContent = label;
+      sidebarPanel.setAttribute("aria-label", label);
+      sidebarToggle.hidden = false;
+      sidebarToggle.addEventListener("click", () =>
+        setSidebar(!settings[setting]),
+      );
+      element("sidebar-close").addEventListener("click", () =>
+        setSidebar(false),
+      );
+      sidebarPanel.hidden = !settings[setting];
+      sidebarToggle.setAttribute("aria-expanded", String(!sidebarPanel.hidden));
     }
     exportCancel.addEventListener("click", () => {
       cancelled = true;

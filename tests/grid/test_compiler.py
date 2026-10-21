@@ -903,6 +903,19 @@ def test_compiler_returns_a_valid_failed_prefix_when_the_zone_is_unreachable() -
     result.validate()
 
 
+def test_grid_diagnostics_report_the_run_counters() -> None:
+    """Name each counter of the scheduling run for people."""
+    diagnostics = GridDiagnostics(4, 9, 2, 1, 3, GridStopReason.COMPLETED)
+
+    assert diagnostics.statistics() == (
+        ("Iterations", 4),
+        ("Explored routing states", 9),
+        ("Junction moves", 2),
+        ("Cycles", 1),
+        ("Completed gates", 3),
+    )
+
+
 def test_compiler_uses_deterministic_default_placement() -> None:
     """Fill segments in architecture order when no placement is supplied."""
     first = Segment("first")

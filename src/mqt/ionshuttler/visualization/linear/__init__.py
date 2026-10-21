@@ -5,8 +5,8 @@
 #
 # Licensed under the MIT License
 
-"""Show Linear compilation results as trajectory plots."""
+"""Show Linear compilation results as interactive views, figures, and videos."""
 
-from mqt.ionshuttler.visualization.linear.visualizer import LinearVisualizer
+from mqt.ionshuttler.visualization.linear.visualizer import LinearView, LinearVisualizer
 
-__all__ = ["LinearVisualizer"]
+__all__ = ["LinearView", "LinearVisualizer"]

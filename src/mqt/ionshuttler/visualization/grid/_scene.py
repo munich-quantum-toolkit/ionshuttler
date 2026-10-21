@@ -26,7 +26,7 @@ from bisect import bisect_right
 from dataclasses import dataclass
 from functools import cached_property
 from itertools import groupby
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from mqt.ionshuttler.core.gates import GateAction, GlobalGate
 from mqt.ionshuttler.grid.actions import Cycle, JunctionMove
@@ -40,43 +40,17 @@ if TYPE_CHECKING:
     from mqt.ionshuttler.core.actions import Action
     from mqt.ionshuttler.core.result import CompilationResult
     from mqt.ionshuttler.core.schedule import ScheduledAction
+    from mqt.ionshuttler.grid.planning_trace import PlanningSnapshot
+    from mqt.ionshuttler.grid.result import GridStopReason
     from mqt.ionshuttler.visualization.grid.visualizer import JunctionCoordinates
 
 Coordinate = tuple[float, float]
 
 _GRID_JUNCTION_ID = re.compile(r"j:(-?\d+):(-?\d+)\Z")
 _DIGITS = 4
-_ION_RADIUS_PER_SPACING = 0.35
+_ION_RADIUS_PER_SPACING = 0.38
 _MAX_ION_RADIUS = 0.06
 _MARGIN_PER_ION_RADIUS = 2.5
-
-# Theme colors of the drawing. "ion" is the ring color in single-color mode,
-# "ion_fill" fills ions without a chosen fill, and "gate" marks gates that run
-# outside a processing zone.
-COLORS: dict[str, dict[str, str]] = {
-    "light": {
-        "background": "#ffffff",
-        "segment": "#d7dbe0",
-        "junction": "#8a929d",
-        "ion": "#3f4b5b",
-        "ion_fill": "#ffffff",
-        "gate": "#3f4b5b",
-        "text": "#1c2430",
-        "muted_text": "#6b7480",
-        "chip": "#f1f3f5",
-    },
-    "dark": {
-        "background": "#121418",
-        "segment": "#2b3038",
-        "junction": "#6f7782",
-        "ion": "#c3cad3",
-        "ion_fill": "#1b1f25",
-        "gate": "#c3cad3",
-        "text": "#e4e7eb",
-        "muted_text": "#8b939e",
-        "chip": "#1d2128",
-    },
-}
 
 
 @dataclass(frozen=True)
@@ -190,12 +164,103 @@ class Geometry:
         return _interpolate(start, end, place.fraction)
 
 
+@runtime_checkable
+class RecordedPlanning(Protocol):
+    """Describe diagnostics that can hold a Grid planning trace.
+
+    The scene reads these fields from the diagnostics of any compiler method,
+    whatever their class.
+    """
+
+    @property
+    def planning_trace(self) -> tuple[PlanningSnapshot, ...] | None:
+        """One snapshot per scheduling decision, or ``None`` without a trace."""
+        ...
+
+    @property
+    def stop_reason(self) -> GridStopReason:
+        """Why scheduling stopped."""
+        ...
+
+
+@dataclass(frozen=True)
+class PlanningTrace:
+    """Store the compiler planning trace of one Grid result.
+
+    The compiler records snapshots at discrete decision times. Between two
+    decisions, the view shows the latest snapshot at or before the current
+    time.
+    """
+
+    snapshots: tuple[PlanningSnapshot, ...]
+    stop_reason: GridStopReason
+
+    def snapshot_at(self, time: float) -> PlanningSnapshot | None:
+        """Return the latest snapshot at or before a schedule time.
+
+        Several decisions can share one timestep. The last of them is shown.
+
+        Returns:
+            The snapshot, or ``None`` before the first decision.
+        """
+        index = bisect_right(self._times, time) - 1
+        return None if index < 0 else self.snapshots[index]
+
+    def to_dict(self, segment_index: Mapping[str, int]) -> dict[str, object]:
+        """Return compact JSON-compatible planning data for the HTML view.
+
+        Segments are segment indices. Each gate appears once in ``gates``;
+        snapshots name gates by gate ID.
+
+        Returns:
+            The planning data.
+        """
+
+        def segment(segment_id: str | None) -> int | None:
+            return None if segment_id is None else segment_index[segment_id]
+
+        gates = {planned.gate_id: planned.gate for snapshot in self.snapshots for planned in snapshot.gates}
+        return {
+            "stop_reason": self.stop_reason.value,
+            "gates": [[gate_id, _gate_name(gate), list(gate.ions)] for gate_id, gate in sorted(gates.items())],
+            "snapshots": [
+                [
+                    snapshot.iteration,
+                    snapshot.time,
+                    list(snapshot.ready_gates),
+                    list(snapshot.selected_gates),
+                    list(snapshot.lookahead_gates),
+                    list(snapshot.started_gates),
+                    [[planned.gate_id, segment(planned.target_segment)] for planned in snapshot.gates],
+                    [
+                        [
+                            request.ion,
+                            segment_index[request.target_segment],
+                            request.status.value,
+                            _junction_crossings(request.actions, segment_index),
+                        ]
+                        for request in snapshot.prioritized_ions
+                    ],
+                    list(snapshot.retained_ions),
+                    _junction_crossings(snapshot.moves, segment_index),
+                    None if snapshot.idle_reason is None else snapshot.idle_reason.value,
+                ]
+                for snapshot in self.snapshots
+            ],
+        }
+
+    @cached_property
+    def _times(self) -> list[int]:
+        return [snapshot.time for snapshot in self.snapshots]
+
+
 @dataclass(frozen=True)
 class Scene:
     """Store the complete drawing data for one Grid result.
 
     Junction coordinates are scaled so that the larger side of the layout has
-    length one. The ``y`` axis points up.
+    length one. The ``y`` axis points up. ``planning`` holds the compiler
+    planning trace if the result has one.
     """
 
     title: str
@@ -206,9 +271,21 @@ class Scene:
     processing_zones: tuple[ProcessingZoneDrawing, ...]
     ions: tuple[IonTrack, ...]
     layers: tuple[Layer, ...]
+    planning: PlanningTrace | None = None
 
     def to_dict(self) -> dict[str, object]:
-        """Return compact JSON-compatible drawing data for the HTML view."""
+        """Return compact JSON-compatible drawing data for the HTML view.
+
+        The ``planning`` entry appears only for results with a planning trace.
+        """
+        data = self._drawing_dict()
+        if self.planning is not None:
+            data["planning"] = self.planning.to_dict({
+                segment.segment_id: index for index, segment in enumerate(self.segments)
+            })
+        return data
+
+    def _drawing_dict(self) -> dict[str, object]:
         return {
             "title": self.title,
             "start": self.start_time,
@@ -435,6 +512,12 @@ def build_scene(
     tracks, layers = _replay(
         result, architecture, {junction_id: index for index, junction_id in enumerate(junction_ids)}
     )
+    diagnostics = result.diagnostics
+    planning = (
+        PlanningTrace(diagnostics.planning_trace, diagnostics.stop_reason)
+        if isinstance(diagnostics, RecordedPlanning) and diagnostics.planning_trace is not None
+        else None
+    )
     return Scene(
         title=title,
         start_time=result.start_time,
@@ -448,6 +531,7 @@ def build_scene(
         ),
         ions=tracks,
         layers=layers,
+        planning=planning,
     )
 
 
@@ -475,10 +559,21 @@ def track_position(track: IonTrack, time: float, shape: Geometry) -> Coordinate:
     return _along_path(source, via, target, progress)
 
 
-def panel_layout(shape: Geometry, left: float, top: float, width: float, height: float) -> PanelLayout:
+def panel_layout(
+    shape: Geometry,
+    left: float,
+    top: float,
+    width: float,
+    height: float,
+    marker_size: float = 1.0,
+) -> PanelLayout:
     """Fit a geometry into one panel below the header.
 
-    Both renderers use this function so that their geometry agrees.
+    Both renderers use this function so that their geometry agrees. At
+    ``marker_size`` 1, the ions of the fullest segment fit side by side with
+    a small gap.
+    ``marker_size`` scales the ions, and with them the junctions, segment
+    lines, and ion labels, without moving any junction.
 
     Returns:
         The pixel layout.
@@ -496,7 +591,8 @@ def panel_layout(shape: Geometry, left: float, top: float, width: float, height:
         left + padding + (available_width - extent_x * scale) / 2,
         top + header_height + padding + (available_height - extent_y * scale) / 2,
     )
-    ion_radius = min(shape.ion_radius * scale, 0.045 * min(width, height))
+    # At least 2 px, so that every ion stays visible.
+    ion_radius = max(min(shape.ion_radius * scale, 0.037 * min(width, height)) * marker_size, 2.0)
     return PanelLayout(
         left, top, width, height, scale, origin, shape.bounds, ion_radius, font_size, header_height, padding
     )
@@ -520,13 +616,24 @@ def label_normal(start: Coordinate, end: Coordinate) -> Coordinate:
     return normal
 
 
-def ion_label_font_size(ion_radius: float, label: str) -> float:
-    """Return a font size that fits an ion label inside its colored ring.
+def zone_label_size(font_size: float) -> float:
+    """Return the font size of processing-zone labels.
 
     Returns:
         The font size in pixels.
     """
-    return min(0.85 * ion_radius, 2.3 * ion_radius / max(len(label), 2))
+    return max(11.0, 0.95 * font_size)
+
+
+def hardware_id_font_size(ion_radius: float, font_size: float) -> float:
+    """Return the font size of segment and junction IDs.
+
+    The IDs shrink with the ions, so that dense layouts stay readable.
+
+    Returns:
+        The font size in pixels.
+    """
+    return max(7.0, min(0.72 * font_size, 1.1 * ion_radius))
 
 
 def header_lines(scene: Scene, time: float) -> tuple[str, str, str]:
@@ -538,16 +645,6 @@ def header_lines(scene: Scene, time: float) -> tuple[str, str, str]:
     shown_time = min(max(time, scene.start_time), scene.end_time)
     layer = scene.current_layer(shown_time)
     return scene.title, f"t {shown_time:.1f} / {scene.end_time}", "" if layer is None else layer.description
-
-
-def truncate(text: str, width: float, font_size: float) -> str:
-    """Shorten text to an estimated pixel width.
-
-    Returns:
-        The text, shortened with an ellipsis if necessary.
-    """
-    limit = max(int(width / (0.55 * font_size)), 1)
-    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def junction_positions(
@@ -777,10 +874,37 @@ def _describe(scheduled_action: ScheduledAction[Action]) -> str:
     action = scheduled_action.action
     if not isinstance(action, GateAction):
         return str(action)
-    name = action.gate_name if isinstance(action, GlobalGate) else action.circuit_name or type(action).__name__
     ions = ",".join(f"q{ion}" for ion in action.ions)
     zone = "" if scheduled_action.processing_zone_id is None else f" @ {scheduled_action.processing_zone_id}"
-    return f"{name} {ions}{zone}"
+    return f"{_gate_name(action)} {ions}{zone}"
+
+
+def _gate_name(gate: GateAction) -> str:
+    """Return the circuit name of a gate, such as ``rxx``.
+
+    Returns:
+        The name.
+    """
+    return gate.gate_name if isinstance(gate, GlobalGate) else gate.circuit_name or type(gate).__name__
+
+
+def _junction_crossings(actions: Sequence[Action], segment_index: Mapping[str, int]) -> list[list[object]]:
+    """List the junction crossings of transport actions as ``[ions, source, destination]``.
+
+    A cycle contributes each of its junction moves. Source and destination are
+    segment indices.
+
+    Returns:
+        The junction crossings.
+    """
+    crossings: list[list[object]] = []
+    for action in actions:
+        moves = action.moves if isinstance(action, Cycle) else (action,) if isinstance(action, JunctionMove) else ()
+        crossings.extend(
+            [list(move.ions), segment_index[move.source.segment_id], segment_index[move.destination.segment_id]]
+            for move in moves
+        )
+    return crossings
 
 
 def _coordinate(raw_coordinate: Sequence[float], junction_id: str) -> Coordinate:

@@ -18,12 +18,23 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ._colors import ZONE_PALETTE, distinct_color, ion_colors, legend
-from ._scene import COLORS, header_lines, ion_label_font_size, label_normal, panel_layout, truncate
+from .._player.figure_style import AMBIENT_GLOW, LINE_GLOW, add_ambient_halo, add_halos, move_halos
+from .._player.style import (
+    COLORS,
+    RING_SHADE,
+    ZONE_PALETTE,
+    distinct_color,
+    ion_colors,
+    ion_label_font_size,
+    legend,
+    shade,
+    truncate,
+)
+from .._player.video import DPI, points
+from ._scene import hardware_id_font_size, header_lines, label_normal, panel_layout, zone_label_size
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
-    from pathlib import Path
+    from collections.abc import Mapping, Sequence
 
     from matplotlib.artist import Artist
     from matplotlib.axes import Axes
@@ -31,12 +42,8 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
     from matplotlib.text import Text
 
-    from ._colors import ColorChange
+    from .._player.style import ColorChange
     from ._scene import Coordinate, PanelLayout, Scene
-
-_DPI = 100
-_POINTS_PER_PIXEL = 72 / _DPI
-_VIDEO_CODECS = {".mp4": "h264", ".m4v": "h264", ".mov": "h264", ".mkv": "h264", ".webm": "libvpx-vp9"}
 
 
 class GridDrawing:
@@ -54,12 +61,13 @@ class GridDrawing:
         ion_color_mode: str,
         ion_color_changes: Mapping[int, Sequence[ColorChange]],
         zone_colors: Mapping[str, str],
+        marker_size: float,
     ) -> None:
         """Create all artists for the scenes at their start times."""
         self.figure = figure
         self.colors = COLORS["dark" if theme == "dark" else "light"]
-        width = figure.get_figwidth() * _DPI
-        height = figure.get_figheight() * _DPI
+        width = figure.get_figwidth() * DPI
+        height = figure.get_figheight() * DPI
         figure.set_facecolor(self.colors["background"])
         self.axis: Axes = figure.add_axes((0.0, 0.0, 1.0, 1.0))
         self.axis.set_xlim(0, width)
@@ -70,7 +78,7 @@ class GridDrawing:
             _PanelArtists(
                 self.axis,
                 scene,
-                panel_layout(scene.geometry, index * panel_width, 0, panel_width, height),
+                panel_layout(scene.geometry, index * panel_width, 0, panel_width, height, marker_size),
                 self.colors,
                 _Style(
                     show_ion_labels=show_ion_labels,
@@ -124,29 +132,50 @@ class _PanelArtists:
             for index, zone in enumerate(scene.processing_zones)
         }
         segment_points = [(layout.point(start), layout.point(end)) for start, end in shape.segments]
-        self.segments: LineCollection = LineCollection(
+        widths = [self._segment_width(segment.processing_zones) for segment in scene.segments]
+        # Processing zones glow faintly in their own color, and fully while they run a gate.
+        zone_segments = [index for index, segment in enumerate(scene.segments) if segment.processing_zones]
+        axis.add_collection(
+            LineCollection(
+                [segment_points[index] for index in zone_segments],
+                linewidths=[points(2.2 * widths[index]) for index in zone_segments],
+                colors=[self._segment_color(scene.segments[index].processing_zones) for index in zone_segments],
+                alpha=LINE_GLOW * AMBIENT_GLOW,
+                capstyle="round",
+                zorder=1,
+            )
+        )
+        self.glow: LineCollection = LineCollection(
             segment_points,
-            linewidths=[
-                _points(self._segment_width(segment.processing_zones, active=False)) for segment in scene.segments
-            ],
-            colors=[self._segment_color(segment.processing_zones) for segment in scene.segments],
+            linewidths=[points(2.2 * width) for width in widths],
+            colors="none",
+            alpha=LINE_GLOW,
             capstyle="round",
             zorder=1,
         )
-        axis.add_collection(self.segments)
+        axis.add_collection(self.glow)
+        axis.add_collection(
+            LineCollection(
+                segment_points,
+                linewidths=[points(width) for width in widths],
+                colors=[self._segment_color(segment.processing_zones) for segment in scene.segments],
+                capstyle="round",
+                zorder=1,
+            )
+        )
         zone_points = [layout.point(shape.position(zone.place)) for zone in scene.processing_zones]
         if zone_points:
             axis.scatter(
                 [x for x, _y in zone_points],
                 [y for _x, y in zone_points],
-                s=_points(1.1 * radius) ** 2,
+                s=points(1.5 * radius) ** 2,
                 marker="D",
                 color=[self.zone_color[zone.zone_id] for zone in scene.processing_zones],
                 linewidths=0,
                 zorder=2,
             )
         if style.show_processing_zone_labels:
-            label_size = max(9.0, 0.78 * font_size)
+            label_size = zone_label_size(font_size)
             for zone, point in zip(scene.processing_zones, zone_points, strict=True):
                 start, end = segment_points[zone.place.segment]
                 normal = label_normal(*shape.segments[zone.place.segment])
@@ -160,40 +189,45 @@ class _PanelArtists:
                     _zone_label_gap(radius, label_size),
                     color=self.zone_color[zone.zone_id],
                     size=label_size,
-                    weight="normal",
+                    weight="semibold",
                 )
         junction_points = [layout.point(position) for position in shape.junctions]
         if junction_points:
             axis.scatter(
                 [x for x, _y in junction_points],
                 [y for _x, y in junction_points],
-                s=_points(2 * max(1.5, 0.3 * radius)) ** 2,
+                s=points(0.95 * radius) ** 2,
+                marker="s",
                 color=colors["junction"],
                 linewidths=0,
                 zorder=3,
             )
         if style.show_hardware_ids:
-            self._add_hardware_ids(axis, segment_points, max(8.0, 0.72 * font_size))
+            self._add_hardware_ids(axis, segment_points, hardware_id_font_size(radius, font_size))
         initial = scene.ion_positions(scene.start_time)
         self.ion_order = [track.ion for track in scene.ions]
         start_points = [layout.point(initial[ion]) for ion in self.ion_order]
-        # A running gate draws a thin outer ring in the color of its processing zone.
-        gate_ring = radius + max(2.5, 0.3 * radius)
-        self.gate_rings: PathCollection = axis.scatter(
-            [x for x, _y in start_points],
-            [y for _x, y in start_points],
-            s=_points(2 * gate_ring) ** 2,
-            facecolor="none",
-            edgecolor="none",
-            linewidths=_points(max(1.25, 0.15 * radius)),
-            zorder=4,
-        )
-        ring_width = max(1.25, 0.18 * radius)
+        # A running gate makes its ions glow in the color of its processing zone.
+        # Every ion outside a running gate glows faintly in its ring color.
+        self.ambient_halo = add_ambient_halo(axis, radius, 4)
+        self.halos = add_halos(axis, radius, 4)
+        ring_width = max(1.5, 0.28 * radius)
         self.ions: PathCollection = axis.scatter(
             [x for x, _y in start_points],
             [y for _x, y in start_points],
-            s=_points(2 * radius - ring_width) ** 2,
-            linewidths=_points(ring_width),
+            s=points(2 * radius - ring_width) ** 2,
+            linewidths=points(ring_width),
+            zorder=4,
+        )
+        # Matplotlib has no radial stroke. The ring is a little darker, and its
+        # inner half in the ion's own ring color stands in for the shade toward
+        # the outer edge in the browser view.
+        self.inner_rings: PathCollection = axis.scatter(
+            [x for x, _y in start_points],
+            [y for _x, y in start_points],
+            s=points(2 * radius - 1.5 * ring_width) ** 2,
+            facecolor="none",
+            linewidths=points(0.5 * ring_width),
             zorder=4,
         )
         self.ion_labels: list[Text] = []
@@ -206,8 +240,8 @@ class _PanelArtists:
                         0,
                         0,
                         label,
-                        fontsize=_points(label_size),
-                        fontweight="normal",
+                        fontsize=points(label_size),
+                        fontweight="semibold",
                         ha="center",
                         va="center",
                         zorder=5,
@@ -223,7 +257,7 @@ class _PanelArtists:
             top,
             "",
             color=colors["text"],
-            fontsize=_points(font_size),
+            fontsize=points(font_size),
             fontweight="semibold",
             va="top",
             zorder=7,
@@ -233,7 +267,7 @@ class _PanelArtists:
             top,
             "",
             color=colors["muted_text"],
-            fontsize=_points(0.9 * font_size),
+            fontsize=points(0.9 * font_size),
             ha="right",
             va="top",
             zorder=7,
@@ -244,7 +278,7 @@ class _PanelArtists:
             top + (1.55 if scene.title else 0.12) * font_size,
             "",
             color=colors["muted_text"],
-            fontsize=_points(0.85 * font_size),
+            fontsize=points(0.85 * font_size),
             va="top",
             zorder=7,
         )
@@ -258,8 +292,8 @@ class _PanelArtists:
         scene = self.scene
         style = self.style
         shown_time = min(max(time, scene.start_time), scene.end_time)
-        # Gates that take no time, such as virtual rz gates, get no ring.
-        gate_rings = {
+        # Gates that take no time, such as virtual rz gates, get no glow.
+        gate_glows = {
             ion: self.zone_color.get(gate.processing_zone or "", self.colors["gate"])
             for gate in scene.running_gates(shown_time)
             if gate.end > gate.start
@@ -280,16 +314,22 @@ class _PanelArtists:
             for ion in self.ion_order
         ]
         self.ions.set_offsets(points)
-        self.ions.set_edgecolor([border for border, _fill, _text in styles])
+        move_halos(self.halos, points, [gate_glows.get(ion, "none") for ion in self.ion_order])
+        self.ions.set_edgecolor([shade(border, RING_SHADE) for border, _fill, _text in styles])
         self.ions.set_facecolor([fill for _border, fill, _text in styles])
-        self.gate_rings.set_offsets(points)
-        self.gate_rings.set_edgecolor([gate_rings.get(ion, "none") for ion in self.ion_order])
+        self.inner_rings.set_offsets(points)
+        self.inner_rings.set_edgecolor([border for border, _fill, _text in styles])
+        self.ambient_halo.set_offsets(points)
+        self.ambient_halo.set_facecolor([
+            "none" if ion in gate_glows else border
+            for ion, (border, _fill, _text) in zip(self.ion_order, styles, strict=True)
+        ])
         for text, point, (_border, _fill, text_color) in zip(self.ion_labels, points, styles, strict=False):
             text.set_position(point)
             text.set_color(text_color)
-        self.segments.set_linewidth([
-            _points(self._segment_width(zones, active=any(zone in active_zones for zone in zones)))
-            for zones in (segment.processing_zones for segment in scene.segments)
+        self.glow.set_color([
+            next((self.zone_color[zone] for zone in segment.processing_zones if zone in active_zones), "none")
+            for segment in scene.segments
         ])
         title, time_text, description = header_lines(scene, time)
         text_width = self.layout.width - 2 * self.layout.padding
@@ -297,18 +337,26 @@ class _PanelArtists:
         self.time.set_text(time_text)
         description_width = text_width if title else text_width * 0.75
         self.description.set_text(truncate(description, description_width, 0.85 * self.layout.font_size))
-        return [self.ions, self.gate_rings, self.segments, self.title, self.time, self.description, *self.ion_labels]
+        return [
+            self.ions,
+            self.inner_rings,
+            self.ambient_halo,
+            *self.halos,
+            self.glow,
+            self.title,
+            self.time,
+            self.description,
+            *self.ion_labels,
+        ]
 
-    def _segment_width(self, zones: tuple[str, ...], *, active: bool) -> float:
+    def _segment_width(self, zones: tuple[str, ...]) -> float:
         """Return a segment's line width in pixels, as ``segmentWidth`` in ``draw.js``.
 
         Returns:
             The width.
         """
         radius = self.layout.ion_radius
-        if not zones:
-            return max(1.25, 0.3 * radius)
-        return max(2.5, 0.6 * radius) if active else max(2.0, 0.4 * radius)
+        return max(2.0, 0.7 * radius) if zones else max(1.5, 0.45 * radius)
 
     def _segment_color(self, zones: tuple[str, ...]) -> str:
         return self.zone_color[zones[0]] if zones else self.colors["segment"]
@@ -346,7 +394,7 @@ class _PanelArtists:
                 y - 0.7 * radius,
                 junction_id,
                 color=self.colors["muted_text"],
-                fontsize=_points(font_size),
+                fontsize=points(font_size),
                 ha="right",
                 va="bottom",
                 zorder=6,
@@ -360,14 +408,14 @@ class _PanelArtists:
             x = layout.left + layout.padding + size / 2
             y = layout.top + layout.height - layout.padding - index * 1.6 * size - size / 2
             axis.scatter(
-                [x], [y], s=_points(size) ** 2, facecolor=fill, edgecolor=border, linewidths=_points(1.5), zorder=7
+                [x], [y], s=points(size) ** 2, facecolor=fill, edgecolor=border, linewidths=points(1.5), zorder=7
             )
             axis.text(
                 x + size,
                 y,
                 label,
                 color=self.colors["text"],
-                fontsize=_points(size),
+                fontsize=points(size),
                 va="center",
                 zorder=7,
             )
@@ -400,7 +448,7 @@ def _parallel_text(
         anchor[1] + normal[1] * gap,
         text,
         color=color,
-        fontsize=_points(size),
+        fontsize=points(size),
         fontweight=weight,
         rotation=-angle,
         rotation_mode="anchor",
@@ -411,61 +459,9 @@ def _parallel_text(
 
 
 def _zone_label_gap(ion_radius: float, label_size: float) -> float:
-    """Return the distance from a processing zone to its label, clear of the gate ring.
+    """Return the distance from a processing zone to its label, clear of the gate glow.
 
     Returns:
         The distance in pixels, as ``zoneLabelGap`` in ``draw.js``.
     """
-    return ion_radius + max(2.5, 0.3 * ion_radius) + 0.6 * label_size + 2
-
-
-def _points(pixels: float) -> float:
-    """Convert a pixel length to Matplotlib points.
-
-    Returns:
-        The length in points.
-    """
-    return pixels * _POINTS_PER_PIXEL
-
-
-def save_video(
-    figure: Figure,
-    path: Path,
-    times: Sequence[float],
-    frames_per_second: int,
-    draw_at: Callable[[float], object],
-    background: str,
-) -> None:
-    """Write Matplotlib frames to a GIF or an FFmpeg video.
-
-    Raises:
-        ValueError: If the file suffix names no supported video format.
-        RuntimeError: If the video format needs FFmpeg and FFmpeg is missing.
-    """
-    from matplotlib.animation import (  # ruff: ignore[import-outside-top-level]
-        AbstractMovieWriter,
-        FFMpegWriter,
-        PillowWriter,
-    )
-
-    suffix = path.suffix.lower()
-    writer: AbstractMovieWriter
-    if suffix == ".gif":
-        writer = PillowWriter(fps=frames_per_second)
-    else:
-        codec = _VIDEO_CODECS.get(suffix)
-        if codec is None:
-            formats = ", ".join([".gif", *_VIDEO_CODECS])
-            msg = f"unsupported video file suffix {path.suffix!r}; use one of: {formats}"
-            raise ValueError(msg)
-        if not FFMpegWriter.isAvailable():
-            msg = (
-                f"writing {suffix} videos requires FFmpeg; install FFmpeg, write a .gif file, "
-                "or export the video from the HTML view"
-            )
-            raise RuntimeError(msg)
-        writer = FFMpegWriter(fps=frames_per_second, codec=codec)
-    with writer.saving(figure, str(path), dpi=_DPI):
-        for time in times:
-            draw_at(time)
-            writer.grab_frame(facecolor=background)
+    return 1.75 * ion_radius + 0.5 * label_size + 2

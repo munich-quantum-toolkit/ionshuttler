@@ -16,125 +16,29 @@
 "use strict";
 
 const GridDrawing = (() => {
-  const ION_RADIUS_PER_SPACING = 0.35;
+  const ION_RADIUS_PER_SPACING = 0.38;
   const MAX_ION_RADIUS = 0.06;
   const MARGIN_PER_ION_RADIUS = 2.5;
-  const FONT =
-    "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif";
-
-  // ---------------------------------------------------------------------------
-  // Colors; same rules as `_colors.py`
-  // ---------------------------------------------------------------------------
-
-  const ION_PALETTE = [
-    "#3b6ea8",
-    "#d1752e",
-    "#c4484f",
-    "#4f9a94",
-    "#5a9a4b",
-    "#b8962e",
-    "#8e6aa0",
-    "#c76d8e",
-    "#8a6a52",
-    "#6f7782",
-    "#2f8fb8",
-    "#7d8a35",
-  ];
-  const ZONE_PALETTE = [
-    "#c08a2e",
-    "#3f8f88",
-    "#b05d78",
-    "#6f68a8",
-    "#6f8f3a",
-    "#3f7fa8",
-    "#b3653a",
-    "#8a5a5a",
-  ];
-  const NEUTRAL_BORDER = "#8a919c";
-  const WHITE = "#ffffff";
-  const DARK_TEXT = "#1c2430";
-
-  function hsl(hue, saturation, lightness) {
-    const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
-    const second = chroma * (1 - Math.abs(((hue / 60) % 2) - 1));
-    const sector = Math.floor(hue / 60);
-    const [red, green, blue] = [
-      [chroma, second, 0],
-      [second, chroma, 0],
-      [0, chroma, second],
-      [0, second, chroma],
-      [second, 0, chroma],
-    ][sector] ?? [chroma, 0, second];
-    const shift = lightness - chroma / 2;
-    return `#${[red, green, blue]
-      .map((value) =>
-        Math.floor((value + shift) * 255 + 0.5)
-          .toString(16)
-          .padStart(2, "0"),
-      )
-      .join("")}`;
-  }
-
-  function distinctColor(index, palette) {
-    return index < palette.length
-      ? palette[index]
-      : hsl((index * 137.508) % 360, 0.42, 0.48);
-  }
-
-  function textColor(fill) {
-    const linear = (channel) =>
-      channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-    const [red, green, blue] = [1, 3, 5].map((index) =>
-      linear(parseInt(fill.slice(index, index + 2), 16) / 255),
-    );
-    return 0.2126 * red + 0.7152 * green + 0.0722 * blue > 0.35
-      ? DARK_TEXT
-      : WHITE;
-  }
-
-  // Ring, fill, and text color of an ion. Colors chosen in the view win. Ions
-  // without a chosen fill use `plainFill`, which depends on the theme.
-  function ionColors(view, ion, time, mode, single, plainFill = WHITE) {
-    let border = NEUTRAL_BORDER;
-    let fill = plainFill;
-    if (mode === "distinct") border = distinctColor(ion, ION_PALETTE);
-    else if (mode === "single") border = single;
-    else {
-      const timeline = view.ionChanges[ion] ?? [];
-      const index = bisectRight(
-        timeline.map((change) => change[0]),
-        time,
-      );
-      if (index > 0) {
-        const [, chosenBorder, chosenFill] = timeline[index - 1];
-        border = chosenBorder ?? border;
-        fill = chosenFill ?? fill;
-      }
-    }
-    const edit = view.ionEdits[ion];
-    if (edit !== undefined) {
-      border = edit.border ?? border;
-      fill = edit.fill ?? fill;
-    }
-    return { border, fill, text: textColor(fill) };
-  }
-
-  function legendEntries(view, plainFill) {
-    const entries = new Map();
-    for (const ion of Object.keys(view.ionChanges)
-      .map(Number)
-      .sort((a, b) => a - b)) {
-      for (const [, border, fill, label] of view.ionChanges[ion]) {
-        if (label !== null && !entries.has(label))
-          entries.set(label, [border ?? NEUTRAL_BORDER, fill ?? plainFill]);
-      }
-    }
-    return [...entries].map(([label, [border, fill]]) => ({
-      label,
-      border,
-      fill,
-    }));
-  }
+  // Colors and text sizes that every drawing shares. Node.js tests load this
+  // file without the page, so they read the shared rules from their file.
+  const {
+    AMBIENT_GLOW,
+    FONT,
+    ZONE_PALETTE,
+    distinctColor,
+    ionColors,
+    ionLabelFontSize,
+    legendEntries,
+    paintBackground,
+    paintGlow,
+    paintLineGlow,
+    ringStroke,
+    textColor,
+    truncate,
+  } =
+    typeof PlayerStyle === "object"
+      ? PlayerStyle
+      : require("../_player/style.js");
 
   function zoneColor(view, panel, zone) {
     return view.zoneEdits[zone] ?? panel.zoneColors[zone];
@@ -178,6 +82,8 @@ const GridDrawing = (() => {
       title: raw.title,
       start: raw.start,
       end: raw.end,
+      planning:
+        raw.planning === undefined ? null : preparePlanning(raw.planning),
       junctionIds: raw.junctions.map(([id]) => id),
       junctions,
       originalJunctions: junctions.map((point) => [...point]),
@@ -193,6 +99,7 @@ const GridDrawing = (() => {
         place: place(segment, fraction),
       })),
       ions,
+      ionIndex: new Map(ions.map((track, index) => [track.ion, index])),
       layers,
       layerStarts: layers.map((layer) => layer.start),
       gates,
@@ -203,6 +110,41 @@ const GridDrawing = (() => {
       ),
       frozen: null,
       layout: null,
+    };
+  }
+
+  // The compiler planning trace in the layout of `PlanningTrace.to_dict` in
+  // `_scene.py`. Segments are segment indices.
+  function preparePlanning(raw) {
+    const crossings = (items) =>
+      items.map(([ions, source, destination]) => ({
+        ions,
+        source,
+        destination,
+      }));
+    const snapshots = raw.snapshots.map((item) => ({
+      iteration: item[0],
+      time: item[1],
+      ready: item[2],
+      selected: item[3],
+      lookahead: item[4],
+      started: item[5],
+      targets: new Map(item[6]),
+      requests: item[7].map(([ion, target, status, moves]) => ({
+        ion,
+        target,
+        status,
+        moves: crossings(moves),
+      })),
+      retained: item[8],
+      moves: crossings(item[9]),
+      idle: item[10],
+    }));
+    return {
+      stopReason: raw.stop_reason,
+      gates: new Map(raw.gates.map(([id, name, ions]) => [id, { name, ions }])),
+      snapshots,
+      times: snapshots.map((snapshot) => snapshot.time),
     };
   }
 
@@ -358,12 +300,21 @@ const GridDrawing = (() => {
     return isRunning(layer.start, layer.end, time) ? layer : null;
   }
 
+  // The latest planning snapshot at or before a schedule time. Several
+  // decisions can share one timestep; the last of them is shown. Same rule as
+  // `PlanningTrace.snapshot_at` in `_scene.py`.
+  function planningSnapshot(panel, time) {
+    if (panel.planning === null) return null;
+    const index = bisectRight(panel.planning.times, time) - 1;
+    return index < 0 ? null : panel.planning.snapshots[index];
+  }
+
   // ---------------------------------------------------------------------------
   // Layout
   // ---------------------------------------------------------------------------
 
   // Same rules as `panel_layout` in `_scene.py`.
-  function panelLayout(shape, left, top, width, height) {
+  function panelLayout(shape, left, top, width, height, markerSize = 1) {
     const fontSize = Math.max(
       11,
       Math.min(17, Math.round(Math.min(width, height) * 0.026)),
@@ -389,9 +340,11 @@ const GridDrawing = (() => {
       fontSize,
       headerHeight,
       padding,
-      ionRadius: Math.min(
-        shape.ionRadius * scale,
-        0.045 * Math.min(width, height),
+      // At least 2 px, so that every ion stays visible.
+      ionRadius: Math.max(
+        Math.min(shape.ionRadius * scale, 0.037 * Math.min(width, height)) *
+          markerSize,
+        2,
       ),
       point: ([x, y]) => [
         origin[0] + (x - minX) * scale,
@@ -414,13 +367,6 @@ const GridDrawing = (() => {
     return normal;
   }
 
-  function ionLabelFontSize(ionRadius, label) {
-    return Math.min(
-      0.85 * ionRadius,
-      (2.3 * ionRadius) / Math.max(label.length, 2),
-    );
-  }
-
   function headerLines(panel, time) {
     const shownTime = Math.min(Math.max(time, panel.start), panel.end);
     const layer = currentLayer(panel, shownTime);
@@ -431,11 +377,6 @@ const GridDrawing = (() => {
     ];
   }
 
-  function truncate(text, width, fontSize) {
-    const limit = Math.max(Math.floor(width / (0.55 * fontSize)), 1);
-    return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
-  }
-
   // ---------------------------------------------------------------------------
   // Drawing
   // ---------------------------------------------------------------------------
@@ -443,8 +384,7 @@ const GridDrawing = (() => {
   function drawAtTime(context, view, time, settings, width, height) {
     const colors = view.colors[settings.theme];
     context.save();
-    context.fillStyle = colors.background;
-    context.fillRect(0, 0, width, height);
+    paintBackground(context, 0, 0, width, height, colors);
     const panelWidth = width / view.panels.length;
     view.panels.forEach((panel, index) => {
       const shape = geometry(panel);
@@ -455,6 +395,7 @@ const GridDrawing = (() => {
         0,
         panelWidth,
         height,
+        settings.marker_size ?? 1,
       );
       if (index > 0) {
         context.fillStyle = colors.chip;
@@ -483,13 +424,13 @@ const GridDrawing = (() => {
   ) {
     const shownTime = Math.min(Math.max(time, panel.start), panel.end);
     const gates = runningGates(panel, shownTime);
-    // Gates that take no time, such as virtual rz gates, get no ring.
-    const gateRings = new Map();
+    // Gates that take no time, such as virtual rz gates, get no glow.
+    const gateGlows = new Map();
     for (const gate of gates) {
       if (gate.end === gate.start) continue;
-      const ring =
+      const glow =
         gate.zone === null ? colors.gate : zoneColor(view, panel, gate.zone);
-      for (const ion of gate.ions) gateRings.set(ion, ring);
+      for (const ion of gate.ions) gateGlows.set(ion, glow);
     }
     const activeZones = new Set(
       gates.map((gate) => gate.zone).filter((zone) => zone !== null),
@@ -508,12 +449,24 @@ const GridDrawing = (() => {
           : colors.segment;
       const active = segment.zones.some((zone) => activeZones.has(zone));
       const [[x0, y0], [x1, y1]] = segments[index];
+      const width = segmentWidth(segment, radius);
+      // Processing zones glow faintly in their own color, and fully while
+      // they run a gate.
+      if (segment.zones.length > 0) {
+        const strength = active ? 1 : AMBIENT_GLOW;
+        paintLineGlow(context, x0, y0, x1, y1, width, color, strength);
+      }
       context.strokeStyle = color;
-      context.lineWidth = segmentWidth(segment, active, radius);
+      context.lineWidth = width;
       line(context, x0, y0, x1, y1);
     });
+    const showPlanning =
+      settings.show_compiler_planning === true && panel.planning !== null;
+    const snapshot = showPlanning ? planningSnapshot(panel, shownTime) : null;
+    if (snapshot !== null)
+      drawPlanningTargets(context, panel, snapshot, segments, radius, colors);
 
-    const zoneMarker = 0.55 * radius;
+    const zoneMarker = 0.75 * radius;
     for (const zone of panel.zones) {
       const [x, y] = layout.point(position(shape, zone.place));
       context.fillStyle = zoneColor(view, panel, zone.id);
@@ -526,12 +479,12 @@ const GridDrawing = (() => {
       context.fill();
     }
     if (settings.show_processing_zone_labels) {
-      const labelSize = Math.max(9, 0.78 * layout.fontSize);
+      const labelSize = zoneLabelSize(layout.fontSize);
       for (const zone of panel.zones) {
         const [start, end] = segments[zone.place.segment];
         const normal = labelNormal(...shape.segments[zone.place.segment]);
         context.fillStyle = zoneColor(view, panel, zone.id);
-        context.font = `500 ${labelSize}px ${FONT}`;
+        context.font = `600 ${labelSize}px ${FONT}`;
         parallelText(
           context,
           zone.id,
@@ -544,11 +497,11 @@ const GridDrawing = (() => {
       }
     }
 
-    const junctionRadius = Math.max(1.5, 0.3 * radius);
+    const junctionSide = 0.95 * radius;
     context.fillStyle = colors.junction;
     for (const point of shape.junctions) {
       const [x, y] = layout.point(point);
-      circle(context, x, y, junctionRadius);
+      roundedSquare(context, x, y, junctionSide);
       context.fill();
     }
     if (settings.show_hardware_ids || settings.editing) {
@@ -569,21 +522,6 @@ const GridDrawing = (() => {
       layout.point(trackPosition(track, shownTime, shape)),
     );
     panel.ionPoints = points;
-    // A running gate draws a thin outer ring in the color of its processing zone.
-    context.lineWidth = Math.max(1.25, 0.15 * radius);
-    panel.ions.forEach((track, index) => {
-      const ring = gateRings.get(track.ion);
-      if (ring === undefined) return;
-      context.strokeStyle = ring;
-      circle(
-        context,
-        points[index][0],
-        points[index][1],
-        radius + Math.max(2.5, 0.3 * radius),
-      );
-      context.stroke();
-    });
-    const ringWidth = Math.max(1.25, 0.18 * radius);
     const styles = panel.ions.map((track) =>
       ionColors(
         view,
@@ -594,13 +532,40 @@ const GridDrawing = (() => {
         colors.ion_fill,
       ),
     );
+    // Every ion glows faintly in its ring color. A running gate makes its
+    // ions glow fully in the color of its processing zone.
     panel.ions.forEach((track, index) => {
       const [x, y] = points[index];
-      const style = styles[index];
-      context.fillStyle = style.fill;
-      context.strokeStyle = style.border;
+      const glow = gateGlows.get(track.ion);
+      if (glow === undefined) {
+        const halo = styles[index].border;
+        paintGlow(
+          context,
+          x,
+          y,
+          0.8 * radius,
+          1.6 * radius,
+          halo,
+          AMBIENT_GLOW,
+        );
+      } else paintGlow(context, x, y, 0.8 * radius, 1.9 * radius, glow);
+    });
+    const ringWidth = Math.max(1.5, 0.28 * radius);
+    panel.ions.forEach((track, index) => {
+      const [x, y] = points[index];
+      const middle = radius - ringWidth / 2;
+      const border = styles[index].border;
+      context.fillStyle = styles[index].fill;
+      context.strokeStyle = ringStroke(
+        context,
+        x,
+        y,
+        middle,
+        ringWidth,
+        border,
+      );
       context.lineWidth = ringWidth;
-      circle(context, x, y, radius - ringWidth / 2);
+      circle(context, x, y, middle);
       context.fill();
       context.stroke();
       const highlight = settings.highlight;
@@ -623,7 +588,7 @@ const GridDrawing = (() => {
         const labelSize = ionLabelFontSize(radius, label);
         if (labelSize < 6) return;
         context.fillStyle = styles[index].text;
-        context.font = `500 ${labelSize}px ${FONT}`;
+        context.font = `600 ${labelSize}px ${FONT}`;
         context.fillText(
           label,
           points[index][0],
@@ -631,21 +596,50 @@ const GridDrawing = (() => {
         );
       });
     }
+    if (snapshot !== null)
+      drawPlanningMarks(
+        context,
+        panel,
+        snapshot,
+        points,
+        styles,
+        segments,
+        layout,
+        colors,
+      );
     if (settings.ion_colors === "custom")
       drawLegend(context, view, layout, colors);
     drawHeader(context, panel, layout, time, colors);
   }
 
-  // Distance from a processing zone to its label, clear of the gate ring.
+  // Same rule as `zone_label_size` in `_scene.py`.
+  function zoneLabelSize(fontSize) {
+    return Math.max(11, 0.95 * fontSize);
+  }
+
+  // Distance from a processing zone to its label, clear of the gate glow.
   // Same rule as `_zone_label_gap` in `_matplotlib.py`.
   function zoneLabelGap(radius, labelSize) {
-    return radius + Math.max(2.5, 0.3 * radius) + 0.6 * labelSize + 2;
+    return 1.75 * radius + 0.5 * labelSize + 2;
   }
 
   // Same rules as `_segment_width` in `_matplotlib.py`.
-  function segmentWidth(segment, active, radius) {
-    if (segment.zones.length === 0) return Math.max(1.25, 0.3 * radius);
-    return active ? Math.max(2.5, 0.6 * radius) : Math.max(2, 0.4 * radius);
+  function segmentWidth(segment, radius) {
+    return segment.zones.length === 0
+      ? Math.max(1.5, 0.45 * radius)
+      : Math.max(2, 0.7 * radius);
+  }
+
+  function roundedSquare(context, x, y, side) {
+    const half = side / 2;
+    const corner = side / 4;
+    context.beginPath();
+    context.moveTo(x - half + corner, y - half);
+    context.arcTo(x + half, y - half, x + half, y + half, corner);
+    context.arcTo(x + half, y + half, x - half, y + half, corner);
+    context.arcTo(x - half, y + half, x - half, y - half, corner);
+    context.arcTo(x - half, y - half, x + half, y - half, corner);
+    context.closePath();
   }
 
   function drawLegend(context, view, layout, colors) {
@@ -737,7 +731,12 @@ const GridDrawing = (() => {
     showSegments,
   ) {
     const radius = layout.ionRadius;
-    const fontSize = Math.max(8, 0.72 * layout.fontSize);
+    // IDs shrink with the ions, so that dense layouts stay readable.
+    // Same rule as `hardware_id_font_size` in `_scene.py`.
+    const fontSize = Math.max(
+      7,
+      Math.min(0.72 * layout.fontSize, 1.1 * radius),
+    );
     context.fillStyle = colors.muted_text;
     context.font = `400 ${fontSize}px ${FONT}`;
     if (showSegments) {
@@ -769,7 +768,7 @@ const GridDrawing = (() => {
   }
 
   function drawHandles(context, panel, shape, layout, colors, highlight) {
-    const size = Math.max(7, 0.8 * layout.ionRadius);
+    const size = Math.max(4, 0.8 * layout.ionRadius);
     shape.junctions.forEach((point, index) => {
       const [x, y] = layout.point(point);
       const active =
@@ -798,6 +797,275 @@ const GridDrawing = (() => {
   function circle(context, x, y, radius) {
     context.beginPath();
     context.arc(x, y, radius, 0, 2 * Math.PI);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Compiler planning overlay
+  // ---------------------------------------------------------------------------
+
+  // Texts for the values of `MoveStatus`, `IdleReason`, and `GridStopReason`
+  // in the Grid compiler.
+  const MOVE_STATUS_TEXT = {
+    selected: "moves",
+    in_gate: "in gate",
+    at_target: "at target",
+    no_route: "no route",
+    no_candidate: "no legal move",
+    already_selected: "already in layer",
+    conflict: "conflict",
+    displaces_higher_priority: "would displace higher priority",
+  };
+  const IDLE_TEXT = {
+    waiting_for_resource: "waiting for a busy resource",
+    no_legal_action: "nothing legal, nothing to wait for",
+    no_route: "route search found no route",
+  };
+  const STOP_TEXT = {
+    no_progress: "no legal progress",
+    iteration_limit: "iteration limit reached",
+  };
+
+  function segmentMiddle(segments, index) {
+    const [[x0, y0], [x1, y1]] = segments[index];
+    return [(x0 + x1) / 2, (y0 + y1) / 2];
+  }
+
+  // Under the ions: the target segments of prioritized ions and selected gates.
+  function drawPlanningTargets(
+    context,
+    panel,
+    snapshot,
+    segments,
+    radius,
+    colors,
+  ) {
+    const targets = new Set(snapshot.requests.map((request) => request.target));
+    for (const id of snapshot.selected) {
+      const target = snapshot.targets.get(id);
+      if (target !== null && target !== undefined) targets.add(target);
+    }
+    context.save();
+    context.strokeStyle = colors.planning;
+    context.globalAlpha = 0.35;
+    for (const index of targets) {
+      const [[x0, y0], [x1, y1]] = segments[index];
+      context.lineWidth = 2.6 * segmentWidth(panel.segments[index], radius);
+      line(context, x0, y0, x1, y1);
+    }
+    context.restore();
+  }
+
+  // Over the ions: selected gates, prioritized ions, retained ions, and moves.
+  function drawPlanningMarks(
+    context,
+    panel,
+    snapshot,
+    points,
+    styles,
+    segments,
+    layout,
+    colors,
+  ) {
+    const radius = layout.ionRadius;
+    const point = (ion) => points[panel.ionIndex.get(ion)];
+    const ring = (ion) => styles[panel.ionIndex.get(ion)].border;
+    context.save();
+    context.lineWidth = 1.5;
+    // A dashed line joins the ions of each selected gate that does not start yet.
+    context.strokeStyle = colors.gate;
+    context.setLineDash([4, 4]);
+    for (const id of snapshot.selected) {
+      const gate = panel.planning.gates.get(id);
+      if (
+        gate === undefined ||
+        gate.ions.length < 2 ||
+        snapshot.started.includes(id)
+      )
+        continue;
+      context.beginPath();
+      gate.ions.forEach((ion, index) => {
+        const [x, y] = point(ion);
+        if (index === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      });
+      context.stroke();
+    }
+    // Prioritized ions: a dashed ring, the priority rank, and a dotted line to
+    // the target segment, all in the ion's ring color. The side bar shows the
+    // ion in the same color.
+    const rankSize = Math.max(8, 0.62 * layout.fontSize);
+    context.font = `600 ${rankSize}px ${FONT}`;
+    context.textAlign = "left";
+    context.textBaseline = "bottom";
+    snapshot.requests.forEach((request, rank) => {
+      const [x, y] = point(request.ion);
+      const [targetX, targetY] = segmentMiddle(segments, request.target);
+      context.strokeStyle = ring(request.ion);
+      context.fillStyle = ring(request.ion);
+      context.lineWidth = 1.5;
+      context.setLineDash([3, 3]);
+      circle(context, x, y, radius + 4);
+      context.stroke();
+      context.globalAlpha = 0.75;
+      context.lineWidth = 2;
+      context.setLineDash([2, 4]);
+      line(context, x, y, targetX, targetY);
+      context.globalAlpha = 1;
+      context.fillText(String(rank + 1), x + 0.8 * radius, y - 0.8 * radius);
+    });
+    context.lineWidth = 1.5;
+    // Ions retained in a processing zone: a square around the ion.
+    context.setLineDash([]);
+    context.strokeStyle = colors.text;
+    for (const ion of snapshot.retained) {
+      const [x, y] = point(ion);
+      roundedSquare(context, x, y, 2 * radius + 10);
+      context.stroke();
+    }
+    // Moves: proposals that the compiler rejected are dashed and muted;
+    // selected moves are solid.
+    const head = Math.max(6, 0.6 * radius);
+    context.setLineDash([4, 3]);
+    context.strokeStyle = colors.muted_text;
+    context.fillStyle = colors.muted_text;
+    for (const request of snapshot.requests) {
+      if (request.status === "selected") continue;
+      for (const move of request.moves) arrow(context, segments, move, head);
+    }
+    context.setLineDash([]);
+    context.lineWidth = 2.5;
+    context.strokeStyle = colors.planning;
+    context.fillStyle = colors.planning;
+    for (const move of snapshot.moves) arrow(context, segments, move, head);
+    context.restore();
+  }
+
+  // An arrow from the middle of the source segment to the middle of the
+  // destination segment.
+  function arrow(context, segments, move, head) {
+    const [x0, y0] = segmentMiddle(segments, move.source);
+    const [x1, y1] = segmentMiddle(segments, move.destination);
+    const angle = Math.atan2(y1 - y0, x1 - x0);
+    line(context, x0, y0, x1, y1);
+    context.beginPath();
+    context.moveTo(x1, y1);
+    context.lineTo(
+      x1 - head * Math.cos(angle - 0.45),
+      y1 - head * Math.sin(angle - 0.45),
+    );
+    context.lineTo(
+      x1 - head * Math.cos(angle + 0.45),
+      y1 - head * Math.sin(angle + 0.45),
+    );
+    context.closePath();
+    context.fill();
+  }
+
+  // The side bar of the player: one section per panel with a planning trace,
+  // or `null` when no panel has one.
+  function details(view, time, settings) {
+    const panels = view.panels.filter((panel) => panel.planning !== null);
+    if (panels.length === 0) return null;
+    return panels.map((panel) => {
+      const shownTime = Math.min(Math.max(time, panel.start), panel.end);
+      const snapshot = planningSnapshot(panel, shownTime);
+      return {
+        title: view.panels.length > 1 ? panel.title : "",
+        rows:
+          snapshot === null
+            ? [["Decision", ["no decision yet"]]]
+            : planningRows(view, panel, snapshot, shownTime, settings),
+      };
+    });
+  }
+
+  // The rows of the side bar for one snapshot, as `[label, lines]`. Ions are
+  // pills framed in their ring color, as on the drawing. Target segments are
+  // pills filled with the color of their processing zone.
+  function planningRows(view, panel, snapshot, time, settings) {
+    const planning = panel.planning;
+    const colors = view.colors[settings.theme];
+    const ion = (value) => ({
+      text: `q${value}`,
+      border: ionColors(
+        view,
+        value,
+        time,
+        settings.ion_colors,
+        colors.ion,
+        colors.ion_fill,
+      ).border,
+    });
+    const target = (index) => {
+      if (index === null || index === undefined) return "no target";
+      const segment = panel.segments[index];
+      if (segment.zones.length === 0) return { text: segment.id };
+      const fill = zoneColor(view, panel, segment.zones[0]);
+      return {
+        text: segment.zones.join(", "),
+        fill,
+        border: fill,
+        ink: textColor(fill),
+      };
+    };
+    const gateLine = (id) => {
+      const gate = planning.gates.get(id);
+      if (gate === undefined) return `g${id}`;
+      const state = snapshot.started.includes(id)
+        ? ["starts"]
+        : snapshot.selected.includes(id)
+          ? ["selected"]
+          : [];
+      return [
+        `g${id} ${gate.name}`,
+        ...gate.ions.map(ion),
+        "→",
+        target(snapshot.targets.get(id)),
+        ...state,
+      ];
+    };
+    // The gates that the compiler considers: the selected and lookahead gates.
+    const considered = [
+      ...new Set([...snapshot.selected, ...snapshot.lookahead]),
+    ];
+    const rows = [
+      ["Decision", [`iteration ${snapshot.iteration} · t ${snapshot.time}`]],
+    ];
+    if (time >= panel.end && planning.stopReason in STOP_TEXT)
+      rows.push(["Stopped", [STOP_TEXT[planning.stopReason]]]);
+    if (snapshot.idle !== null)
+      rows.push(["No action", [IDLE_TEXT[snapshot.idle] ?? snapshot.idle]]);
+    rows.push(
+      ["Gates", considered.map(gateLine)],
+      [
+        "Priority",
+        snapshot.requests.map((request, rank) => [
+          `${rank + 1}.`,
+          ion(request.ion),
+          "→",
+          target(request.target),
+          MOVE_STATUS_TEXT[request.status] ?? request.status,
+        ]),
+      ],
+      [
+        "Retained",
+        snapshot.retained.length === 0 ? [] : [snapshot.retained.map(ion)],
+      ],
+      [
+        "Moves",
+        snapshot.moves.map((move) => [
+          ...move.ions.map(ion),
+          `${panel.segments[move.source].id} → ${panel.segments[move.destination].id}`,
+        ]),
+      ],
+      [
+        "Ready",
+        snapshot.ready.length === 0
+          ? []
+          : [snapshot.ready.map((id) => `g${id}`).join(" ")],
+      ],
+    );
+    return rows;
   }
 
   // ---------------------------------------------------------------------------
@@ -921,9 +1189,10 @@ const GridDrawing = (() => {
     view.zoneEdits = {};
   }
 
-  // Python keyword arguments that reproduce the current layout and the colors
-  // changed in the view. Comparisons get one coordinate mapping per panel.
-  function settingsText(view) {
+  // Python keyword arguments that reproduce the current layout, the marker
+  // size, and the colors changed in the view. Comparisons get one coordinate
+  // mapping per panel.
+  function settingsText(view, settings = {}) {
     const number = (value) => String(Math.round(value * 1000) / 1000);
     const mapping = (panel, indent) =>
       [
@@ -945,6 +1214,8 @@ const GridDrawing = (() => {
             ),
             "},",
           ];
+    const markerSize = settings.marker_size ?? 1;
+    if (markerSize !== 1) lines.push(`marker_size=${number(markerSize)},`);
     const ions = Object.keys(view.ionEdits)
       .map(Number)
       .sort((a, b) => a - b);
@@ -974,6 +1245,8 @@ const GridDrawing = (() => {
   return {
     beginDrag,
     currentLayer,
+    details,
+    editHint: "Drag junctions. Click an ion or processing zone to color it.",
     dragTo,
     drawAtTime,
     endDrag,
@@ -984,6 +1257,7 @@ const GridDrawing = (() => {
     paintParts,
     panelLayout,
     pick,
+    planningSnapshot,
     prepare,
     resetLayout,
     settingsText,

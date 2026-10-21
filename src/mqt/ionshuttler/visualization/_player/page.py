@@ -8,8 +8,9 @@
 """Assemble the standalone player page, the viewer page, and the notebook frame.
 
 A view is a JSON-compatible mapping with the keys ``title``, ``settings``,
-``options``, ``drawing``, and ``drawing_name``. The standalone page embeds one
-view. The viewer page loads views from the local viewer server.
+``options``, ``drawing``, and ``drawing_name``, and optionally ``sidebar``. The
+standalone page embeds one view. The viewer page loads views from the local
+viewer server.
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ def view_data(
     options: Sequence[PlayerOption],
     drawing: object,
     drawing_name: str,
+    sidebar: tuple[str, str] | None = None,
 ) -> dict[str, object]:
     """Collect everything the player needs to show one view.
 
@@ -54,11 +56,15 @@ def view_data(
             ``(value, label)`` choices.
         drawing: JSON-compatible data for the drawing script.
         drawing_name: Global name of the drawing object that draws this view.
+        sidebar: ``(setting, label)`` of a side bar that a button opens and
+            closes. The setting is true while the side bar is open. The
+            drawing's ``details`` function fills it. ``None`` shows no side
+            bar.
 
     Returns:
         The view.
     """
-    return {
+    view: dict[str, object] = {
         "title": title,
         "settings": dict(settings),
         "options": [
@@ -68,6 +74,9 @@ def view_data(
         "drawing": drawing,
         "drawing_name": drawing_name,
     }
+    if sidebar is not None:
+        view["sidebar"] = list(sidebar)
+    return view
 
 
 def player_page(view: Mapping[str, object], drawing_script: Traversable) -> str:
@@ -82,7 +91,7 @@ def player_page(view: Mapping[str, object], drawing_script: Traversable) -> str:
     encoded = base64.b64encode(json.dumps(view, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
     data = f'<script type="application/octet-stream" class="player-data">{encoded.decode("ascii")}</script>'
     body = _read("player.html").replace("</main>", f"  {data}\n</main>")
-    scripts = (_read("webm.js"), _read("player.js"), drawing_script.read_text(encoding="utf-8"))
+    scripts = (_read("webm.js"), _read("player.js"), _read("style.js"), drawing_script.read_text(encoding="utf-8"))
     return _document(str(view["title"]), body, (*scripts, f"Player.start({view['drawing_name']});\n"))
 
 
@@ -101,6 +110,7 @@ def viewer_page(token: str, drawing_scripts: Mapping[str, Traversable]) -> str:
     scripts = (
         _read("webm.js"),
         _read("player.js"),
+        _read("style.js"),
         *(script.read_text(encoding="utf-8") for script in drawing_scripts.values()),
         _read("viewer.js"),
         f"Viewer.start({json.dumps(token)}, {{ {names} }});\n",

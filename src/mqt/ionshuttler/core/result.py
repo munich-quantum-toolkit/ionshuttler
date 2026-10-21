@@ -53,6 +53,13 @@ class Diagnostics(Protocol):
     def to_dict(self) -> dict[str, object]:
         """Return these diagnostics using JSON-compatible values."""
 
+    def statistics(self) -> tuple[tuple[str, int | float | str], ...]:
+        """Return the run statistics as ``(label, value)`` pairs in display order.
+
+        A label is a short phrase for people, such as ``"Explored nodes"``.
+        Visualizers and reports list the pairs without knowing the method.
+        """
+
 
 ArchitectureT = TypeVar("ArchitectureT", bound=Architecture)
 ActionT = TypeVar("ActionT", bound=Action)

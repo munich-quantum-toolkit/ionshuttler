@@ -33,9 +33,8 @@ class Visualizer(Protocol):
 def visualize(result: CompilationResult) -> object:
     """Return a visual view of a compilation result.
 
-    The built-in visualizers show Linear results as Matplotlib trajectory
-    plots and Grid results as interactive HTML views. Use a concrete visualizer
-    directly to configure it.
+    The built-in visualizers show Linear and Grid results as interactive HTML
+    views. Use a concrete visualizer directly to configure it.
 
     Args:
         result: Compilation result to visualize.

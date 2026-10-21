@@ -207,6 +207,13 @@ class LinearDiagnostics(ABC):
     def to_dict(self) -> dict[str, object]:
         """Return these diagnostics using JSON-compatible values."""
 
+    def _common_statistics(self) -> tuple[tuple[str, int | float | str], ...]:
+        return (("Score", self.score), ("Makespan lower bound", self.makespan_lower_bound))
+
+    @abstractmethod
+    def statistics(self) -> tuple[tuple[str, int | float | str], ...]:
+        """Return the run statistics as ``(label, value)`` pairs in display order."""
+
     @classmethod
     def from_dict(cls, data: object) -> LinearDiagnostics:
         """Restore diagnostics for the recorded Linear compiler strategy.
@@ -265,6 +272,10 @@ class SearchDiagnostics(LinearDiagnostics):
         """Return JSON-compatible search diagnostics."""
         return {**self._common_dict(), "explored_nodes": self.explored_nodes, "permutation": None}
 
+    def statistics(self) -> tuple[tuple[str, int | float | str], ...]:
+        """Return the score, the makespan lower bound, and the number of explored nodes."""
+        return (*self._common_statistics(), ("Explored nodes", self.explored_nodes))
+
 
 @dataclass(frozen=True, kw_only=True)
 class PermutationDiagnostics(LinearDiagnostics):
@@ -320,6 +331,15 @@ class PermutationDiagnostics(LinearDiagnostics):
         if self.planning_trace is not None:
             permutation["planning_trace"] = [group.to_dict() for group in self.planning_trace]
         return {**self._common_dict(), "explored_nodes": 0, "permutation": permutation}
+
+    def statistics(self) -> tuple[tuple[str, int | float | str], ...]:
+        """Return the score, the makespan lower bound, and the gate-group counters."""
+        return (
+            *self._common_statistics(),
+            ("Gate groups", self.groups),
+            ("Groups without moves", self.groups_without_moves),
+            ("Gates in preferred zone", self.gates_in_preferred_zone),
+        )
 
 
 def _preferred_gate_zones_from_dict(mapping: dict[str, object]) -> tuple[tuple[int, str], ...]:

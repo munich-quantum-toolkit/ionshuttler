@@ -110,6 +110,16 @@ class GridDiagnostics:
             data["planning_trace"] = [snapshot.to_dict() for snapshot in self.planning_trace]
         return data
 
+    def statistics(self) -> tuple[tuple[str, int | float | str], ...]:
+        """Return the counters of the scheduling run."""
+        return (
+            ("Iterations", self.iterations),
+            ("Explored routing states", self.explored_routing_states),
+            ("Junction moves", self.junction_moves),
+            ("Cycles", self.cycles),
+            ("Completed gates", self.gates),
+        )
+
     @classmethod
     def from_dict(cls, data: object) -> GridDiagnostics:
         """Restore Grid diagnostics.

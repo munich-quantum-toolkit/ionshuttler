@@ -37,13 +37,12 @@ from mqt.ionshuttler.linear.replay import replay_schedule
 from mqt.ionshuttler.linear.result import GateGroup, LinearDiagnostics, PermutationDiagnostics, SearchDiagnostics
 from mqt.ionshuttler.linear.schedule import LinearMachineState, schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
-from mqt.ionshuttler.visualization import LinearVisualizer, Visualizer
+from mqt.ionshuttler.visualization import LinearView, LinearVisualizer, Visualizer
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from pathlib import Path
 
-    from matplotlib.figure import Figure
     from matplotlib.text import Annotation
 
     from mqt.ionshuttler.linear.state import SearchTransition
@@ -284,6 +283,30 @@ def test_linear_diagnostics_validates_present_lower_bound() -> None:
         LinearDiagnostics.from_dict(data)
 
 
+def test_search_diagnostics_report_the_search_statistics() -> None:
+    """Name the score, the lower bound, and the explored nodes for people, without the zone plan."""
+    diagnostics = SearchDiagnostics(
+        score=3, explored_nodes=12, makespan_lower_bound=2, preferred_gate_zones=((0, "pz"),)
+    )
+
+    assert diagnostics.statistics() == (("Score", 3), ("Makespan lower bound", 2), ("Explored nodes", 12))
+
+
+def test_permutation_diagnostics_report_the_group_statistics() -> None:
+    """Name the score, the lower bound, and the gate-group counters for people."""
+    diagnostics = PermutationDiagnostics(
+        score=5, makespan_lower_bound=3, groups=4, groups_without_moves=1, gates_in_preferred_zone=6
+    )
+
+    assert diagnostics.statistics() == (
+        ("Score", 5),
+        ("Makespan lower bound", 3),
+        ("Gate groups", 4),
+        ("Groups without moves", 1),
+        ("Gates in preferred zone", 6),
+    )
+
+
 def test_schedule_round_trips_identity_and_machine_metadata() -> None:
     """Preserve the complete action-level execution boundary."""
     architecture = LinearArchitecture(
@@ -448,7 +471,7 @@ def test_visualizer_protocol_supports_explicit_visualizers() -> None:
     assert visualizer.visualize(result) == ("view", result)
 
 
-def test_result_visualization_builds_linear_trajectory_plot() -> None:
+def test_trajectory_plot_shows_ion_motion_zones_and_gates() -> None:
     """Plot ion motion, processing zones, and gates on one time-site axis."""
     pyplot = pytest.importorskip("matplotlib.pyplot")
     architecture = LinearArchitecture(
@@ -475,7 +498,7 @@ def test_result_visualization_builds_linear_trajectory_plot() -> None:
         final_state=architecture.replay_schedule(program),
     )
 
-    figure = cast("Figure", visualize(result))
+    figure = LinearVisualizer.plot_trajectories(result)
 
     assert len(figure.axes) == 1
     axis = figure.axes[0]
@@ -494,7 +517,7 @@ def test_result_visualization_builds_linear_trajectory_plot() -> None:
     pyplot.close(figure)
 
 
-def test_ring_visualization_splits_wrapping_zones_and_wrap_shuttles() -> None:
+def test_ring_trajectory_plot_splits_wrapping_zones_and_wrap_shuttles() -> None:
     """Show both sides of a wrapping zone without a full-array transport line."""
     pyplot = pytest.importorskip("matplotlib.pyplot")
     architecture = LinearArchitecture(
@@ -514,7 +537,7 @@ def test_ring_visualization_splits_wrapping_zones_and_wrap_shuttles() -> None:
         final_state=architecture.replay_schedule(program),
     )
 
-    figure = cast("Figure", visualize(result))
+    figure = LinearVisualizer.plot_trajectories(result)
 
     axis = figure.axes[0]
     # Matplotlib versions represent axhspan regions with different patch classes.
@@ -545,7 +568,7 @@ def test_ring_visualization_splits_wrapping_zones_and_wrap_shuttles() -> None:
     pyplot.close(figure)
 
 
-def test_ring_visualization_draws_wrap_shuttles_only_in_overlapping_rows() -> None:
+def test_ring_trajectory_plot_draws_wrap_shuttles_only_in_overlapping_rows() -> None:
     """Draw the seam segments of a wrap shuttle only in the plot rows that contain it."""
     pyplot = pytest.importorskip("matplotlib.pyplot")
     architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2]}, topology="ring")
@@ -561,14 +584,14 @@ def test_ring_visualization_draws_wrap_shuttles_only_in_overlapping_rows() -> No
         final_state=architecture.replay_schedule(program),
     )
 
-    figure = cast("Figure", visualize(result))
+    figure = LinearVisualizer.plot_trajectories(result)
 
     assert len(figure.axes) == 2
     assert [sum(line.get_gid() == "ring transport" for line in axis.lines) for axis in figure.axes] == [2, 0]
     pyplot.close(figure)
 
 
-def test_ring_visualization_breaks_both_wrap_swap_trajectories() -> None:
+def test_ring_trajectory_plot_breaks_both_wrap_swap_trajectories() -> None:
     """Break both ion trajectories when a physical swap crosses the ring seam."""
     pyplot = pytest.importorskip("matplotlib.pyplot")
     architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2]}, topology="ring")
@@ -584,7 +607,7 @@ def test_ring_visualization_breaks_both_wrap_swap_trajectories() -> None:
         final_state=architecture.replay_schedule(program),
     )
 
-    figure = cast("Figure", visualize(result))
+    figure = LinearVisualizer.plot_trajectories(result)
 
     axis = figure.axes[0]
     ion_lines = {line.get_label(): tuple(cast("Sequence[float]", line.get_ydata())) for line in axis.lines}
@@ -608,7 +631,7 @@ def test_ring_visualization_breaks_both_wrap_swap_trajectories() -> None:
     pyplot.close(figure)
 
 
-def test_ring_visualization_connects_wrap_gates_through_the_seam() -> None:
+def test_ring_trajectory_plot_connects_wrap_gates_through_the_seam() -> None:
     """Draw a two-ion gate in a wrapping zone through the seam, not across the array."""
     pyplot = pytest.importorskip("matplotlib.pyplot")
     architecture = LinearArchitecture(num_sites=5, processing_zones={"wrap": [3, 4, 0]}, topology="ring")
@@ -624,7 +647,7 @@ def test_ring_visualization_connects_wrap_gates_through_the_seam() -> None:
         final_state=architecture.replay_schedule(program),
     )
 
-    figure = cast("Figure", visualize(result))
+    figure = LinearVisualizer.plot_trajectories(result)
 
     axis = figure.axes[0]
     wrap_gate, inner_gate = program.scheduled_actions
@@ -642,7 +665,6 @@ def test_ring_visualization_connects_wrap_gates_through_the_seam() -> None:
 
 def test_linear_visualizer_is_available_as_a_concrete_adapter() -> None:
     """Expose the built-in visualizer for direct use and extension examples."""
-    pyplot = pytest.importorskip("matplotlib.pyplot")
     program = _program()
     result = CompilationResult(
         status=CompilationStatus.SUCCESS,
@@ -651,10 +673,7 @@ def test_linear_visualizer_is_available_as_a_concrete_adapter() -> None:
         final_state=program.initial_state,
     )
 
-    figure = cast("Figure", LinearVisualizer().visualize(result))
-
-    assert len(figure.axes) == 1
-    pyplot.close(figure)
+    assert isinstance(LinearVisualizer().visualize(result), LinearView)
 
 
 def test_visualization_package_exports_its_supported_api() -> None:
@@ -664,6 +683,7 @@ def test_visualization_package_exports_its_supported_api() -> None:
         "GridVisualizer",
         "IonColor",
         "JunctionCoordinates",
+        "LinearView",
         "LinearVisualizer",
         "Visualizer",
         "open_viewer",
@@ -686,8 +706,7 @@ def test_visualization_rejects_an_unsupported_architecture() -> None:
 
 
 def test_result_visualization_accepts_architecture_subclasses() -> None:
-    """Route a derived Linear architecture to the built-in schematic."""
-    pyplot = pytest.importorskip("matplotlib.pyplot")
+    """Route a derived Linear architecture to the built-in Linear view."""
 
     class DerivedArchitecture(LinearArchitecture):
         """Linear architecture used to check subclass dispatch."""
@@ -700,13 +719,10 @@ def test_result_visualization_accepts_architecture_subclasses() -> None:
         final_state=program.initial_state,
     )
 
-    figure = cast("Figure", visualize(result))
-
-    assert len(figure.axes) == 1
-    pyplot.close(figure)
+    assert isinstance(visualize(result), LinearView)
 
 
-def test_result_visualization_wraps_long_timelines() -> None:
+def test_trajectory_plot_wraps_long_timelines() -> None:
     """Fold on five-tick boundaries and preserve one physical timestep scale."""
     pyplot = pytest.importorskip("matplotlib.pyplot")
     architecture = LinearArchitecture(num_sites=2, processing_zones={"pz": [0, 1]})
@@ -719,7 +735,7 @@ def test_result_visualization_wraps_long_timelines() -> None:
         final_state=architecture.replay_schedule(program),
     )
 
-    figure = cast("Figure", visualize(result))
+    figure = LinearVisualizer.plot_trajectories(result)
 
     assert len(figure.axes) > 1
     windows = tuple(axis.get_xlim() for axis in figure.axes)

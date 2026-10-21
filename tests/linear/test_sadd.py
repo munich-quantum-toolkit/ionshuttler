@@ -35,6 +35,7 @@ from mqt.ionshuttler.linear.dd.schedule_transform import insert_action_at_time
 from mqt.ionshuttler.linear.field_profile import FieldProfile
 from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
+from mqt.ionshuttler.visualization import LinearView
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -142,15 +143,12 @@ def test_run_sadd_rejects_invalid_public_arguments() -> None:
 
 def test_sadd_result_is_directly_visualizable() -> None:
     """Expose the transformed compilation through the standard result view."""
-    pyplot = pytest.importorskip("matplotlib.pyplot")
     architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})
     compilation = _compilation(_idle_result(architecture, initial_positions=[0], timesteps=1), architecture)
 
     output = run_sadd(compilation, SADDMethod.PULSE_ONLY)
-    figure = visualize(output.result)
 
-    assert figure is not None
-    pyplot.close(figure)
+    assert isinstance(visualize(output.result), LinearView)
 
 
 def test_sadd_result_owns_an_explicit_architecture_override() -> None:
