@@ -266,7 +266,7 @@ arbitrary permutations.
 
 The search strategy uses A-star search: it compares the time already used with
 an estimate of the work still needed and explores promising schedules first
-{cite:p}`hart1968formal`. This estimate is called a *heuristic*. An admissible
+{cite:p}`hart1968formal`. This estimate is called a _heuristic_. An admissible
 heuristic never overestimates the remaining cost; with the usual unrestricted
 A-star conditions, that property is what supports an optimality guarantee.
 
@@ -491,28 +491,30 @@ schedule, machine states, and diagnostics of a Linear result.
 companions restore a schedule on its own. `result.validate()` checks and replays
 a loaded or transformed artifact.
 
-{py:func}`mqt.ionshuttler.visualize` returns a Matplotlib figure without showing
-or saving it:
+## Visualize a result
+
+{py:func}`mqt.ionshuttler.visualize` returns an interactive view that plays the
+schedule on the ion chain. In a notebook, the view shows itself as the cell
+output.
 
 ```{code-block} python
 from mqt.ionshuttler import visualize
 
-visualize(result).savefig("result.png", dpi=150)
+visualize(result).save("result.html")
 ```
 
-The Linear view plots time on the horizontal axis and sites on the vertical
-axis. Each ion follows a colored trajectory, transport appears as movement
-between sites, processing zones form horizontal bands, and markers identify gate
-applications. Long schedules wrap onto consecutive 25-timestep rows with major
-ticks every five timesteps. A partial final row is proportionally narrower so
-that every row uses the same timestep scale. For a ring, dotted lines mark the
-boundary between the last site and site zero. A transport across this boundary
-leaves and re-enters the plot instead of crossing every intermediate site.
+The view can also list the running gates, moving ions, and processing-zone
+assignments as the schedule plays.
+{py:meth}`~mqt.ionshuttler.visualization.LinearVisualizer.plot_trajectories`
+draws each ion's site over the whole schedule as a static figure.
+{doc}`visualization` describes the player, the display settings, and video
+export.
 
 ## See also
 
 - {doc}`hardware_models` — sites, processing zones, timing, and physical
   assumptions
 - {doc}`linear_dd` — dynamical-decoupling methods and comparison metrics
+- {doc}`visualization` — interactive views, figures, and videos of results
 - {doc}`design` — compiler architecture and extension points
 - {doc}`api/mqt/ionshuttler/linear/index` — complete Linear Python API reference

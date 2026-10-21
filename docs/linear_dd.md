@@ -153,13 +153,14 @@ accepted, its objective values, and the inserted pulse and transport actions.
 to the schedule entering that opportunity. Runtime and model-size fields are
 diagnostic and may vary between runs.
 
-Both compilation stages can be plotted without rebuilding a result wrapper:
+Both compilation stages can be shown side by side without rebuilding a result
+wrapper:
 
 ```{code-block} python
-from mqt.ionshuttler import visualize
+from mqt.ionshuttler.visualization import LinearVisualizer
 
-visualize(compilation).savefig("compiled.png", dpi=150)
-visualize(sadd.result).savefig("compiled_sadd.png", dpi=150)
+LinearVisualizer().compare({"compiled": compilation, "with SADD": sadd.result}).save("compiled.html")
+LinearVisualizer.plot_trajectories(sadd.result).savefig("compiled_sadd.png", dpi=150)
 ```
 
 ## Idealized Hahn reference

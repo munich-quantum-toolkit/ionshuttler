@@ -58,6 +58,7 @@ represent a QCCD.
 - {doc}`Grid compilers <grid_compilers>` — run the exact and heuristic tools
 - {doc}`Linear compiler <linear_compiler>` — build and inspect Linear schedules
 - {doc}`Dynamical decoupling <linear_dd>` — add DD to Linear schedules
+- {doc}`Visualization <visualization>` — play, compare, and export results
 - {doc}`Compiler design <design>` — understand and extend the software
 - {doc}`References <references>` — cite the relevant methods
 
@@ -82,6 +83,7 @@ hardware_models
 grid_compilers
 linear_compiler
 linear_dd
+visualization
 references
 ```
 

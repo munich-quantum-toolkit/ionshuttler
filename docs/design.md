@@ -143,6 +143,20 @@ A new heuristic or search method should consume existing circuit, state, and
 architecture contracts. It may change which valid candidate is explored first,
 but it must not redefine action duration or validity.
 
+### Report diagnostics
+
+A compiler method returns its own diagnostics class. The class implements
+`to_dict` for saved results and `statistics` for people. `statistics` returns
+`(label, value)` pairs, such as `("Explored nodes", 340)`. The Linear view lists
+these pairs in its side bar without knowing the method.
+
+The visualizers draw some diagnostics on the schedule. They find this data by
+field name, not by class. The Linear view marks planned zones from
+`preferred_gate_zones`. The Grid view shows the planning trace from
+`planning_trace` and `stop_reason`. A new method that records the same data uses
+the same field names. A new kind of data that the view must draw needs new
+visualizer code.
+
 ### Change architecture behavior
 
 Change the backend architecture when a device gives an existing action a
@@ -186,16 +200,16 @@ supported result. An explicit
 `visualize` method. The concrete
 {py:class}`~mqt.ionshuttler.visualization.LinearVisualizer` and
 {py:class}`~mqt.ionshuttler.visualization.GridVisualizer` classes implement that
-contract. Backend loaders, such as
-{py:func}`mqt.ionshuttler.linear.load_result`, restore persisted artifacts with
-explicit backend knowledge.
+contract.
 
 Each backend keeps its visualization code in its own subpackage of
 `mqt.ionshuttler.visualization`. Interactive views share one browser player. The
-player owns the page, playback controls, time slider, video range, and video
-export. A backend supplies the drawing data and one script that draws a given
-schedule time. Python replays the schedule and validates it; the browser only
-interpolates between the replayed positions.
+player owns the page, playback controls, time slider, side bar, video range, and
+video export. It also holds the theme colors, ion colors, and text sizes that
+every drawing uses, in Python and in the browser. A backend supplies the drawing
+data and one script that draws a given schedule time. Python replays the
+schedule and validates it; the browser only interpolates between the replayed
+positions.
 
 ## See also
 
