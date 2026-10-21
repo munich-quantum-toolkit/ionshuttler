@@ -10,10 +10,11 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from .._player.page import notebook_frame, player_page, view_data
 from .._player.settings import (
@@ -28,8 +29,6 @@ from .._player.style import COLORS, color_changes, color_mode, color_mode_option
 from ._trajectories import plot_trajectories
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from matplotlib.figure import Figure
 
     from mqt.ionshuttler.core.result import CompilationResult
@@ -39,6 +38,7 @@ if TYPE_CHECKING:
     from ._matplotlib import LinearDrawing
     from ._scene import Scene
 
+SiteCoordinates: TypeAlias = Mapping[int, Sequence[float]] | Sequence[Sequence[float]]
 Theme = Literal["auto", "light", "dark"]
 _FLAGS = (
     ("show_ion_labels", "Ion labels"),
@@ -62,7 +62,16 @@ class LinearVisualizer:
     :meth:`plot_trajectories` draws every ion's site over time. The view, its
     video export, and :meth:`plot` use the same layout, colors, and labels.
 
+    If no coordinates are supplied, a chain lies on a straight line and a
+    ring on an ellipse that fills the panel, with site 0 at the top and the
+    other sites in clockwise order.
+
     Attributes:
+        site_coordinates: Optional drawing position ``(x, y)`` of every site,
+            with ``y`` pointing up, as a mapping from site number to position
+            or as a sequence in site order. The drawing keeps the shape of
+            the coordinates and scales it to fit the panel. With explicit
+            coordinates, the view does not draw the field profile.
         theme: Color theme: ``"dark"``, ``"light"``, or ``"auto"``. Matplotlib
             figures and videos use the same theme; ``"auto"`` follows the
             browser setting and draws them light. Use ``"light"`` for print.
@@ -71,7 +80,8 @@ class LinearVisualizer:
         show_site_numbers: Whether to number the trap sites.
         show_field_profile: Whether to draw the field profile behind the
             chain. Results whose sites all have the same field have no
-            profile.
+            profile. Rings and chains with explicit coordinates do not draw
+            it.
         show_schedule_details: Whether the interactive view starts with the
             schedule side bar open. The side bar lists the running and next
             gates with their ions and processing zones, the moving ions, each
@@ -101,6 +111,7 @@ class LinearVisualizer:
             automatic size. The view's layout editor has a slider for it.
     """
 
+    site_coordinates: SiteCoordinates | None = None
     theme: Theme = "dark"
     show_ion_labels: bool = True
     show_processing_zone_labels: bool = True
@@ -152,9 +163,15 @@ class LinearVisualizer:
             The view. It displays itself in notebooks and can be saved as a
             standalone HTML file.
         """
-        return LinearView(self, (_scene(result),))
+        return LinearView(self, (_scene(result, self.site_coordinates),))
 
-    def compare(self, results: Mapping[str, CompilationResult], /) -> LinearView:
+    def compare(
+        self,
+        results: Mapping[str, CompilationResult],
+        /,
+        *,
+        site_coordinates: Mapping[str, SiteCoordinates] | None = None,
+    ) -> LinearView:
         """Return a view that plays several Linear results one above the other.
 
         All panels share one clock in absolute schedule time. A panel shows its
@@ -165,13 +182,17 @@ class LinearVisualizer:
 
         Args:
             results: Linear results keyed by the title of their panel.
+            site_coordinates: Explicit coordinates for some results, keyed by
+                panel title. Other results use the visualizer's
+                ``site_coordinates``, or the automatic layout.
 
         Returns:
             The view with one panel per result, in mapping order.
 
         Raises:
             TypeError: If a title is not a string.
-            ValueError: If fewer than two results are given or a title is empty.
+            ValueError: If fewer than two results are given, a title is empty,
+                or a coordinate title names no result.
         """
         if len(results) < 2:
             msg = "compare needs at least two results"
@@ -183,7 +204,15 @@ class LinearVisualizer:
             if not title:
                 msg = "result titles must be non-empty"
                 raise ValueError(msg)
-        return LinearView(self, tuple(_scene(result, title) for title, result in results.items()))
+        coordinates = {} if site_coordinates is None else dict(site_coordinates)
+        unknown = sorted(set(coordinates).difference(results))
+        if unknown:
+            msg = f"site_coordinates names unknown results: {', '.join(unknown)}"
+            raise ValueError(msg)
+        scenes = tuple(
+            _scene(result, coordinates.get(title, self.site_coordinates), title) for title, result in results.items()
+        )
+        return LinearView(self, scenes)
 
     def plot(self, result: CompilationResult, time: float, /) -> Figure:
         """Draw a Linear result at one schedule time as a Matplotlib figure.
@@ -201,7 +230,7 @@ class LinearVisualizer:
         """
         import matplotlib.pyplot as plt  # ruff: ignore[import-outside-top-level]
 
-        scene = _scene(result)
+        scene = _scene(result, self.site_coordinates)
         if isinstance(time, bool) or not isinstance(time, int | float) or not math.isfinite(time):
             msg = "time must be a finite number"
             raise TypeError(msg)
@@ -429,7 +458,7 @@ class LinearView:
         return video_range(start_time, end_time, self.start_time, self.end_time)
 
 
-def _scene(result: CompilationResult, title: str = "") -> Scene:
+def _scene(result: CompilationResult, site_coordinates: SiteCoordinates | None, title: str = "") -> Scene:
     """Replay a result for drawing.
 
     The Linear compiler modules load only here, so importing the package
@@ -440,7 +469,7 @@ def _scene(result: CompilationResult, title: str = "") -> Scene:
     """
     from ._scene import build_scene  # ruff: ignore[import-outside-top-level]
 
-    return build_scene(result, title)
+    return build_scene(result, site_coordinates, title)
 
 
 def _drawing(settings: LinearVisualizer, figure: Figure, scenes: tuple[Scene, ...]) -> LinearDrawing:
@@ -466,4 +495,4 @@ def _drawing(settings: LinearVisualizer, figure: Figure, scenes: tuple[Scene, ..
     )
 
 
-__all__ = ["LinearView", "LinearVisualizer"]
+__all__ = ["LinearView", "LinearVisualizer", "SiteCoordinates"]

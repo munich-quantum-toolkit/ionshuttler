@@ -38,8 +38,10 @@ from ._scene import (
     field_points,
     header_lines,
     panel_layout,
+    rail_path,
     rail_runs,
     rail_width,
+    site_span,
     site_tick_width,
 )
 
@@ -152,7 +154,7 @@ class _PanelArtists:
         # The chain: wider and colored in processing zones.
         runs = rail_runs(scene)
         self.zone_runs = [(first, last, zone) for first, last, zone in runs if zone is not None]
-        zone_lines = [self._run(first, last) for first, last, _zone in self.zone_runs]
+        zone_lines = [rail_path(layout, first - 0.5, last + 0.5) for first, last, _zone in self.zone_runs]
         zone_width = rail_width(radius, in_zone=True)
         # Processing zones glow faintly in their own color, and fully while they run a gate.
         self.glow: LineCollection = LineCollection(
@@ -174,7 +176,7 @@ class _PanelArtists:
                 zorder=1,
             )
         )
-        plain_runs = [self._run(first, last) for first, last, zone in runs if zone is None]
+        plain_runs = [rail_path(layout, first - 0.5, last + 0.5) for first, last, zone in runs if zone is None]
         axis.add_collection(
             LineCollection(
                 [*plain_runs, *zone_lines],
@@ -190,7 +192,7 @@ class _PanelArtists:
         tick = SITE_TICK * radius
         axis.add_collection(
             LineCollection(
-                [((x, y - tick), (x, y + tick)) for x, y in (layout.point(site) for site in range(scene.num_sites))],
+                [(layout.beside(site, tick), layout.beside(site, -tick)) for site in range(scene.num_sites)],
                 linewidths=points(site_tick_width(radius)),
                 colors=colors["junction"],
                 capstyle="butt",
@@ -251,15 +253,15 @@ class _PanelArtists:
                         visible=label_size >= 6,
                     )
                 )
-        # Gate names above the running gates. The pool holds one text for each
-        # gate that can run at the same time.
+        # Gate names beside the running gates, on the side of the normal. The
+        # pool holds one text for each gate that can run at the same time.
         name_size = max(9.0, 0.72 * layout.font_size)
-        self.name_y = layout.chain_y - (SWAP_LIFT + 1) * radius - 0.5 * name_size - 2
+        self.name_distance = (SWAP_LIFT + 1) * radius + 0.5 * name_size + 2
         most_running = max((len(scene.running_gates(gate.start)) for gate in scene.gates), default=0)
         self.gate_names: list[Text] = [
             axis.text(
                 0,
-                self.name_y,
+                0,
                 "",
                 fontsize=points(name_size),
                 fontweight="semibold",
@@ -320,24 +322,24 @@ class _PanelArtists:
         positions = scene.ion_positions(shown_time)
         point_of = {ion: layout.point(*positions[ion]) for ion in self.ion_order}
         points_in_order = [point_of[ion] for ion in self.ion_order]
-        bands: list[tuple[tuple[float, float], tuple[float, float]]] = []
+        bands: list[list[tuple[float, float]]] = []
         band_colors: list[str] = []
-        bars: list[tuple[tuple[float, float], tuple[float, float]]] = []
+        bars: list[list[tuple[float, float]]] = []
         bar_colors: list[str] = []
         glows: dict[int, str] = {}
         for gate in gates:
             if gate.end == gate.start:
                 continue
             color = self._gate_color(gate)
-            gate_points = [point_of[ion] for ion in gate.ions if ion in point_of]
-            if not gate_points:
+            sites = [positions[ion][0] for ion in gate.ions if ion in positions]
+            if not sites:
                 continue
+            # Bands and bars follow the chain between the gate ions.
             if gate.is_global:
-                xs = [x for x, _y in gate_points]
-                bands.append(((min(xs), layout.chain_y), (max(xs), layout.chain_y)))
+                bands.append(rail_path(layout, *site_span(sites, scene)))
                 band_colors.append(color)
-            elif len(gate_points) == 2:
-                bars.append((gate_points[0], gate_points[1]))
+            elif len(sites) == 2:
+                bars.append(rail_path(layout, *site_span(sites, scene)))
                 bar_colors.append(color)
             glows.update(dict.fromkeys(gate.ions, color))
         self.bands.set_segments(bands)
@@ -375,11 +377,12 @@ class _PanelArtists:
         ])
         for index, text in enumerate(self.gate_names):
             gate = gates[index] if index < len(gates) else None
-            xs = [] if gate is None else [point_of[ion][0] for ion in gate.ions if ion in point_of]
-            text.set_visible(bool(xs))
-            if gate is not None and xs:
+            sites = [] if gate is None else [positions[ion][0] for ion in gate.ions if ion in positions]
+            text.set_visible(bool(sites))
+            if gate is not None and sites:
+                first, last = site_span(sites, scene)
                 text.set_text(gate.name)
-                text.set_position(((min(xs) + max(xs)) / 2, self.name_y))
+                text.set_position(layout.beside((first + last) / 2, self.name_distance))
                 text.set_color(self._gate_color(gate))
         title, time_text, description = header_lines(scene, time)
         text_width = layout.width - 2 * layout.padding
@@ -401,14 +404,6 @@ class _PanelArtists:
             *self.ion_labels,
             *self.gate_names,
         ]
-
-    def _run(self, first: int, last: int) -> tuple[tuple[float, float], tuple[float, float]]:
-        """Return the part of the chain from site ``first`` to site ``last``.
-
-        Returns:
-            The two ends of the part.
-        """
-        return self.layout.point(first - 0.5), self.layout.point(last + 0.5)
 
     def _gate_color(self, gate: GateUse) -> str:
         if gate.processing_zone is None:
@@ -458,37 +453,37 @@ class _PanelArtists:
         )
 
     def _add_site_labels(self, axis: Axes) -> None:
-        """Write site numbers below the chain, then processing-zone names below them."""
+        """Write site numbers on the side opposite the normal, then processing-zone names beyond them."""
         layout = self.layout
         scene = self.scene
         size = site_label_size(layout)
-        numbers_y = layout.chain_y + (SWAP_LIFT + 1) * layout.ion_radius + 0.4 * size + 2
+        numbers_distance = (SWAP_LIFT + 1) * layout.ion_radius + 0.4 * size + 2
         if self.style.show_site_numbers:
             for site in range(0, scene.num_sites, site_label_step(scene, layout, size)):
                 axis.text(
-                    layout.point(site)[0],
-                    numbers_y,
+                    *layout.beside(site, -(numbers_distance + 0.5 * size)),
                     str(site),
                     color=self.colors["muted_text"],
                     fontsize=points(size),
                     ha="center",
-                    va="top",
+                    va="center",
                     zorder=6,
                 )
         if self.style.show_processing_zone_labels:
-            zones_y = numbers_y + (1.5 * size if self.style.show_site_numbers else 0)
+            zone_size = zone_label_size(layout)
+            zones_distance = numbers_distance + (1.5 * size if self.style.show_site_numbers else 0) + 0.5 * zone_size
             for zone_id, sites in scene.processing_zones:
                 if not sites:
                     continue
+                first, last = site_span(sites, scene)
                 axis.text(
-                    layout.point((min(sites) + max(sites)) / 2)[0],
-                    zones_y,
+                    *layout.beside((first + last) / 2, -zones_distance),
                     zone_id,
                     color=self.zone_color[zone_id],
-                    fontsize=points(zone_label_size(layout)),
+                    fontsize=points(zone_size),
                     fontweight="semibold",
                     ha="center",
-                    va="top",
+                    va="center",
                     zorder=6,
                 )
 
@@ -534,8 +529,8 @@ def site_label_size(layout: PanelLayout) -> float:
 def site_label_step(scene: Scene, layout: PanelLayout, size: float) -> int:
     """Return how many sites lie between two written site numbers.
 
-    Long chains number every second, third, or later site, so that numbers
-    do not overlap.
+    Long or crowded chains number every second, third, or later site, so
+    that numbers do not overlap.
 
     Returns:
         The step, as ``siteLabelStep`` in ``draw.js``.

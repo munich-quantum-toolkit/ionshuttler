@@ -685,6 +685,7 @@ def test_visualization_package_exports_its_supported_api() -> None:
         "JunctionCoordinates",
         "LinearView",
         "LinearVisualizer",
+        "SiteCoordinates",
         "Visualizer",
         "open_viewer",
         "visualize",

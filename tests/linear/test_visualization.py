@@ -33,12 +33,21 @@ from mqt.ionshuttler.linear.schedule import schedule_from_path
 from mqt.ionshuttler.linear.state import AdvanceTime, create_initial_state
 from mqt.ionshuttler.visualization import IonColor, LinearView, LinearVisualizer
 from mqt.ionshuttler.visualization._player.settings import video_frame_times
-from mqt.ionshuttler.visualization.linear._scene import SWAP_LIFT, build_scene, panel_layout, track_position
+from mqt.ionshuttler.visualization.linear._scene import (
+    SWAP_LIFT,
+    build_scene,
+    panel_layout,
+    rail_path,
+    rail_runs,
+    site_span,
+    track_position,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from mqt.ionshuttler.linear.state import SearchTransition
+    from mqt.ionshuttler.visualization.linear._scene import PanelLayout
 
 
 def _result(
@@ -100,6 +109,48 @@ def _plain_result() -> CompilationResult:
     return _result([Shuttle(ion=0, src=0, dst=1), AdvanceTime()], architecture, [0])
 
 
+def _ring_result() -> CompilationResult:
+    """Swap two ions across the edge between site 4 and site 0 of a five-site ring, then run gates there.
+
+    The processing zone ``wrap`` holds sites 4 and 0. The swap takes three
+    timesteps, ``rzz`` runs from 3 to 5, and the global ``rx`` from 5 to 6.
+    """
+    architecture = LinearArchitecture(
+        num_sites=5,
+        processing_zones={"wrap": [4, 0]},
+        topology="ring",
+        supported_action_types=(*DEFAULT_ACTION_TYPES, GlobalGate),
+    )
+    return _result(
+        [
+            PhysicalSwap(ion_a=0, ion_b=1, pos_a=0, pos_b=4),
+            Shuttle(ion=2, src=2, dst=3),
+            AdvanceTime(),
+            AdvanceTime(),
+            AdvanceTime(),
+            Rzz(ion_a=0, ion_b=1, theta=0.2),
+            AdvanceTime(),
+            AdvanceTime(),
+            GlobalGate(gate_name="rx", theta=pi, ions=(0, 1, 2)),
+            AdvanceTime(),
+        ],
+        architecture,
+        [0, 4, 2],
+    )
+
+
+# A zigzag through the four sites of the busy result.
+_ZIGZAG = [(0.0, 0.0), (1.0, 1.0), (2.0, 0.0), (3.0, 1.0)]
+# The corners of a square, clockwise from the lower left.
+_SQUARE = {0: (0.0, 0.0), 1: (0.0, 1.0), 2: (1.0, 1.0), 3: (1.0, 0.0)}
+
+
+def _square_ring_result() -> CompilationResult:
+    """Keep one ion on site 0 of a four-site ring."""
+    architecture = LinearArchitecture(num_sites=4, processing_zones={"pz": [0, 1]}, topology="ring")
+    return _result([AdvanceTime()], architecture, [0])
+
+
 def _embedded(view: LinearView) -> dict[str, Any]:
     """Decode the drawing data and settings embedded in a view."""
     match = re.search(r'class="player-data">\s*([^<]*?)\s*</script>', view.to_html())
@@ -135,7 +186,7 @@ def test_linear_visualizer_rejects_other_results() -> None:
 
 def test_scene_records_swaps_shuttles_and_gates() -> None:
     """Pass swapping ions above and below the chain and keep each gate's zones."""
-    scene = build_scene(_busy_result(), "busy")
+    scene = build_scene(_busy_result(), None, "busy")
 
     tracks = {track.ion: track for track in scene.ions}
     assert [(move.start, move.end, move.target, move.side) for move in tracks[0].movements] == [(0, 3, 1, 1)]
@@ -308,7 +359,7 @@ def test_marker_size_scales_ions_without_moving_sites() -> None:
     assert half.ion_radius == pytest.approx(full.ion_radius / 2)
     assert [half.point(site) for site in range(4)] == [full.point(site) for site in range(4)]
     assert 2 * full.ion_radius < full.spacing
-    assert full.point(1, 1)[1] == pytest.approx(full.chain_y - SWAP_LIFT * full.ion_radius)
+    assert full.point(1, 1) == pytest.approx((full.sites[1][0], full.sites[1][1] - SWAP_LIFT * full.ion_radius))
 
 
 def test_plot_draws_one_schedule_time() -> None:
@@ -341,6 +392,129 @@ def test_video_export_writes_one_frame_per_step(tmp_path: Path) -> None:
 
     with image.open(path) as video:
         assert video.n_frames == len(video_frame_times(0, 2, 2, 4))
+
+
+def test_ring_moves_cross_the_edge_between_the_last_site_and_site_zero() -> None:
+    """Move ions over the short edge of the ring and keep a wrapping zone in one piece."""
+    scene = build_scene(_ring_result())
+    tracks = {track.ion: track for track in scene.ions}
+
+    assert scene.ring
+    # The ion that moves from site 4 to site 0 moves to the next site.
+    assert [(move.target, move.side) for move in tracks[0].movements] == [(4, -1)]
+    assert [(move.target, move.side) for move in tracks[1].movements] == [(0, 1)]
+    assert scene.ion_positions(1.5)[0] == pytest.approx((4.5, -1.0))
+    assert scene.ion_positions(1.5)[1] == pytest.approx((4.5, 1.0))
+    assert scene.ion_positions(0.75)[0][0] == pytest.approx(4.75)
+    assert scene.ion_positions(0.75)[1][0] == pytest.approx(4.25)
+    assert rail_runs(scene) == [(-1, 0, "wrap"), (1, 3, None)]
+
+
+def test_site_span_leaves_out_the_largest_gap_of_a_ring() -> None:
+    """Cover a set of sites with the shortest stretch of the chain."""
+    ring = build_scene(_ring_result())
+
+    assert site_span([4, 0], ring) == (4, 5)
+    assert site_span([0, 2, 4], ring) == (2, 5)
+    assert site_span([1, 3], ring) == (1, 3)
+    assert site_span([3, 1], build_scene(_busy_result())) == (1, 3)
+
+
+def test_ring_fills_the_panel_with_an_ellipse() -> None:
+    """Draw site 0 at the top, the other sites clockwise, and swapping ions on both sides of the ring."""
+    layout = panel_layout(build_scene(_ring_result()), 0, 0, 960, 420)
+
+    assert layout.ellipse is not None
+    center_x, center_y, radius_x, radius_y = layout.ellipse
+    assert radius_x > 2 * radius_y
+    assert layout.sites[0] == pytest.approx((center_x, center_y - radius_y))
+    assert layout.sites[1][0] > center_x
+    assert layout.normal(0) == pytest.approx((0.0, -1.0))
+    center = (center_x, center_y)
+    assert (
+        math.dist(layout.point(4.5, -1), center)
+        < math.dist(layout.point(4.5), center)
+        < math.dist(layout.point(4.5, 1), center)
+    )
+    name_distance = (SWAP_LIFT + 1) * layout.ion_radius + 0.5 * 9 + 2
+    for site in range(5):
+        x, y = layout.beside(site, name_distance)
+        assert 0 <= x <= 960
+        assert layout.header_height <= y <= 420
+
+
+def test_site_coordinates_keep_their_shape() -> None:
+    """Scale explicit coordinates evenly and turn ring normals outward in either direction."""
+    result = _square_ring_result()
+    scene = build_scene(result, _SQUARE)
+    layout = panel_layout(scene, 0, 0, 960, 420)
+    xs = [x for x, _y in layout.sites]
+    ys = [y for _x, y in layout.sites]
+
+    assert scene.coordinates == ((0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 0.0))
+    assert build_scene(result, list(_SQUARE.values())).coordinates == scene.coordinates
+    assert layout.ellipse is None
+    assert max(xs) - min(xs) == pytest.approx(max(ys) - min(ys))
+    # The left side of the square, from the lower left to the upper left corner.
+    assert layout.normal(0.5) == pytest.approx((-1.0, 0.0))
+    assert layout.normal(0) == pytest.approx((-math.sqrt(0.5), math.sqrt(0.5)))
+    reversed_square = panel_layout(build_scene(result, [(0, 0), (1, 0), (1, 1), (0, 1)]), 0, 0, 960, 420)
+    # The lower side of the square points down on the screen.
+    assert reversed_square.normal(0.5) == pytest.approx((0.0, 1.0))
+
+
+@pytest.mark.parametrize(
+    ("coordinates", "error", "message"),
+    [
+        pytest.param({0: (0, 0)}, ValueError, r"missing: 1, 2, 3\)", id="missing"),
+        pytest.param({**_SQUARE, 4: (2, 2)}, ValueError, r"unknown: 4\)", id="unknown"),
+        pytest.param({**_SQUARE, 0: (0, math.nan)}, ValueError, "site 0 must be finite", id="not-finite"),
+        pytest.param({**_SQUARE, 0: ("a", 0)}, TypeError, "site 0 must contain two numbers", id="text"),
+        pytest.param({**_SQUARE, 0: (0,)}, ValueError, "site 0 must contain two numbers", id="one-number"),
+        pytest.param({"0": (0, 0)}, TypeError, "keys must be site numbers", id="text-key"),
+        pytest.param("abcd", TypeError, "mapping from site to coordinate", id="text-coordinates"),
+    ],
+)
+def test_site_coordinates_must_name_every_site(coordinates: object, error: type[Exception], message: str) -> None:
+    """Name the site and the problem of invalid coordinates."""
+    visualizer = LinearVisualizer(site_coordinates=cast("Any", coordinates))
+
+    with pytest.raises(error, match=message):
+        visualizer.visualize(_square_ring_result())
+
+
+def test_compare_uses_coordinates_per_result() -> None:
+    """Give chosen panels their own coordinates and reject coordinates for unknown panels."""
+    results = {"ring": _ring_result(), "zigzag": _busy_result()}
+
+    data = _embedded(LinearVisualizer().compare(results, site_coordinates={"zigzag": _ZIGZAG}))
+
+    ring, zigzag = data["drawing"]["panels"]
+    assert (ring["ring"], ring["coordinates"]) == (True, None)
+    assert (zigzag["ring"], zigzag["coordinates"]) == (False, [[0, 0], [0.3333, 0.3333], [0.6667, 0], [1, 0.3333]])
+    with pytest.raises(ValueError, match="site_coordinates names unknown results: missing"):
+        LinearVisualizer().compare(results, site_coordinates={"missing": _ZIGZAG})
+
+
+def test_field_profile_needs_the_automatic_straight_chain() -> None:
+    """Leave out the field profile and its switch for explicit coordinates."""
+    data = _embedded(LinearVisualizer(site_coordinates=_ZIGZAG).visualize(_busy_result()))
+
+    assert data["drawing"]["panels"][0]["field"] is None
+    assert ["show_field_profile", "Field profile"] not in data["options"]
+
+
+def test_plot_draws_rings_and_explicit_coordinates() -> None:
+    """Draw zone names and gate names for a ring and for a zigzag chain."""
+    pyplot = pytest.importorskip("matplotlib.pyplot")
+
+    ring = LinearVisualizer().plot(_ring_result(), 4)
+    zigzag = LinearVisualizer(site_coordinates=_ZIGZAG).plot(_busy_result(), 4)
+
+    for figure, zone in ((ring, "wrap"), (zigzag, "pz")):
+        texts = [text.get_text() for text in figure.axes[0].texts if text.get_visible()]
+        assert {zone, "rzz", "q0", "0"}.issubset(texts)
+        pyplot.close(figure)
 
 
 def test_trajectory_plot_stays_available() -> None:
@@ -379,12 +553,22 @@ const drawnText = (time) => {
   return calls.filter((call) => call[0] === "fillText").map((call) => call[1]);
 };
 const layout = LinearDrawing.panelLayout(panel, 0, 0, 960, 420, 0.7);
+const ringSize = panel.ring ? panel.sites : null;
+const halfSites = Array.from({ length: panel.sites }, (_, site) => site + 0.5);
 const output = {
   bounds: LinearDrawing.timeBounds(view),
   steps: LinearDrawing.stepTimes(view),
-  positions: times.map((time) => panel.ions.map((track) => LinearDrawing.trackPosition(track, time))),
+  positions: times.map((time) => panel.ions.map((track) => LinearDrawing.trackPosition(track, time, ringSize))),
   gates: times.map((time) => LinearDrawing.runningGates(panel, time).map((gate) => gate.name)),
-  layout: { radius: layout.ionRadius, site: layout.point(2), lifted: layout.point(1, 1) },
+  layout: {
+    radius: layout.ionRadius,
+    site: layout.point(2),
+    lifted: layout.point(1, 1),
+    sites: layout.sites,
+    between: halfSites.map((site) => layout.point(site, 1)),
+    labels: Array.from({ length: panel.sites }, (_, site) => layout.beside(site, -20)),
+    rail: LinearDrawing.railPath(layout, -0.5, 1.5),
+  },
   field: LinearDrawing.fieldPoints(panel, layout),
   text: drawnText(4),
   details: Object.fromEntries(
@@ -393,8 +577,10 @@ const output = {
 };
 drawnText(4);
 const pickedIon = LinearDrawing.pick(view, ...panel.ionPoints[0]);
-// Between the ions on sites 1 and 2, on the chain of the processing zone.
-const pickedZone = LinearDrawing.pick(view, panel.layout.point(1.6)[0], panel.layout.chainY + 1);
+// Between two ions of the first processing zone, next to the chain.
+const zone = panel.zones[0].sites;
+const zonePoint = panel.layout.point(zone.length > 1 ? zone[0] + 0.6 : zone[0]);
+const pickedZone = LinearDrawing.pick(view, zonePoint[0], zonePoint[1] + 1);
 output.picked = [pickedIon && pickedIon.ion, pickedZone && pickedZone.zone];
 LinearDrawing.paint(view, pickedIon, "fill", "#000000");
 LinearDrawing.paint(view, pickedZone, "color", "#00ff00");
@@ -439,11 +625,54 @@ def test_browser_drawing_matches_the_python_drawing_data(tmp_path: Path) -> None
     assert output["gates"] == [[gate.name for gate in scene.running_gates(time)] for time in times]
     assert output["bounds"] == [0, 7]
     assert output["steps"] == [0, 3, 5, 6]
-    layout = panel_layout(scene, 0, 0, 960, 420, 0.7)
-    assert output["layout"]["radius"] == pytest.approx(layout.ion_radius)
-    assert output["layout"]["site"] == pytest.approx(list(layout.point(2)))
-    assert output["layout"]["lifted"] == pytest.approx(list(layout.point(1, 1)))
+    _assert_same_layout(output["layout"], panel_layout(scene, 0, 0, 960, 420, 0.7))
     assert {"q0", "q1", "q2", "rzz", "field", "pz", "0", "3"}.issubset(output["text"])
+
+
+def _assert_same_layout(browser: dict[str, Any], layout: PanelLayout) -> None:
+    """Compare the browser layout with the Python layout at sites, between sites, beside sites, and on a rail."""
+
+    def flat(points: list[Any]) -> list[float]:
+        return [value for point in points for value in point]
+
+    count = len(layout.sites)
+    assert browser["radius"] == pytest.approx(layout.ion_radius)
+    assert browser["site"] == pytest.approx(list(layout.point(2)))
+    assert browser["lifted"] == pytest.approx(list(layout.point(1, 1)))
+    assert flat(browser["sites"]) == pytest.approx(flat(list(layout.sites)))
+    assert flat(browser["between"]) == pytest.approx(flat([layout.point(site + 0.5, 1) for site in range(count)]))
+    assert flat(browser["labels"]) == pytest.approx(flat([layout.beside(site, -20) for site in range(count)]))
+    assert flat(browser["rail"]) == pytest.approx(flat(rail_path(layout, -0.5, 1.5)))
+
+
+def test_browser_ring_drawing_matches_the_python_drawing_data(tmp_path: Path) -> None:
+    """Check positions, layout, labels, picking, and the side bar of a ring against the Python scene."""
+    result = _ring_result()
+    scene = build_scene(result)
+    times = [0, 0.75, 1.5, 3, 4, 5.5]
+
+    output = _run_node_check(tmp_path, LinearVisualizer().visualize(result), times)
+
+    for time, positions in zip(times, output["positions"], strict=True):
+        expected = scene.ion_positions(time)
+        for track, position in zip(scene.ions, positions, strict=True):
+            assert math.dist(expected[track.ion], position) < 1e-9
+    _assert_same_layout(output["layout"], panel_layout(scene, 0, 0, 960, 420, 0.7))
+    assert {"q0", "q1", "q2", "rzz", "wrap", "0", "4"}.issubset(output["text"])
+    assert output["picked"] == [0, "wrap"]
+    moving = dict(output["details"]["1.5"])["Moving"]
+    assert [line[1:] for line in moving] == [["0 → 4", "swap"], ["4 → 0", "swap"]]
+    assert dict(output["details"]["1.5"])["Ions"][0][1] == "site 4.5"
+
+
+def test_browser_drawing_follows_explicit_coordinates(tmp_path: Path) -> None:
+    """Place sites, lifted ions, labels, and rails at the same pixels as the Python layout."""
+    result = _busy_result()
+
+    output = _run_node_check(tmp_path, LinearVisualizer(site_coordinates=_ZIGZAG).visualize(result), [0])
+
+    _assert_same_layout(output["layout"], panel_layout(build_scene(result, _ZIGZAG), 0, 0, 960, 420, 0.7))
+    assert output["picked"] == [0, "pz"]
 
 
 def test_browser_side_bar_lists_running_and_next_gates(tmp_path: Path) -> None:

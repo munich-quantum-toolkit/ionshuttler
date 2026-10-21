@@ -224,12 +224,36 @@ not draw the marks.
 
 The Linear view plays the schedule on the ion chain. The trap sites lie on one
 line, and processing zones color their part of the line. Shuttled ions slide to
-their new site. Swapped ions pass each other, one above the line and one below
-it. Global gates light up all their ions. `show_site_numbers=False` hides the
-site numbers.
+their new site. Swapped ions pass each other, one on each side of the line.
+Global gates light up all their ions. `show_site_numbers=False` hides the site
+numbers.
 
 For an architecture with a field profile, the **Field profile** switch, or
 `show_field_profile=True`, draws the profile as a faint curve behind the chain.
+
+### Layout
+
+A chain lies on a straight line. A ring (`topology="ring"`) lies on an ellipse
+that fills the panel, with site 0 at the top and the other sites in clockwise
+order. Ions that move between the last site and site 0 use the edge that joins
+them, and a processing zone across this edge stays in one piece. Swapping ions
+pass on the inside and the outside of the ring, and gate names appear outside
+it.
+
+To control the drawing, pass explicit coordinates: a mapping from site number to
+`(x, y)` or a sequence of positions in site order, with `y` pointing up. The
+coordinates must name every site exactly once. Straight lines join neighboring
+sites. The drawing keeps the shape of the coordinates and scales it to fit the
+panel.
+
+```python
+visualizer = LinearVisualizer(site_coordinates=[(0, 0), (1, 1), (2, 0), (3, 1)])
+```
+
+As for Grid results, coordinates belong to the visualization, not
+`LinearArchitecture`. In a comparison, `compare(..., site_coordinates=...)`
+gives chosen panels their own coordinates, keyed by panel title. Rings and
+explicit coordinates do not draw the field profile.
 
 ### Schedule details
 

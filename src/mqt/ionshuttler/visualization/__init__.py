@@ -9,7 +9,7 @@
 
 from mqt.ionshuttler.visualization.api import Visualizer, visualize
 from mqt.ionshuttler.visualization.grid import GridView, GridVisualizer, JunctionCoordinates
-from mqt.ionshuttler.visualization.linear import LinearView, LinearVisualizer
+from mqt.ionshuttler.visualization.linear import LinearView, LinearVisualizer, SiteCoordinates
 from mqt.ionshuttler.visualization.viewer import open_viewer
 
 from ._player.style import IonColor
@@ -21,6 +21,7 @@ __all__ = [
     "JunctionCoordinates",
     "LinearView",
     "LinearVisualizer",
+    "SiteCoordinates",
     "Visualizer",
     "open_viewer",
     "visualize",

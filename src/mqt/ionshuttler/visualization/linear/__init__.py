@@ -7,6 +7,6 @@
 
 """Show Linear compilation results as interactive views, figures, and videos."""
 
-from mqt.ionshuttler.visualization.linear.visualizer import LinearView, LinearVisualizer
+from mqt.ionshuttler.visualization.linear.visualizer import LinearView, LinearVisualizer, SiteCoordinates
 
-__all__ = ["LinearView", "LinearVisualizer"]
+__all__ = ["LinearView", "LinearVisualizer", "SiteCoordinates"]

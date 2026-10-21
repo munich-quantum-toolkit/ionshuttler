@@ -454,7 +454,16 @@ const GridDrawing = (() => {
       // they run a gate.
       if (segment.zones.length > 0) {
         const strength = active ? 1 : AMBIENT_GLOW;
-        paintLineGlow(context, x0, y0, x1, y1, width, color, strength);
+        paintLineGlow(
+          context,
+          [
+            [x0, y0],
+            [x1, y1],
+          ],
+          width,
+          color,
+          strength,
+        );
       }
       context.strokeStyle = color;
       context.lineWidth = width;

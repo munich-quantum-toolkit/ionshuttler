@@ -169,19 +169,21 @@ const PlayerStyle = (() => {
     context.fillRect(left, top, width, height);
   }
 
-  // A line that glows in its own color. Processing zones glow faintly at all
-  // times (`strength` AMBIENT_GLOW) and fully while they run a gate.
-  function paintLineGlow(context, x0, y0, x1, y1, width, color, strength = 1) {
+  // A line through `points` that glows in its own color. Processing zones
+  // glow faintly at all times (`strength` AMBIENT_GLOW) and fully while they
+  // run a gate.
+  function paintLineGlow(context, points, width, color, strength = 1) {
     context.save();
     context.globalAlpha = strength;
     context.lineCap = "round";
+    context.lineJoin = "round";
     context.strokeStyle = translucent(color, 0.38);
     context.shadowColor = color;
     context.shadowBlur = 2.5 * width;
     context.lineWidth = 2.2 * width;
     context.beginPath();
-    context.moveTo(x0, y0);
-    context.lineTo(x1, y1);
+    context.moveTo(...points[0]);
+    for (const point of points.slice(1)) context.lineTo(...point);
     context.stroke();
     context.restore();
   }

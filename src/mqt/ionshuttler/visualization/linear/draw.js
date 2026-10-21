@@ -8,10 +8,11 @@
 // Draw Linear results for the schedule player.
 //
 // Python replays the schedule and sends each ion's movements as target sites.
-// This script turns sites into pixels: sites share the panel width evenly, and
-// swapping ions pass each other above and below the chain. It never decides
-// whether an action is legal. The Matplotlib renderer in `_matplotlib.py` uses
-// the same layout rules.
+// This script turns sites into pixels: a chain lies on a straight line, a ring
+// on an ellipse that fills the panel, or the sites lie at the coordinates that
+// the user supplied. Swapping ions pass each other on both sides of the chain.
+// It never decides whether an action is legal. The Matplotlib renderer in
+// `_matplotlib.py` uses the same layout rules as `_scene.py`.
 
 "use strict";
 
@@ -30,16 +31,16 @@ const LinearDrawing = (() => {
     paintGlow,
     paintLineGlow,
     ringStroke,
-    roundedRectangle,
     textColor,
     truncate,
   } =
     typeof PlayerStyle === "object"
       ? PlayerStyle
       : require("../_player/style.js");
-  // Same values as `SWAP_LIFT` and `SITE_TICK` in `_scene.py`.
+  // Same values as `SWAP_LIFT`, `SITE_TICK`, and `_CURVE_STEPS` in `_scene.py`.
   const SWAP_LIFT = 1.15;
   const SITE_TICK = 0.6;
+  const CURVE_STEPS = 8;
   const UPCOMING_GATES = 6;
   const STATUS_TEXT = { SUCCESS: "completed", FAILED: "failed" };
 
@@ -90,6 +91,8 @@ const LinearDrawing = (() => {
       start: raw.start,
       end: raw.end,
       sites: raw.sites,
+      ring: raw.ring,
+      coordinates: raw.coordinates,
       field: raw.field,
       zones: raw.processing_zones.map(([id, sites]) => ({ id, sites })),
       siteZones,
@@ -156,8 +159,13 @@ const LinearDrawing = (() => {
     return (start <= time && time < end) || start === time;
   }
 
-  // Same rules as `track_position` in `_scene.py`: `[site, lift]`.
-  function trackPosition(track, time) {
+  function modulo(value, divisor) {
+    return ((value % divisor) + divisor) % divisor;
+  }
+
+  // Same rules as `track_position` in `_scene.py`: `[site, lift]`. A ring
+  // passes its number of sites as `ringSize`.
+  function trackPosition(track, time, ringSize = null) {
     const index = bisectRight(track.starts, time) - 1;
     if (index < 0) return [track.initial, 0];
     const movement = track.movements[index];
@@ -165,10 +173,15 @@ const LinearDrawing = (() => {
     const source =
       index === 0 ? track.initial : track.movements[index - 1].target;
     const progress = (time - movement.start) / (movement.end - movement.start);
-    return [
-      source + (movement.target - source) * progress,
-      movement.side * Math.sin(Math.PI * progress),
-    ];
+    const lift = movement.side * Math.sin(Math.PI * progress);
+    let step = movement.target - source;
+    if (ringSize === null) return [source + step * progress, lift];
+    if (Math.abs(step) === ringSize - 1) step = step > 0 ? -1 : 1;
+    return [modulo(source + step * progress, ringSize), lift];
+  }
+
+  function panelPosition(panel, track, time) {
+    return trackPosition(track, time, panel.ring ? panel.sites : null);
   }
 
   function runningGates(panel, time) {
@@ -203,8 +216,58 @@ const LinearDrawing = (() => {
     const padding = Math.round(Math.min(width, height) * 0.03);
     const availableWidth = Math.max(width - 2 * padding, 1);
     const availableHeight = Math.max(height - headerHeight - 2 * padding, 1);
+    const areaLeft = left + padding;
     const areaTop = top + headerHeight + padding;
-    const spacing = availableWidth / panel.sites;
+    const count = panel.sites;
+    let ellipse = null;
+    let sites;
+    let spacing;
+    if (panel.coordinates === null && !panel.ring) {
+      spacing = availableWidth / count;
+      const chainY = areaTop + 0.45 * availableHeight;
+      sites = Array.from({ length: count }, (_, site) => [
+        areaLeft + (site + 0.5) * spacing,
+        chainY,
+      ]);
+    } else {
+      const largestRadius = Math.min(
+        0.09 * availableHeight,
+        0.05 * Math.min(width, height),
+      );
+      // Room for swapping ions and gate names, which use the gate-name font size.
+      const margin =
+        (SWAP_LIFT + 1) * largestRadius + Math.max(9, 0.72 * fontSize) + 4;
+      const innerWidth = Math.max(availableWidth - 2 * margin, 1);
+      const innerHeight = Math.max(availableHeight - 2 * margin, 1);
+      const centerX = areaLeft + availableWidth / 2;
+      const centerY = areaTop + availableHeight / 2;
+      if (panel.coordinates === null) {
+        ellipse = [centerX, centerY, innerWidth / 2, innerHeight / 2];
+        sites = Array.from({ length: count }, (_, site) => {
+          const angle = ringAngle(site, count);
+          return [
+            centerX + (innerWidth / 2) * Math.cos(angle),
+            centerY + (innerHeight / 2) * Math.sin(angle),
+          ];
+        });
+      } else {
+        sites = fit(
+          panel.coordinates,
+          centerX,
+          centerY,
+          innerWidth,
+          innerHeight,
+          panel.ring,
+        );
+      }
+      const neighbors = sites
+        .slice(0, panel.ring ? count : count - 1)
+        .map((site, index) => {
+          const next = sites[(index + 1) % count];
+          return Math.hypot(next[0] - site[0], next[1] - site[1]);
+        });
+      spacing = neighbors.length > 0 ? Math.min(...neighbors) : innerWidth;
+    }
     const ionRadius = Math.max(
       Math.min(
         0.3 * spacing,
@@ -213,28 +276,187 @@ const LinearDrawing = (() => {
       ) * markerSize,
       2,
     );
-    const firstSiteX = left + padding + 0.5 * spacing;
-    const chainY = areaTop + 0.45 * availableHeight;
-    // The field profile fills the panel behind the chain.
-    return {
+    const layout = {
       left,
       top,
       width,
       height,
-      firstSiteX,
+      sites,
+      ring: panel.ring,
+      ellipse,
       spacing,
-      chainY,
+      // The field profile fills the panel behind the chain.
       fieldTop: areaTop + 0.04 * availableHeight,
       fieldBottom: areaTop + 0.86 * availableHeight,
       ionRadius,
       fontSize,
       headerHeight,
       padding,
-      point: (site, lift = 0) => [
-        firstSiteX + site * spacing,
-        chainY - lift * SWAP_LIFT * ionRadius,
-      ],
+      pieceNormals: pieceNormals(sites, panel.ring),
     };
+    layout.onChain = (site) => onChain(layout, site);
+    layout.normal = (site) => normalAt(layout, site);
+    layout.beside = (site, distance) => {
+      const [x, y] = onChain(layout, site);
+      if (distance === 0) return [x, y];
+      const [normalX, normalY] = normalAt(layout, site);
+      return [x + normalX * distance, y + normalY * distance];
+    };
+    layout.point = (site, lift = 0) =>
+      layout.beside(site, lift * SWAP_LIFT * ionRadius);
+    return layout;
+  }
+
+  // Same rules as `PanelLayout` in `_scene.py`.
+  function ringAngle(site, count) {
+    return -Math.PI / 2 + (2 * Math.PI * site) / count;
+  }
+
+  function unit(x, y) {
+    const length = Math.hypot(x, y);
+    return [x / length, y / length];
+  }
+
+  // The box also holds the ends of a chain, half a piece beyond the first
+  // and the last site.
+  function fit(coordinates, centerX, centerY, width, height, ring) {
+    const shown = [...coordinates];
+    const count = coordinates.length;
+    if (!ring && count > 1) {
+      for (const [end, inner] of [
+        [coordinates[0], coordinates[1]],
+        [coordinates[count - 1], coordinates[count - 2]],
+      ])
+        shown.push([
+          1.5 * end[0] - 0.5 * inner[0],
+          1.5 * end[1] - 0.5 * inner[1],
+        ]);
+    }
+    const xs = shown.map(([x]) => x);
+    const ys = shown.map(([, y]) => y);
+    const [minX, maxX] = [Math.min(...xs), Math.max(...xs)];
+    const [minY, maxY] = [Math.min(...ys), Math.max(...ys)];
+    const scale = Math.min(
+      width / Math.max(maxX - minX, 1e-9),
+      height / Math.max(maxY - minY, 1e-9),
+    );
+    const middleX = (minX + maxX) / 2;
+    const middleY = (minY + maxY) / 2;
+    return coordinates.map(([x, y]) => [
+      centerX + (x - middleX) * scale,
+      centerY - (y - middleY) * scale,
+    ]);
+  }
+
+  function piece(layout, site) {
+    const count = layout.sites.length;
+    let index;
+    if (layout.ring) {
+      site = modulo(site, count);
+      index = Math.min(Math.floor(site), count - 1);
+    } else {
+      index = Math.min(Math.max(Math.floor(site), 0), count - 2);
+      if (site === count - 1) return [count - 1, 0];
+    }
+    return [index, site - index];
+  }
+
+  // The shoelace area is positive for a ring that runs clockwise on the
+  // screen; a ring turns its normals outward.
+  function pieceNormals(sites, ring) {
+    const count = sites.length;
+    const pieces = sites
+      .slice(0, ring ? count : count - 1)
+      .map((site, index) => [site, sites[(index + 1) % count]]);
+    const area = pieces.reduce(
+      (sum, [[x0, y0], [x1, y1]]) => sum + x0 * y1 - x1 * y0,
+      0,
+    );
+    const orientation = ring && area < 0 ? -1 : 1;
+    const normals = pieces.map(([[x0, y0], [x1, y1]]) => {
+      const length = Math.hypot(x1 - x0, y1 - y0);
+      return length === 0
+        ? [0, -1]
+        : [
+            (orientation * (y1 - y0)) / length,
+            (orientation * (x0 - x1)) / length,
+          ];
+    });
+    if (!ring && normals.length > 0) normals.push(normals[normals.length - 1]);
+    return normals;
+  }
+
+  function onChain(layout, site) {
+    const count = layout.sites.length;
+    if (layout.ellipse !== null) {
+      const [centerX, centerY, radiusX, radiusY] = layout.ellipse;
+      const angle = ringAngle(site, count);
+      return [
+        centerX + radiusX * Math.cos(angle),
+        centerY + radiusY * Math.sin(angle),
+      ];
+    }
+    if (count === 1) {
+      const [x, y] = layout.sites[0];
+      return [x + site * layout.spacing, y];
+    }
+    const [index, fraction] = piece(layout, site);
+    const [x0, y0] = layout.sites[index];
+    const [x1, y1] = layout.sites[(index + 1) % count];
+    return [x0 + (x1 - x0) * fraction, y0 + (y1 - y0) * fraction];
+  }
+
+  function normalAt(layout, site) {
+    const count = layout.sites.length;
+    if (layout.ellipse !== null) {
+      const [, , radiusX, radiusY] = layout.ellipse;
+      const angle = ringAngle(site, count);
+      return unit(Math.cos(angle) / radiusX, Math.sin(angle) / radiusY);
+    }
+    if (count === 1) return [0, -1];
+    const [index, fraction] = piece(layout, site);
+    const normals = layout.pieceNormals;
+    if (fraction !== 0) return normals[index];
+    if (layout.ring || index > 0) {
+      const [beforeX, beforeY] = normals[modulo(index - 1, normals.length)];
+      const [afterX, afterY] = normals[index];
+      if (Math.hypot(beforeX + afterX, beforeY + afterY) > 1e-9)
+        return unit(beforeX + afterX, beforeY + afterY);
+    }
+    return normals[index];
+  }
+
+  // Same rule as `rail_path` in `_scene.py`.
+  function railPath(layout, first, last) {
+    const steps = layout.ellipse === null ? 1 : CURVE_STEPS;
+    const marks = [first];
+    for (let site = Math.floor(first) + 1; site < Math.ceil(last); site += 1)
+      marks.push(site);
+    marks.push(last);
+    const points = [layout.onChain(first)];
+    for (let index = 0; index < marks.length - 1; index += 1) {
+      const [start, end] = [marks[index], marks[index + 1]];
+      for (let step = 1; step <= steps; step += 1)
+        points.push(layout.onChain(start + ((end - start) * step) / steps));
+    }
+    return points;
+  }
+
+  // Same rule as `site_span` in `_scene.py`: `[first, last]`.
+  function siteSpan(sites, panel) {
+    if (!panel.ring) return [Math.min(...sites), Math.max(...sites)];
+    const ordered = sites
+      .map((site) => modulo(site, panel.sites))
+      .sort((a, b) => a - b);
+    const gaps = ordered.slice(1).map((site, index) => site - ordered[index]);
+    gaps.push(ordered[0] + panel.sites - ordered[ordered.length - 1]);
+    let widest = 0;
+    gaps.forEach((gap, index) => {
+      if (gap > gaps[widest]) widest = index;
+    });
+    if (widest === gaps.length - 1)
+      return [ordered[0], ordered[ordered.length - 1]];
+    return [ordered[widest + 1], ordered[widest] + panel.sites];
   }
 
   function fieldPoints(panel, layout) {
@@ -250,7 +472,7 @@ const LinearDrawing = (() => {
 
   // Same rule as `rail_runs` in `_scene.py`: `[first site, last site, zone]`
   // for each stretch of neighboring sites in the same processing zone, or in
-  // none.
+  // none. On a ring, a stretch across site 0 starts at a negative site.
   function railRuns(panel) {
     const runs = [];
     panel.siteZones.forEach((zone, site) => {
@@ -258,6 +480,14 @@ const LinearDrawing = (() => {
       if (last !== undefined && last[2] === zone) last[1] = site;
       else runs.push([site, site, zone]);
     });
+    if (
+      panel.ring &&
+      runs.length > 1 &&
+      runs[0][2] === runs[runs.length - 1][2]
+    ) {
+      const [first] = runs.pop();
+      runs[0][0] = first - panel.sites;
+    }
     return runs;
   }
 
@@ -326,11 +556,14 @@ const LinearDrawing = (() => {
       gates.map((gate) => gate.zone).filter((zone) => zone !== null),
     );
     const positions = panel.ions.map((track) =>
-      trackPosition(track, shownTime),
+      panelPosition(panel, track, shownTime),
     );
     const points = positions.map(([site, lift]) => layout.point(site, lift));
     const pointOf = new Map(
       panel.ions.map((track, index) => [track.ion, points[index]]),
+    );
+    const siteOf = new Map(
+      panel.ions.map((track, index) => [track.ion, positions[index][0]]),
     );
     panel.ionPoints = points;
 
@@ -339,23 +572,23 @@ const LinearDrawing = (() => {
 
     // The chain: wider and colored in processing zones.
     const runs = railRuns(panel);
+    context.lineJoin = "round";
     for (const inZone of [false, true]) {
       for (const [first, last, zone] of runs) {
         if ((zone !== null) !== inZone) continue;
-        const [x0, y] = layout.point(first - 0.5);
-        const [x1] = layout.point(last + 0.5);
+        const path = railPath(layout, first - 0.5, last + 0.5);
         const width = railWidth(radius, inZone);
         const color = inZone ? zoneColor(view, panel, zone) : colors.segment;
         // Processing zones glow faintly in their own color, and fully while
         // they run a gate.
         if (inZone) {
           const strength = activeZones.has(zone) ? 1 : AMBIENT_GLOW;
-          paintLineGlow(context, x0, y, x1, y, width, color, strength);
+          paintLineGlow(context, path, width, color, strength);
         }
         context.lineCap = "round";
         context.strokeStyle = color;
         context.lineWidth = width;
-        line(context, x0, y, x1, y);
+        polyline(context, path);
       }
     }
     // Each site is a tick across the chain, like the marks of a ruler.
@@ -363,8 +596,10 @@ const LinearDrawing = (() => {
     context.lineWidth = siteTickWidth(radius);
     context.lineCap = "butt";
     for (let site = 0; site < panel.sites; site += 1) {
-      const [x, y] = layout.point(site);
-      line(context, x, y - SITE_TICK * radius, x, y + SITE_TICK * radius);
+      polyline(context, [
+        layout.beside(site, SITE_TICK * radius),
+        layout.beside(site, -SITE_TICK * radius),
+      ]);
     }
     context.lineCap = "round";
     drawSiteLabels(context, view, panel, layout, settings, colors);
@@ -402,22 +637,21 @@ const LinearDrawing = (() => {
       if (gatePoints.length === 0) continue;
       context.fillStyle = gateColor(gate);
       context.strokeStyle = gateColor(gate);
+      // Bands and bars follow the chain between the gate ions.
+      const [first, last] = siteSpan(
+        gate.ions
+          .filter((ion) => siteOf.has(ion))
+          .map((ion) => siteOf.get(ion)),
+        panel,
+      );
       if (gate.global) {
-        const xs = gatePoints.map(([x]) => x);
         context.globalAlpha = 0.14;
-        roundedRectangle(
-          context,
-          Math.min(...xs) - 1.4 * radius,
-          layout.chainY - 1.4 * radius,
-          Math.max(...xs) - Math.min(...xs) + 2.8 * radius,
-          2.8 * radius,
-          1.4 * radius,
-        );
-        context.fill();
+        context.lineWidth = 2.8 * radius;
+        polyline(context, railPath(layout, first, last));
       } else if (gatePoints.length === 2) {
         context.globalAlpha = 0.35;
         context.lineWidth = 0.9 * radius;
-        line(context, ...gatePoints[0], ...gatePoints[1]);
+        polyline(context, railPath(layout, first, last));
       }
       context.globalAlpha = 1;
       for (const [x, y] of gatePoints)
@@ -470,7 +704,7 @@ const LinearDrawing = (() => {
         );
       });
     }
-    drawGateNames(context, gates, pointOf, layout, gateColor);
+    drawGateNames(context, panel, gates, siteOf, layout, gateColor);
     if (settings.ion_colors === "custom")
       drawLegend(context, view, layout, colors);
     drawHeader(context, panel, layout, time, colors);
@@ -513,29 +747,40 @@ const LinearDrawing = (() => {
     context.fillText("field", layout.left + layout.padding, layout.fieldTop);
   }
 
-  // Site numbers below the chain, then processing-zone names below them.
+  // Site numbers on the side opposite the normal, then processing-zone names
+  // beyond them.
   function drawSiteLabels(context, view, panel, layout, settings, colors) {
     const radius = layout.ionRadius;
     const size = siteLabelSize(layout);
-    const numbersY = layout.chainY + (SWAP_LIFT + 1) * radius + 0.4 * size + 2;
+    const numbersDistance = (SWAP_LIFT + 1) * radius + 0.4 * size + 2;
     context.textAlign = "center";
-    context.textBaseline = "top";
+    context.textBaseline = "middle";
     if (settings.show_site_numbers) {
       context.fillStyle = colors.muted_text;
       context.font = `400 ${size}px ${FONT}`;
       const step = siteLabelStep(panel, layout, size);
       for (let site = 0; site < panel.sites; site += step) {
-        context.fillText(String(site), layout.point(site)[0], numbersY);
+        context.fillText(
+          String(site),
+          ...layout.beside(site, -(numbersDistance + 0.5 * size)),
+        );
       }
     }
     if (settings.show_processing_zone_labels) {
-      context.font = `600 ${zoneLabelSize(layout)}px ${FONT}`;
-      const zonesY = numbersY + (settings.show_site_numbers ? 1.5 * size : 0);
+      const zoneSize = zoneLabelSize(layout);
+      context.font = `600 ${zoneSize}px ${FONT}`;
+      const zonesDistance =
+        numbersDistance +
+        (settings.show_site_numbers ? 1.5 * size : 0) +
+        0.5 * zoneSize;
       for (const zone of panel.zones) {
         if (zone.sites.length === 0) continue;
-        const middle = (Math.min(...zone.sites) + Math.max(...zone.sites)) / 2;
+        const [first, last] = siteSpan(zone.sites, panel);
         context.fillStyle = zoneColor(view, panel, zone.id);
-        context.fillText(zone.id, layout.point(middle)[0], zonesY);
+        context.fillText(
+          zone.id,
+          ...layout.beside((first + last) / 2, -zonesDistance),
+        );
       }
     }
   }
@@ -546,7 +791,7 @@ const LinearDrawing = (() => {
   }
 
   // Same rules as `site_label_size` and `site_label_step` in `_matplotlib.py`.
-  // Long chains number every second, third, or later site.
+  // Long or crowded chains number every second, third, or later site.
   function siteLabelSize(layout) {
     return Math.max(9, 0.72 * layout.fontSize);
   }
@@ -556,22 +801,24 @@ const LinearDrawing = (() => {
     return Math.max(1, Math.ceil(widest / layout.spacing));
   }
 
-  // Gate names above the running gates.
-  function drawGateNames(context, gates, pointOf, layout, gateColor) {
+  // Gate names beside the running gates, on the side of the normal.
+  function drawGateNames(context, panel, gates, siteOf, layout, gateColor) {
     const size = Math.max(9, 0.72 * layout.fontSize);
-    const y =
-      layout.chainY - (SWAP_LIFT + 1) * layout.ionRadius - 0.5 * size - 2;
+    const distance = (SWAP_LIFT + 1) * layout.ionRadius + 0.5 * size + 2;
     context.textAlign = "center";
     context.textBaseline = "middle";
     context.font = `600 ${size}px ${FONT}`;
     for (const gate of gates) {
-      const xs = gate.ions
-        .map((ion) => pointOf.get(ion))
-        .filter((point) => point !== undefined)
-        .map(([x]) => x);
-      if (xs.length === 0) continue;
+      const sites = gate.ions
+        .filter((ion) => siteOf.has(ion))
+        .map((ion) => siteOf.get(ion));
+      if (sites.length === 0) continue;
+      const [first, last] = siteSpan(sites, panel);
       context.fillStyle = gateColor(gate);
-      context.fillText(gate.name, (Math.min(...xs) + Math.max(...xs)) / 2, y);
+      context.fillText(
+        gate.name,
+        ...layout.beside((first + last) / 2, distance),
+      );
     }
   }
 
@@ -638,10 +885,10 @@ const LinearDrawing = (() => {
     );
   }
 
-  function line(context, x0, y0, x1, y1) {
+  function polyline(context, points) {
     context.beginPath();
-    context.moveTo(x0, y0);
-    context.lineTo(x1, y1);
+    context.moveTo(...points[0]);
+    for (const point of points.slice(1)) context.lineTo(...point);
     context.stroke();
   }
 
@@ -705,7 +952,7 @@ const LinearDrawing = (() => {
     );
     const moving = [];
     const sites = panel.ions.map((track) => {
-      const [site] = trackPosition(track, time);
+      const [site] = panelPosition(panel, track, time);
       const index = bisectRight(track.starts, time) - 1;
       const movement = index < 0 ? null : track.movements[index];
       const moves = movement !== null && time < movement.end;
@@ -718,7 +965,7 @@ const LinearDrawing = (() => {
           movement.side === 0 ? "shuttle" : "swap",
         ]);
       }
-      const nearest = Math.round(site);
+      const nearest = modulo(Math.round(site), panel.sites);
       const siteZone = panel.siteZones[nearest];
       const gate = gateOfIon.get(track.ion);
       return [
@@ -783,12 +1030,23 @@ const LinearDrawing = (() => {
       if (best !== null && best.gap <= Math.max(8, layout.ionRadius)) {
         return { kind: "ion", panel, ion: panel.ions[best.index].ion };
       }
-      const site = Math.round((x - layout.firstSiteX) / layout.spacing);
+      // The nearest of many points along the chain; each site owns the
+      // chain halfway to its neighbors.
+      let nearest = null;
+      const last = panel.ring ? panel.sites : panel.sites - 0.5;
+      for (let site = -0.5; site <= last; site += 0.05) {
+        const [chainX, chainY] = layout.onChain(site);
+        const gap = Math.hypot(chainX - x, chainY - y);
+        if (nearest === null || gap < nearest.gap) nearest = { site, gap };
+      }
+      const rounded = Math.round(nearest.site);
+      const site = panel.ring
+        ? modulo(rounded, panel.sites)
+        : Math.min(Math.max(rounded, 0), panel.sites - 1);
       const zone = panel.siteZones[site];
       if (
-        zone !== undefined &&
         zone !== null &&
-        Math.abs(y - layout.chainY) <= Math.max(10, 1.2 * layout.ionRadius)
+        nearest.gap <= Math.max(10, 1.2 * layout.ionRadius)
       ) {
         return { kind: "zone", panel, zone };
       }
@@ -899,6 +1157,7 @@ const LinearDrawing = (() => {
     panelLayout,
     pick,
     prepare,
+    railPath,
     resetLayout,
     runningGates,
     settingsText,
