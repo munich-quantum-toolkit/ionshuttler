@@ -146,6 +146,17 @@ class LinearArchitecture:
             _valid_two_qubit_site_pairs(processing_zones),
         )
 
+    def __hash__(self) -> int:
+        """Hash the site layout so that cached lookups can take the architecture as a key.
+
+        Equal architectures have equal site layouts, so the hash agrees with
+        equality, which still compares every field.
+
+        Returns:
+            The hash value.
+        """
+        return hash((self.num_sites, self.topology))
+
     def __reduce__(self) -> tuple[type[LinearArchitecture], tuple[object, ...]]:
         """Rebuild the architecture from its constructor arguments when pickled.
 

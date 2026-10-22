@@ -86,7 +86,7 @@ class _ProcessingZone:
         """Last site in the current site order."""
         return self.sites[-1]
 
-    def distance(self, site: int, architecture: LinearArchitecture) -> int:
+    def distance_from(self, site: int, architecture: LinearArchitecture) -> int:
         """Return the shortest architecture distance from a site to the zone."""
         # The zone sites form one connected run, so the nearest zone site outside the run is one of its ends.
         if (site - self.first_site) % architecture.num_sites < self.capacity:
@@ -449,7 +449,7 @@ class _PermutationCompilation:
             for zone in self.processing_zones:
                 if zone.capacity - ion_count_by_zone[zone] < len(ions):
                     continue
-                distance = sum(zone.distance(self.site_of_ion[ion], self.architecture) for ion in ions)
+                distance = sum(zone.distance_from(self.site_of_ion[ion], self.architecture) for ion in ions)
                 if selected_zone is None or distance < shortest_distance:
                     selected_zone = zone
                     shortest_distance = distance

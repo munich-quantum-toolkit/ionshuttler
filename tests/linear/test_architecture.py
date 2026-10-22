@@ -274,6 +274,16 @@ def test_architecture_round_trips_through_pickle() -> None:
         restored_zones["C"] = (2,)
 
 
+def test_architectures_work_as_dictionary_keys() -> None:
+    """Find an equal architecture by key and keep different zones apart."""
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"A": [0, 1]}, topology="ring")
+    other_zones = LinearArchitecture(num_sites=5, processing_zones={"A": [2, 3]}, topology="ring")
+    by_architecture = {architecture: "first", other_zones: "second"}
+
+    assert by_architecture[LinearArchitecture(num_sites=5, processing_zones={"A": [0, 1]}, topology="ring")] == "first"
+    assert by_architecture[other_zones] == "second"
+
+
 def test_architecture_rejects_unknown_serialized_fields() -> None:
     """Refuse serialized fields that the architecture would otherwise ignore."""
     with pytest.raises(ValueError, match="unknown architecture fields: timing"):
