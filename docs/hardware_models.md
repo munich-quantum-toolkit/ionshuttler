@@ -75,12 +75,14 @@ compilation methods.
   processing zones for gates.</figcaption>
 </figure>
 
-The Linear model resolves a trap segment as an ordered sequence of sites. Each
+The Linear model resolves a trap segment as a one-dimensional sequence of sites.
+The sites form either a chain or a ring. A chain connects each site to the next
+site in numeric order. A ring also connects the last site to the first. Each
 site holds at most one ion, so empty sites provide room to rearrange an ion
-chain. A shuttle moves an ion to an adjacent empty site, while a physical swap
-exchanges adjacent ions.
+chain. A shuttle moves an ion to a connected empty site, while a physical swap
+exchanges ions on connected sites.
 
-A processing zone contains one or more contiguous sites. A physical one-qubit
+A processing zone contains one connected region of sites. A physical one-qubit
 gate requires its ion in a processing zone. A physical multi-qubit gate requires
 all participating ions in the same zone. Operations reserve their ions and
 hardware resources for an architecture-defined number of timesteps.

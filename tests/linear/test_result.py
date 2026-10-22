@@ -12,7 +12,7 @@ from __future__ import annotations
 import itertools
 from dataclasses import replace
 from inspect import isabstract
-from math import pi
+from math import isnan, pi
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -31,7 +31,7 @@ from mqt.ionshuttler.linear import (
     schedule_from_dict,
     schedule_from_json,
 )
-from mqt.ionshuttler.linear.actions import Shuttle
+from mqt.ionshuttler.linear.actions import PhysicalSwap, Shuttle
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
 from mqt.ionshuttler.linear.replay import replay_schedule
 from mqt.ionshuttler.linear.result import GateGroup, LinearDiagnostics, PermutationDiagnostics, SearchDiagnostics
@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from matplotlib.figure import Figure
+    from matplotlib.text import Annotation
 
     from mqt.ionshuttler.linear.state import SearchTransition
 
@@ -346,8 +347,12 @@ def test_machine_state_strips_compiler_progress_and_canonicalizes_availability()
 
 def test_compilation_result_round_trips_only_compiler_diagnostics() -> None:
     """Keep compiler outcome fields outside the nested scheduled program."""
-    program = _program()
-    architecture = LinearArchitecture(num_sites=2, processing_zones={"pz": [0, 1]})
+    architecture = LinearArchitecture(num_sites=4, processing_zones={"pz": [3, 0]}, topology="ring")
+    program = schedule_from_path(
+        [Shuttle(ion=0, src=0, dst=3), AdvanceTime()],
+        create_initial_state(1, architecture, initial_positions=[0]),
+        architecture,
+    )
     result = CompilationResult(
         status=CompilationStatus.SUCCESS,
         schedule=program,
@@ -365,6 +370,7 @@ def test_compilation_result_round_trips_only_compiler_diagnostics() -> None:
 
     assert restored == result
     assert restored.wall_clock_s == result.wall_clock_s
+    assert restored.architecture.topology == "ring"
     serialized = restored.to_dict()
     assert serialized["architecture"] == architecture.to_dict()
     assert serialized["diagnostics"] == {
@@ -485,6 +491,152 @@ def test_result_visualization_builds_linear_trajectory_plot() -> None:
     assert any(text.get_text() == "Rzz" for text in axis.texts)
     assert any(text.get_text() == "Rx [1]" for text in axis.texts)
     assert [patch.get_label() for patch in axis.patches].count("PZ") == 1
+    pyplot.close(figure)
+
+
+def test_ring_visualization_splits_wrapping_zones_and_wrap_shuttles() -> None:
+    """Show both sides of a wrapping zone without a full-array transport line."""
+    pyplot = pytest.importorskip("matplotlib.pyplot")
+    architecture = LinearArchitecture(
+        num_sites=5,
+        processing_zones={"wrap": [4, 0]},
+        topology="ring",
+    )
+    program = schedule_from_path(
+        [Shuttle(ion=0, src=0, dst=4), AdvanceTime()],
+        create_initial_state(1, architecture, initial_positions=[0]),
+        architecture,
+    )
+    result = CompilationResult(
+        status=CompilationStatus.SUCCESS,
+        schedule=program,
+        architecture=architecture,
+        final_state=architecture.replay_schedule(program),
+    )
+
+    figure = cast("Figure", visualize(result))
+
+    axis = figure.axes[0]
+    # Matplotlib versions represent axhspan regions with different patch classes.
+    zone_spans = tuple(
+        coordinate
+        for patch in axis.patches
+        for coordinate in patch.get_extents().transformed(axis.transData.inverted()).intervaly
+    )
+    assert zone_spans == pytest.approx((-0.45, 0.45, 3.55, 4.45))
+    seam_lines = [line for line in axis.lines if line.get_linestyle() == ":"]
+    assert [tuple(cast("Sequence[float]", line.get_ydata())) for line in seam_lines] == [
+        (-0.5, -0.5),
+        (4.5, 4.5),
+    ]
+    assert axis.get_ylim() == (-0.75, 4.75)
+    ion_line = next(line for line in axis.lines if line.get_label() == "ion 0")
+    ion_sites = tuple(cast("Sequence[float]", ion_line.get_ydata()))
+    assert ion_sites[0] == 0
+    assert isnan(ion_sites[1])
+    assert ion_sites[2] == 4
+    wrap_lines = [line for line in axis.lines if line.get_gid() == "ring transport"]
+    assert [tuple(cast("Sequence[float]", line.get_xdata())) for line in wrap_lines] == [(0, 0.25), (0.75, 1)]
+    assert [tuple(cast("Sequence[float]", line.get_ydata())) for line in wrap_lines] == [
+        (0, -0.5),
+        (4.5, 4),
+    ]
+    assert len(axis.collections) == 0
+    pyplot.close(figure)
+
+
+def test_ring_visualization_draws_wrap_shuttles_only_in_overlapping_rows() -> None:
+    """Draw the seam segments of a wrap shuttle only in the plot rows that contain it."""
+    pyplot = pytest.importorskip("matplotlib.pyplot")
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2]}, topology="ring")
+    program = schedule_from_path(
+        [Shuttle(ion=0, src=0, dst=4), *[AdvanceTime()] * 30],
+        create_initial_state(1, architecture, initial_positions=[0]),
+        architecture,
+    )
+    result = CompilationResult(
+        status=CompilationStatus.SUCCESS,
+        schedule=program,
+        architecture=architecture,
+        final_state=architecture.replay_schedule(program),
+    )
+
+    figure = cast("Figure", visualize(result))
+
+    assert len(figure.axes) == 2
+    assert [sum(line.get_gid() == "ring transport" for line in axis.lines) for axis in figure.axes] == [2, 0]
+    pyplot.close(figure)
+
+
+def test_ring_visualization_breaks_both_wrap_swap_trajectories() -> None:
+    """Break both ion trajectories when a physical swap crosses the ring seam."""
+    pyplot = pytest.importorskip("matplotlib.pyplot")
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2]}, topology="ring")
+    program = schedule_from_path(
+        [PhysicalSwap(ion_a=0, ion_b=1, pos_a=0, pos_b=4)],
+        create_initial_state(2, architecture, initial_positions=[0, 4]),
+        architecture,
+    )
+    result = CompilationResult(
+        status=CompilationStatus.SUCCESS,
+        schedule=program,
+        architecture=architecture,
+        final_state=architecture.replay_schedule(program),
+    )
+
+    figure = cast("Figure", visualize(result))
+
+    axis = figure.axes[0]
+    ion_lines = {line.get_label(): tuple(cast("Sequence[float]", line.get_ydata())) for line in axis.lines}
+    assert isnan(ion_lines["ion 0"][1])
+    assert isnan(ion_lines["ion 1"][1])
+    swap_end = architecture.transport_timing.swap
+    wrap_lines = [line for line in axis.lines if line.get_gid() == "ring transport"]
+    assert [tuple(cast("Sequence[float]", line.get_xdata())) for line in wrap_lines] == [
+        (0, 0.25),
+        (swap_end - 0.25, swap_end),
+        (0, 0.25),
+        (swap_end - 0.25, swap_end),
+    ]
+    assert [tuple(cast("Sequence[float]", line.get_ydata())) for line in wrap_lines] == [
+        (0, -0.5),
+        (4.5, 4),
+        (4, 4.5),
+        (-0.5, 0),
+    ]
+    assert len(axis.collections) == 0
+    pyplot.close(figure)
+
+
+def test_ring_visualization_connects_wrap_gates_through_the_seam() -> None:
+    """Draw a two-ion gate in a wrapping zone through the seam, not across the array."""
+    pyplot = pytest.importorskip("matplotlib.pyplot")
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"wrap": [3, 4, 0]}, topology="ring")
+    program = schedule_from_path(
+        [Rzz(ion_a=0, ion_b=1, theta=0.2), AdvanceTime(), AdvanceTime(), Rzz(ion_a=1, ion_b=2, theta=0.2)],
+        create_initial_state(3, architecture, initial_positions=[0, 4, 3]),
+        architecture,
+    )
+    result = CompilationResult(
+        status=CompilationStatus.SUCCESS,
+        schedule=program,
+        architecture=architecture,
+        final_state=architecture.replay_schedule(program),
+    )
+
+    figure = cast("Figure", visualize(result))
+
+    axis = figure.axes[0]
+    wrap_gate, inner_gate = program.scheduled_actions
+    seam_connectors = [line for line in axis.lines if line.get_gid() == "ring gate connector"]
+    assert [tuple(cast("Sequence[float]", line.get_xdata())) for line in seam_connectors] == [
+        (wrap_gate.start_time, wrap_gate.start_time),
+    ] * 2
+    assert [tuple(cast("Sequence[float]", line.get_ydata())) for line in seam_connectors] == [(0, -0.5), (4, 4.5)]
+    connectors = [line for line in axis.lines if line.get_color() == "0.2" and line.get_gid() is None]
+    assert [tuple(cast("Sequence[float]", line.get_ydata())) for line in connectors] == [(3, 4)]
+    labels = {cast("Annotation", text).xy: text.get_text() for text in axis.texts}
+    assert labels == {(wrap_gate.start_time, 0): "Rzz", (inner_gate.start_time, 3.5): "Rzz"}
     pyplot.close(figure)
 
 

@@ -320,7 +320,7 @@ def available_dd_schemes() -> dict[str, DDScheme]:
     return dict(_DD_SCHEME_REGISTRY)
 
 
-def get_dd_scheme(name: str) -> DDScheme:
+def dd_scheme(name: str) -> DDScheme:
     """Resolve a registered scheme by name.
 
     Returns:
@@ -354,7 +354,7 @@ __all__ = [
     "DDScheme",
     "GateSpec",
     "available_dd_schemes",
-    "get_dd_scheme",
+    "dd_scheme",
     "make_arbitrary_x_scheme",
     "make_cdd_scheme",
     "make_cpmg_scheme",

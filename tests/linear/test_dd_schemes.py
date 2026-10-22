@@ -24,7 +24,7 @@ from mqt.ionshuttler.linear.dd.schemes import (
     DDScheme,
     GateSpec,
     available_dd_schemes,
-    get_dd_scheme,
+    dd_scheme,
     make_arbitrary_x_scheme,
     make_cdd_scheme,
     make_cpmg_scheme,
@@ -81,7 +81,7 @@ def test_clamped_pulses_round_and_clamp_to_window_deduplicating() -> None:
 def test_registered_sequences_resolve_on_matching_windows(scheme: DDScheme) -> None:
     """Resolve every built-in sequence at its natural discrete length."""
     assert scheme.resolved_gate_timesteps((0, scheme.num_pulses)) == tuple(range(1, scheme.num_pulses + 1))
-    assert get_dd_scheme(scheme.name) is scheme
+    assert dd_scheme(scheme.name) is scheme
     assert available_dd_schemes()[scheme.name] is scheme
 
 
@@ -110,9 +110,9 @@ def test_scheme_validation_and_registry_copy() -> None:
         DDScheme("empty", (), ())
     registry = available_dd_schemes()
     registry.clear()
-    assert get_dd_scheme("hahn") is HAHN_ECHO
+    assert dd_scheme("hahn") is HAHN_ECHO
     with pytest.raises(ValueError, match="unknown DD scheme"):
-        get_dd_scheme("missing")
+        dd_scheme("missing")
 
 
 def _toggling_frame_residual(scheme: DDScheme, length: int) -> int:

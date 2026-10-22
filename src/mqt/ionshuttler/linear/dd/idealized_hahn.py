@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, ClassVar
 from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.linear.dd.result import DDPassResult, LocalDDSequence
 from mqt.ionshuttler.linear.dd.schedule_transform import local_gate_for_spec, rebuild_schedule
-from mqt.ionshuttler.linear.dd.schemes import HAHN_ECHO, MIDPOINT_ONLY_HAHN, DDScheme, get_dd_scheme
+from mqt.ionshuttler.linear.dd.schemes import HAHN_ECHO, MIDPOINT_ONLY_HAHN, DDScheme, dd_scheme
 from mqt.ionshuttler.linear.dd.windows import find_idle_windows
 from mqt.ionshuttler.linear.timeline import CompiledTimeline, build_timeline
 
@@ -176,7 +176,7 @@ def apply_idealized_hahn(
 
 
 def _resolve_scheme(scheme: str | DDScheme) -> DDScheme:
-    return scheme if isinstance(scheme, DDScheme) else get_dd_scheme(scheme)
+    return scheme if isinstance(scheme, DDScheme) else dd_scheme(scheme)
 
 
 def _effective_scheme(config: IdealizedHahnConfig) -> str | DDScheme:

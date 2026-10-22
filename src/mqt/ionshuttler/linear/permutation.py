@@ -13,16 +13,17 @@ gate. The strategy then repeats four steps until every gate has run:
 1. Pick a group of ready gates that one static ion placement can run.
 2. Build one complete target placement for the group. A placement records the
    site of every ion and therefore includes the ion order and empty sites.
-3. Route from the current placement to the target with the fewest adjacent
-   exchanges. Ion-ion exchanges are swaps; ion-empty-site exchanges are
-   shuttles.
+3. Route from the current placement to the target with adjacent exchanges.
+   Ion-ion exchanges are swaps; ion-empty-site exchanges are shuttles.
 4. Schedule the transports and gates at their earliest legal start times.
 
 Every action starts at its earliest legal time, so moves and gates of
 neighboring groups can overlap. For a fixed architecture and lookahead, the
 work depends on the number of groups and the transport actions that the
-compiler emits. The fixed-placement route is minimal, but the target placements
-and final makespan need not be optimal.
+compiler emits. A chain route is minimal for its fixed placement. A ring route
+is the lowest-cost route found by cutting the ring at each valid edge and
+treating the remaining site order as a chain. Target placements and the final
+makespan need not be optimal.
 """
 
 from __future__ import annotations
@@ -65,24 +66,32 @@ class _GateKind(Enum):
 
 @dataclass(frozen=True)
 class _ProcessingZone:
-    """Describe one processing zone as a range of sites."""
+    """Describe one processing zone by its normalized sites."""
 
     name: str
-    first_site: int
-    last_site: int
+    sites: tuple[int, ...]
 
     @property
     def capacity(self) -> int:
         """Number of ions that the zone can hold."""
-        return self.last_site - self.first_site + 1
+        return len(self.sites)
 
-    def distance(self, site: int) -> int:
-        """Return the number of sites between a site and the zone."""
-        if site < self.first_site:
-            return self.first_site - site
-        if site > self.last_site:
-            return site - self.last_site
-        return 0
+    @property
+    def first_site(self) -> int:
+        """First site in the current site order."""
+        return self.sites[0]
+
+    @property
+    def last_site(self) -> int:
+        """Last site in the current site order."""
+        return self.sites[-1]
+
+    def distance_from(self, site: int, architecture: LinearArchitecture) -> int:
+        """Return the shortest architecture distance from a site to the zone."""
+        # The zone sites form one connected run, so the nearest zone site outside the run is one of its ends.
+        if (site - self.first_site) % architecture.num_sites < self.capacity:
+            return 0
+        return min(architecture.distance(site, self.first_site), architecture.distance(site, self.last_site))
 
 
 class _UnavailableTransportError(Exception):
@@ -116,43 +125,52 @@ class _ScheduleEntry:
 def route_to_placement(
     source_site_of_ion: Sequence[int],
     target_site_of_ion: Sequence[int],
-    num_sites: int,
+    architecture: LinearArchitecture,
 ) -> list[TransportAction]:
     """Return transports that move every ion from its source to its target site.
 
-    The route uses the fewest adjacent exchanges. An exchange of two ions is a
-    physical swap, and an exchange of an ion with an empty site is a shuttle.
-    Empty sites keep their left-to-right order, so two empty sites never
-    exchange. The number of physical swaps is therefore the number of ion
-    pairs whose order differs between source and target.
+    On a chain, the route uses the fewest adjacent exchanges. On a ring, the
+    compiler cuts the ring at each edge that does not split a processing zone,
+    treats the remaining site order as a chain, and selects the lowest-cost
+    resulting route. An exchange of two ions is a physical swap, and an
+    exchange of an ion with an empty site is a shuttle.
 
     The actions are valid in the given order, one after the other.
 
     Args:
         source_site_of_ion: Current site indexed by ion.
         target_site_of_ion: Target site indexed by ion.
-        num_sites: Number of sites on the line.
+        architecture: Hardware layout that defines sites and topology.
 
     Returns:
         The transports in a valid order.
 
     Raises:
-        ValueError: If a placement repeats a site or uses a site outside the line.
+        ValueError: If a placement repeats a site or uses an invalid site.
     """
     if len(source_site_of_ion) != len(target_site_of_ion):
         msg = "source and target placements must place the same ions"
         raise ValueError(msg)
+    num_sites = architecture.num_sites
     for site_of_ion in (source_site_of_ion, target_site_of_ion):
         if len(set(site_of_ion)) != len(site_of_ion) or any(not 0 <= site < num_sites for site in site_of_ion):
-            msg = "placements must use distinct sites on the line"
+            msg = "placements must use distinct sites within the architecture"
             raise ValueError(msg)
-    ion_at_site = [-1] * num_sites
-    for ion, site in enumerate(source_site_of_ion):
-        ion_at_site[site] = ion
-    return _route_by_adjacent_exchanges(ion_at_site, target_site_of_ion)
+    if architecture.topology == "chain":
+        return _route_in_site_order(_ion_at_site(source_site_of_ion, num_sites), target_site_of_ion)
+
+    candidates: list[tuple[tuple[int, int, int, int], list[TransportAction]]] = []
+    for first_site in _first_sites_after_ring_cuts(architecture, _processing_zones(architecture)):
+        # Shift sites so the first site after the cut becomes position zero.
+        source_positions = [(site - first_site) % num_sites for site in source_site_of_ion]
+        target_positions = [(site - first_site) % num_sites for site in target_site_of_ion]
+        position_actions = _route_in_site_order(_ion_at_site(source_positions, num_sites), target_positions)
+        actions = _actions_at_physical_sites(position_actions, first_site, num_sites)
+        candidates.append((_route_score(actions, architecture, first_site), actions))
+    return min(candidates, key=operator.itemgetter(0))[1]
 
 
-def _route_by_adjacent_exchanges(
+def _route_in_site_order(
     ion_at_site: list[int],
     target_site_of_ion: Sequence[int],
 ) -> list[TransportAction]:
@@ -200,6 +218,107 @@ def _route_by_adjacent_exchanges(
     return actions
 
 
+def _ion_at_site(site_of_ion: Sequence[int], num_sites: int) -> list[int]:
+    ion_at_site = [-1] * num_sites
+    for ion, site in enumerate(site_of_ion):
+        ion_at_site[site] = ion
+    return ion_at_site
+
+
+def _processing_zones(architecture: LinearArchitecture) -> tuple[_ProcessingZone, ...]:
+    return tuple(
+        sorted(
+            (_ProcessingZone(name, tuple(sites)) for name, sites in (architecture.processing_zones or {}).items()),
+            key=operator.attrgetter("first_site"),
+        )
+    )
+
+
+def _first_sites_after_ring_cuts(
+    architecture: LinearArchitecture,
+    processing_zones: Sequence[_ProcessingZone],
+) -> tuple[int, ...]:
+    """Return the first physical site after each valid ring cut."""
+    forbidden_first_sites: set[int] = set()
+    for zone in processing_zones:
+        if zone.capacity < architecture.num_sites:
+            # Starting inside a proper zone would place the cut across one of its internal edges.
+            forbidden_first_sites.update(zone.sites[1:])
+    return tuple(site for site in range(architecture.num_sites) if site not in forbidden_first_sites)
+
+
+def _shifted_zones_by_first_site(
+    architecture: LinearArchitecture,
+    processing_zones: Sequence[_ProcessingZone],
+) -> dict[int, dict[_ProcessingZone, _ProcessingZone]]:
+    """Return each processing zone in the site order of each valid ring cut.
+
+    Returns:
+        For the first physical site after each valid cut, the zones with sites
+        shifted so that this site becomes position zero.
+    """
+    num_sites = architecture.num_sites
+    return {
+        first_site: {
+            zone: _ProcessingZone(zone.name, tuple((site - first_site) % num_sites for site in zone.sites))
+            for zone in processing_zones
+        }
+        for first_site in _first_sites_after_ring_cuts(architecture, processing_zones)
+    }
+
+
+def _actions_at_physical_sites(
+    actions: Sequence[TransportAction],
+    first_site: int,
+    num_sites: int,
+) -> list[TransportAction]:
+    """Map each transport endpoint from the temporary linear order defined by a ring cut back to its physical site.
+
+    Returns:
+        The transports with physical endpoints.
+    """
+    physical_actions: list[TransportAction] = []
+    for action in actions:
+        if isinstance(action, Shuttle):
+            physical_actions.append(
+                Shuttle(
+                    ion=action.ion,
+                    src=(first_site + action.src) % num_sites,
+                    dst=(first_site + action.dst) % num_sites,
+                )
+            )
+        else:
+            assert isinstance(action, PhysicalSwap)
+            physical_actions.append(
+                PhysicalSwap(
+                    ion_a=action.ion_a,
+                    ion_b=action.ion_b,
+                    pos_a=(first_site + action.pos_a) % num_sites,
+                    pos_b=(first_site + action.pos_b) % num_sites,
+                )
+            )
+    return physical_actions
+
+
+def _route_score(
+    actions: Sequence[TransportAction],
+    architecture: LinearArchitecture,
+    first_site: int,
+) -> tuple[int, int, int, int]:
+    swap_count = sum(isinstance(action, PhysicalSwap) for action in actions)
+    transport_work = sum(architecture.action_duration(action) for action in actions)
+    return transport_work, len(actions), swap_count, first_site
+
+
+def _route_uses_available_actions(
+    actions: Sequence[TransportAction],
+    *,
+    swaps_enabled: bool,
+    shuttles_enabled: bool,
+) -> bool:
+    return all((swaps_enabled if isinstance(action, PhysicalSwap) else shuttles_enabled) for action in actions)
+
+
 @dataclass
 class _PermutationCompilation:
     """Hold the mutable progress of one compilation."""
@@ -207,6 +326,8 @@ class _PermutationCompilation:
     architecture: LinearArchitecture
     circuit: Circuit
     processing_zones: tuple[_ProcessingZone, ...]
+    # Empty on a chain. See _shifted_zones_by_first_site.
+    shifted_zones_by_first_site: dict[int, dict[_ProcessingZone, _ProcessingZone]]
     gate_kind: list[_GateKind]
     gate_duration: list[int]
     preferred_zone: list[_ProcessingZone | None]
@@ -328,7 +449,7 @@ class _PermutationCompilation:
             for zone in self.processing_zones:
                 if zone.capacity - ion_count_by_zone[zone] < len(ions):
                     continue
-                distance = sum(zone.distance(self.site_of_ion[ion]) for ion in ions)
+                distance = sum(zone.distance_from(self.site_of_ion[ion], self.architecture) for ion in ions)
                 if selected_zone is None or distance < shortest_distance:
                     selected_zone = zone
                     shortest_distance = distance
@@ -351,11 +472,23 @@ class _PermutationCompilation:
         Returns:
             The target site of each ion, indexed by ion.
         """
-        site_of_ion = self.site_of_ion
-        if all(zone.distance(site_of_ion[ion]) == 0 for ion, zone in zone_by_ion.items()):
-            return site_of_ion
+        return self._target_placement_in_site_order(
+            self.site_of_ion,
+            self.ion_at_site,
+            zone_by_ion,
+        )
 
-        ion_order = [ion for ion in self.ion_at_site if ion >= 0]
+    def _target_placement_in_site_order(
+        self,
+        site_of_ion: Sequence[int],
+        ion_at_site: Sequence[int],
+        zone_by_ion: Mapping[int, _ProcessingZone],
+    ) -> list[int]:
+        """Return a complete target placement in one chain-like site order."""
+        if all(site_of_ion[ion] in zone.sites for ion, zone in zone_by_ion.items()):
+            return list(site_of_ion)
+
+        ion_order = [ion for ion in ion_at_site if ion >= 0]
         unassigned_ions: list[int] = []
         members_by_zone: dict[_ProcessingZone, list[_ZoneMember]] = {}
         for ion in ion_order:
@@ -400,12 +533,14 @@ class _PermutationCompilation:
             active_zones,
             members_by_zone,
             unassigned_segments,
+            site_of_ion,
         )
         self._fit_unassigned_segments(
             unassigned_segments,
             active_zones,
             block_starts,
             members_by_zone,
+            self.architecture.num_sites,
         )
 
         target_site_of_ion = [0] * len(site_of_ion)
@@ -437,6 +572,7 @@ class _PermutationCompilation:
         active_zones: list[_ProcessingZone],
         members_by_zone: dict[_ProcessingZone, list[_ZoneMember]],
         unassigned_segments: list[list[int]],
+        site_of_ion: Sequence[int],
     ) -> list[int]:
         """Return the first site of each block, shifted inside its zone to make room."""
         block_starts: list[int] = []
@@ -445,7 +581,7 @@ class _PermutationCompilation:
         for zone in active_zones:
             members = members_by_zone[zone]
             block_size = len(members)
-            mean_site = sum(self.site_of_ion[member.ion] for member in members) / block_size
+            mean_site = sum(site_of_ion[member.ion] for member in members) / block_size
             latest_start = zone.last_site - block_size + 1
             block_starts.append(min(max(round(mean_site - (block_size - 1) / 2), zone.first_site), latest_start))
 
@@ -471,12 +607,13 @@ class _PermutationCompilation:
             next_start = block_starts[block_index]
         return block_starts
 
+    @staticmethod
     def _fit_unassigned_segments(
-        self,
         unassigned_segments: list[list[int]],
         active_zones: list[_ProcessingZone],
         block_starts: list[int],
         members_by_zone: dict[_ProcessingZone, list[_ZoneMember]],
+        num_sites: int,
     ) -> None:
         """Move unassigned ions across blocks until every segment fits."""
         segment_capacities: list[int] = []
@@ -484,7 +621,7 @@ class _PermutationCompilation:
         for block_index, zone in enumerate(active_zones):
             segment_capacities.append(block_starts[block_index] - previous_end - 1)
             previous_end = block_starts[block_index] + len(members_by_zone[zone]) - 1
-        segment_capacities.append(self.architecture.num_sites - previous_end - 1)
+        segment_capacities.append(num_sites - previous_end - 1)
 
         # First push left-side overflow right. Then push any remaining
         # right-side overflow left. Both passes preserve global ion order.
@@ -501,7 +638,73 @@ class _PermutationCompilation:
                 unassigned_segments[segment_index - 1].extend(unassigned_segments[segment_index][:overflow])
                 del unassigned_segments[segment_index][:overflow]
 
-    def schedule_move_to(self, target_site_of_ion: list[int]) -> tuple[int, int]:
+    def plan_move_to(
+        self,
+        zone_by_ion: Mapping[int, _ProcessingZone],
+        deadline: float | None,
+    ) -> tuple[list[int], list[TransportAction]] | None:
+        """Choose a target placement and route.
+
+        Returns:
+            The target and its route, or ``None`` if the deadline expires.
+
+        Raises:
+            _UnavailableTransportError: If no route uses the enabled transports.
+        """
+        if self.architecture.topology == "chain":
+            target_site_of_ion = self.target_placement(dict(zone_by_ion))
+            actions = _route_in_site_order(list(self.ion_at_site), target_site_of_ion)
+            if not _route_uses_available_actions(
+                actions,
+                swaps_enabled=self.swaps_enabled,
+                shuttles_enabled=self.shuttles_enabled,
+            ):
+                raise _UnavailableTransportError
+            return target_site_of_ion, actions
+
+        # Every cut keeps the current placement when all group ions already sit in their zones.
+        if all(self.site_of_ion[ion] in zone.sites for ion, zone in zone_by_ion.items()):
+            return list(self.site_of_ion), []
+
+        best: tuple[tuple[int, int, int, int], int, list[int], list[TransportAction]] | None = None
+        num_sites = self.architecture.num_sites
+        for first_site, shifted_zones in self.shifted_zones_by_first_site.items():
+            if deadline is not None and perf_counter() >= deadline:
+                return None
+            # Shift sites so the first site after the cut becomes position zero.
+            position_of_ion = [(site - first_site) % num_sites for site in self.site_of_ion]
+            ion_at_position = _ion_at_site(position_of_ion, num_sites)
+            shifted_zone_by_ion = {ion: shifted_zones[zone] for ion, zone in zone_by_ion.items()}
+            target_position_of_ion = self._target_placement_in_site_order(
+                position_of_ion,
+                ion_at_position,
+                shifted_zone_by_ion,
+            )
+            position_actions = _route_in_site_order(ion_at_position, target_position_of_ion)
+            # Availability and score depend only on action types, so only the selected route needs physical sites.
+            if not _route_uses_available_actions(
+                position_actions,
+                swaps_enabled=self.swaps_enabled,
+                shuttles_enabled=self.shuttles_enabled,
+            ):
+                continue
+            # Compare work before action counts so configured transport timing decides the cut.
+            score = _route_score(position_actions, self.architecture, first_site)
+            if best is None or score < best[0]:
+                best = score, first_site, target_position_of_ion, position_actions
+        if best is None:
+            raise _UnavailableTransportError
+        _, first_site, target_position_of_ion, position_actions = best
+        return (
+            [(first_site + position) % num_sites for position in target_position_of_ion],
+            _actions_at_physical_sites(position_actions, first_site, num_sites),
+        )
+
+    def schedule_move_to(
+        self,
+        target_site_of_ion: list[int],
+        actions: Sequence[TransportAction],
+    ) -> tuple[int, int]:
         """Schedule the route to a target placement at the earliest legal times.
 
         Returns:
@@ -512,8 +715,6 @@ class _PermutationCompilation:
         """
         if target_site_of_ion == self.site_of_ion:
             return 0, 0
-        ion_at_site = list(self.ion_at_site)
-        actions = _route_by_adjacent_exchanges(ion_at_site, target_site_of_ion)
         swap_count = sum(isinstance(action, PhysicalSwap) for action in actions)
         shuttle_count = len(actions) - swap_count
         if (swap_count and not self.swaps_enabled) or (shuttle_count and not self.shuttles_enabled):
@@ -550,7 +751,7 @@ class _PermutationCompilation:
                 )
             )
         self.site_of_ion = target_site_of_ion
-        self.ion_at_site = ion_at_site
+        self.ion_at_site = _ion_at_site(target_site_of_ion, self.architecture.num_sites)
         return swap_count, shuttle_count
 
     def schedule_gates(self, gate_ids: list[int]) -> None:
@@ -623,7 +824,7 @@ class _PermutationCompilation:
 
     def _processing_zone_at(self, site: int) -> _ProcessingZone:
         # The target placement puts every gate ion in a processing zone.
-        return next(zone for zone in self.processing_zones if zone.first_site <= site <= zone.last_site)
+        return next(zone for zone in self.processing_zones if site in zone.sites)
 
 
 def compile_with_permutations(
@@ -686,7 +887,10 @@ def _run_compilation(
         if not gate_ids:
             return CompilationStatus.FAILED
         try:
-            swap_count, shuttle_count = compilation.schedule_move_to(compilation.target_placement(zone_by_ion))
+            move_plan = compilation.plan_move_to(zone_by_ion, deadline)
+            if move_plan is None:
+                return CompilationStatus.TIMEOUT
+            swap_count, shuttle_count = compilation.schedule_move_to(*move_plan)
         except _UnavailableTransportError:
             return CompilationStatus.FAILED
         compilation.schedule_gates(gate_ids)
@@ -715,15 +919,7 @@ def _initialize_compilation(
     Raises:
         TypeError: If the circuit contains a gate type that the strategy does not support.
     """
-    processing_zones = tuple(
-        sorted(
-            (
-                _ProcessingZone(name, sites[0], sites[-1])
-                for name, sites in (architecture.processing_zones or {}).items()
-            ),
-            key=operator.attrgetter("first_site"),
-        )
-    )
+    processing_zones = _processing_zones(architecture)
     zone_by_name = {zone.name: zone for zone in processing_zones}
     gate_kind: list[_GateKind] = []
     for gate in circuit.gates:
@@ -749,6 +945,9 @@ def _initialize_compilation(
         architecture=architecture,
         circuit=circuit,
         processing_zones=processing_zones,
+        shifted_zones_by_first_site=(
+            _shifted_zones_by_first_site(architecture, processing_zones) if architecture.topology == "ring" else {}
+        ),
         gate_kind=gate_kind,
         gate_duration=[architecture.action_duration(gate) for gate in circuit.gates],
         preferred_zone=[zone_by_name.get(preferred_zone_by_gate.get(gate_id, "")) for gate_id in circuit.gate_ids],

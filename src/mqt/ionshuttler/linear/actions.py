@@ -160,11 +160,6 @@ def decode_linear_action(data: object) -> _Action:
     return decode_action(data, LINEAR_ACTION_TYPES)
 
 
-def is_adjacent(pos_a: int, pos_b: int) -> bool:
-    """Return whether two Linear site indices are adjacent."""
-    return abs(pos_a - pos_b) == 1
-
-
 def _require_integer_at_least(value: object, name: str, *, minimum: int) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         msg = f"{name} must be an integer >= {minimum}"
@@ -187,5 +182,4 @@ __all__ = [
     "TransportAction",
     "TransportTiming",
     "decode_linear_action",
-    "is_adjacent",
 ]

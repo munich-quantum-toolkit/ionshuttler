@@ -40,8 +40,48 @@ def test_processing_zones_are_validated_and_normalized() -> None:
 
     assert architecture.processing_zones == {"pz_1": (2, 3, 4), "pz_2": (8, 9)}
     assert architecture.valid_two_qubit_site_pairs == ((2, 3), (2, 4), (3, 4), (8, 9))
-    assert architecture.get_processing_zone(3) == "pz_1"
-    assert architecture.get_processing_zone(7) is None
+    assert architecture.processing_zone_at(3) == "pz_1"
+    assert architecture.processing_zone_at(7) is None
+
+
+def test_ring_processing_zones_follow_one_connected_cyclic_run() -> None:
+    """Normalize a wrapping zone and reject a disconnected ring zone."""
+    architecture = LinearArchitecture(
+        num_sites=8,
+        processing_zones={"wrap": [1, 7, 0], "middle": [3, 4]},
+        topology="ring",
+    )
+    full_ring = LinearArchitecture(
+        num_sites=4,
+        processing_zones={"all": [3, 1, 0, 2]},
+        topology="ring",
+    )
+
+    assert architecture.processing_zones == {"wrap": (7, 0, 1), "middle": (3, 4)}
+    assert architecture.valid_two_qubit_site_pairs[:3] == ((7, 0), (7, 1), (0, 1))
+    assert full_ring.processing_zones == {"all": (0, 1, 2, 3)}
+    with pytest.raises(ValueError, match="contiguous"):
+        LinearArchitecture(num_sites=8, processing_zones={"split": [0, 2]}, topology="ring")
+
+
+def test_architecture_owns_chain_and_ring_site_geometry() -> None:
+    """Report stable neighbors, adjacency, and shortest site distance."""
+    chain = LinearArchitecture(num_sites=5)
+    ring = LinearArchitecture(num_sites=5, topology="ring")
+
+    assert chain.neighbors(0) == (1,)
+    assert chain.neighbors(2) == (1, 3)
+    assert not chain.are_adjacent(0, 4)
+    assert chain.distance(0, 4) == 4
+    assert ring.neighbors(0) == (4, 1)
+    assert ring.neighbors(4) == (3, 0)
+    assert ring.are_adjacent(0, 4)
+    assert ring.distance(0, 4) == 1
+    assert ring.distance(1, 4) == 2
+    with pytest.raises(ValueError, match=r"site must be within \[0, 4\]"):
+        ring.neighbors(5)
+    with pytest.raises(ValueError, match=r"site must be within \[0, 4\]"):
+        ring.are_adjacent(0, 5)
 
 
 @pytest.mark.parametrize(
@@ -75,7 +115,7 @@ def test_processing_zones_cannot_change_after_construction() -> None:
         stored_zones["other"] = (3,)
     assert architecture.processing_zones == {"pz": (0, 1)}
     assert architecture.valid_two_qubit_site_pairs == ((0, 1),)
-    assert architecture.get_processing_zone(3) is None
+    assert architecture.processing_zone_at(3) is None
 
 
 @pytest.mark.parametrize(
@@ -89,6 +129,9 @@ def test_processing_zones_cannot_change_after_construction() -> None:
         ({"num_sites": 2, "processing_zones": {"pz": [True]}}, TypeError, "sequence of integer sites"),
         ({"num_sites": 2, "processing_zones": {"pz": 1}}, TypeError, "sequence of integer sites"),
         ({"num_sites": 2, "field_profile": {"0": 0.5}}, TypeError, "field_profile must be FieldProfile"),
+        ({"num_sites": 3, "topology": 1}, TypeError, "topology must be a string"),
+        ({"num_sites": 3, "topology": "grid"}, ValueError, "topology must be 'chain' or 'ring'"),
+        ({"num_sites": 2, "topology": "ring"}, ValueError, "ring topology requires at least three sites"),
     ],
 )
 def test_constructor_rejects_values_that_cannot_round_trip(
@@ -174,6 +217,44 @@ def test_architecture_round_trips_through_json() -> None:
     assert architecture.to_dict()["transport_timing"] == {"shuttle": 2, "swap": 4}
 
 
+def test_ring_architecture_round_trips_through_json_and_pickle() -> None:
+    """Preserve ring topology and cyclic zone order in both persistence forms."""
+    architecture = LinearArchitecture(
+        num_sites=6,
+        processing_zones={"wrap": [5, 0, 1]},
+        topology="ring",
+    )
+
+    restored_json = LinearArchitecture.from_json(architecture.to_json())
+    restored_pickle = pickle.loads(  # ruff: ignore[suspicious-pickle-usage] - Test-created data.
+        pickle.dumps(architecture),
+    )
+
+    assert architecture.to_dict()["topology"] == "ring"
+    assert restored_json == architecture
+    assert restored_pickle == architecture
+    assert restored_json.processing_zones == {"wrap": (5, 0, 1)}
+
+
+def test_default_architecture_serializes_the_chain_topology() -> None:
+    """Write the default chain topology explicitly in the serialized form."""
+    assert LinearArchitecture(num_sites=3).to_dict() == {
+        "num_sites": 3,
+        "topology": "chain",
+        "processing_zones": {"all_sites": [0, 1, 2]},
+        "gate_timing": {
+            "rx": 1,
+            "rxx": 2,
+            "ry": 1,
+            "ryy": 2,
+            "rz": 0,
+            "rzz": 2,
+            "virtual_single_qubit_gates": ["rz"],
+        },
+        "transport_timing": {"shuttle": 1, "swap": 3},
+    }
+
+
 def test_architecture_round_trips_through_pickle() -> None:
     """Restore an equal architecture whose processing zones stay read-only."""
     architecture = LinearArchitecture(
@@ -191,6 +272,16 @@ def test_architecture_round_trips_through_pickle() -> None:
     assert restored == architecture
     with pytest.raises(TypeError):
         restored_zones["C"] = (2,)
+
+
+def test_architectures_work_as_dictionary_keys() -> None:
+    """Find an equal architecture by key and keep different zones apart."""
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"A": [0, 1]}, topology="ring")
+    other_zones = LinearArchitecture(num_sites=5, processing_zones={"A": [2, 3]}, topology="ring")
+    by_architecture = {architecture: "first", other_zones: "second"}
+
+    assert by_architecture[LinearArchitecture(num_sites=5, processing_zones={"A": [0, 1]}, topology="ring")] == "first"
+    assert by_architecture[other_zones] == "second"
 
 
 def test_architecture_rejects_unknown_serialized_fields() -> None:

@@ -64,8 +64,18 @@ def compute_gate_zone_assignment(
     if not partitioned_gate_ids:
         return {}
     zone_names = tuple(processing_zones)
-    zone_midpoints = [(sites[0] + sites[-1]) / 2 for sites in processing_zones.values()]
-    zone_distances = [[abs(source - target) for target in zone_midpoints] for source in zone_midpoints]
+    if architecture.topology == "ring":
+        # Follow the normalized cyclic run so a wrapping zone keeps its physical center.
+        zone_midpoints = [
+            (sites[0] + (len(sites) - 1) / 2) % architecture.num_sites for sites in processing_zones.values()
+        ]
+        zone_distances = [
+            [_ring_distance(source, target, architecture.num_sites) for target in zone_midpoints]
+            for source in zone_midpoints
+        ]
+    else:
+        zone_midpoints = [(sites[0] + sites[-1]) / 2 for sites in processing_zones.values()]
+        zone_distances = [[abs(source - target) for target in zone_midpoints] for source in zone_midpoints]
     partition = compute_fine_grained_gate_partition(
         partitioned_gate_ids,
         gate_info_by_id,
@@ -93,6 +103,11 @@ def _physical_gate_qubits(
     if isinstance(gate, SingleQubitGate) and not architecture.is_virtual_gate(gate):
         return (gate.ion,)
     return ()
+
+
+def _ring_distance(first_position: float, second_position: float, num_sites: int) -> float:
+    separation = abs(first_position - second_position)
+    return min(separation, num_sites - separation)
 
 
 __all__ = ["compute_gate_zone_assignment", "zone_site_pairs"]

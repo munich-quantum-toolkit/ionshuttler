@@ -641,7 +641,7 @@ def _select_participating_ions(
         if not active_segments:
             rejected_no_segment.append(ion)
             continue
-        reachable_distance = _min_reachable_control_distance(timeline, ion, zone_sites, window)
+        reachable_distance = _min_reachable_control_distance(timeline, architecture, ion, zone_sites, window)
         if reachable_distance is None:
             rejected_unreachable.append(ion)
             continue
@@ -663,6 +663,7 @@ def _select_participating_ions(
 
 def _min_reachable_control_distance(
     timeline: CompiledTimeline,
+    architecture: LinearArchitecture,
     ion: int,
     zone_sites: Sequence[int],
     window: tuple[int, int],
@@ -679,8 +680,8 @@ def _min_reachable_control_distance(
         previous_time, previous_site = previous
         following_time, following_site = following
         for site in zone_sites:
-            inbound = abs(previous_site - site)
-            outbound = abs(site - following_site)
+            inbound = architecture.distance(previous_site, site)
+            outbound = architecture.distance(site, following_site)
             if inbound <= timestep - previous_time and outbound <= following_time - timestep:
                 distance = min(inbound, outbound)
                 best_distance = distance if best_distance is None else min(best_distance, distance)

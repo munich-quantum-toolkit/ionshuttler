@@ -114,6 +114,7 @@ def test_shared_types_are_not_reexported_from_linear_submodules() -> None:
         assert not hasattr(schedule, name)
     for name in ("CompilationResult", "CompilationStatus"):
         assert not hasattr(result, name)
+    assert not hasattr(actions, "is_adjacent")
     assert not hasattr(validation, "is_adjacent")
 
 

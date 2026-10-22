@@ -91,6 +91,47 @@ def test_full_generation_includes_gates_and_available_transports() -> None:
     ]
 
 
+def test_shuttle_candidates_follow_chain_site_order() -> None:
+    """Offer the lower neighbor before the higher neighbor on a chain."""
+    state = make_state(((0, 2),))
+
+    actions = generate_actions_by_mode(
+        state,
+        LinearArchitecture(num_sites=5),
+        make_circuit(),
+        options=ExpansionOptions(mode=GenerationMode.FULL, action_types=(Shuttle,)),
+    )
+
+    assert actions == [
+        Shuttle(ion=0, src=2, dst=1),
+        Shuttle(ion=0, src=2, dst=3),
+    ]
+
+
+def test_ring_transport_candidates_include_the_wrap_edge() -> None:
+    """Offer wrap transport while retaining the architecture's neighbor order."""
+    architecture = LinearArchitecture(num_sites=5, topology="ring")
+
+    shuttles = generate_actions_by_mode(
+        make_state(((0, 0),)),
+        architecture,
+        make_circuit(),
+        options=ExpansionOptions(mode=GenerationMode.FULL, action_types=(Shuttle,)),
+    )
+    swaps = generate_actions_by_mode(
+        make_state(((0, 0), (1, 4))),
+        architecture,
+        make_circuit(),
+        options=ExpansionOptions(mode=GenerationMode.FULL, action_types=(PhysicalSwap,)),
+    )
+
+    assert shuttles == [
+        Shuttle(ion=0, src=0, dst=4),
+        Shuttle(ion=0, src=0, dst=1),
+    ]
+    assert swaps == [PhysicalSwap(ion_a=0, ion_b=1, pos_a=0, pos_b=4)]
+
+
 def test_generated_transport_takes_architecture_durations() -> None:
     """Reserve shuttled ions for the architecture's configured transport time."""
     architecture = LinearArchitecture(num_sites=3, transport_timing=TransportTiming(shuttle=2, swap=3))
@@ -259,6 +300,21 @@ def test_informed_generation_swaps_a_relevant_ion_toward_a_zone() -> None:
     )
 
     assert actions == [PhysicalSwap(ion_a=0, ion_b=1, pos_a=2, pos_b=1)]
+
+
+def test_informed_generation_uses_a_helpful_ring_wrap_swap() -> None:
+    """Move a relevant ion along the shortest cyclic route to its zone."""
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [3]}, topology="ring")
+    state = make_state(((0, 0), (1, 4)), pzs_busy=(("pz", 0),))
+
+    actions = generate_actions_by_mode(
+        state,
+        architecture,
+        make_circuit((Rx(ion=0, theta=1.0),)),
+        options=ExpansionOptions(mode=GenerationMode.INFORMED),
+    )
+
+    assert actions == [PhysicalSwap(ion_a=0, ion_b=1, pos_a=0, pos_b=4)]
 
 
 def test_uninformed_generation_is_the_remaining_full_action_set() -> None:

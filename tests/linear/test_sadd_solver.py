@@ -309,6 +309,74 @@ def test_synthesized_transport_is_not_mistaken_for_a_local_pulse() -> None:
     )
 
 
+def test_ring_solver_uses_wrap_shuttles_and_preserves_the_final_position() -> None:
+    """Use the wrap edge during the window and return the ion to its required final site."""
+    architecture = LinearArchitecture(
+        num_sites=4,
+        processing_zones={"pz": [3]},
+        topology="ring",
+        field_profile=FieldProfile(num_sites=4, site_field=((0, 5.0), (1, 5.0), (2, 5.0), (3, 0.1))),
+    )
+    schedule = _idle_result(architecture, [0], 5)
+    problem = build_sadd_problem(
+        schedule,
+        architecture,
+        target_pz="pz",
+        t_start=0,
+        t_end=5,
+        participating_ions=(0,),
+        num_search_workers=1,
+    )
+
+    solution = solve_sadd_problem(problem, timeout_s=5.0, allow_transport=True, allow_pulses=False)
+
+    assert solution.status == "OPTIMAL"
+    assert solution.trajectories[0][-1] == 0
+    wrap_shuttles = [
+        action
+        for _timestep, action in solution.transport_actions
+        if isinstance(action, Shuttle) and {action.src, action.dst} == {0, 3}
+    ]
+    assert len(wrap_shuttles) == 2
+    assert solution.validation_status == "valid"
+    assert solution.schedule is not None
+    assert architecture.replay_schedule(solution.schedule).positions == ((0, 0),)
+
+
+def test_ring_position_model_recognizes_a_wrap_swap() -> None:
+    """Classify reciprocal movement across the wrap edge as one physical swap."""
+    architecture = LinearArchitecture(num_sites=4, processing_zones={"pz": [0]}, topology="ring")
+    schedule = _idle_result(architecture, [0, 3], 1)
+    problem = build_sadd_problem(
+        schedule,
+        architecture,
+        target_pz="pz",
+        t_start=0,
+        t_end=1,
+        participating_ions=(0, 1),
+        num_search_workers=1,
+    )
+    problem = replace(problem, fixed_positions={})
+    timeline = build_timeline(schedule, architecture)
+    model = cp_model.CpModel()
+    x = {}
+    for ion, target_site in enumerate((3, 0)):
+        occupancy = []
+        for site in range(architecture.num_sites):
+            variable = model.NewBoolVar(f"x_i{ion}_s{site}_t0")
+            x[ion, 0, site] = variable
+            occupancy.append(variable)
+        model.AddExactlyOne(occupancy)
+        model.Add(x[ion, 0, target_site] == 1)
+    move = sadd_solver_module._add_position_and_movement_constraints(model, problem, timeline, x, allow_transport=True)
+    shuttle, swap = sadd_solver_module._add_transport_kind_constraints(model, problem, x, move)
+
+    solver = cp_model.CpSolver()
+    assert solver.Solve(model) == cp_model.OPTIMAL
+    assert solver.Value(swap[0, 1, 0]) == 1
+    assert all(solver.Value(variable) == 0 for variable in shuttle.values())
+
+
 def test_unchanged_schedule_hint_leaves_decisions_unchanged() -> None:
     """Seed the search without altering the feasible set or the objective."""
     architecture = LinearArchitecture(num_sites=1, processing_zones={"pz": [0]})

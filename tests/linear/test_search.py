@@ -201,6 +201,24 @@ def test_two_qubit_gate_routes_ions_into_one_processing_zone() -> None:
     result.validate()
 
 
+def test_search_uses_the_ring_wrap_edge_to_reach_a_processing_zone() -> None:
+    """Compile and replay a gate whose shortest route crosses the ring boundary."""
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [4]}, topology="ring")
+    initial_state = create_initial_state(1, architecture, initial_positions=[0])
+    gate = Rx(ion=0, theta=0.5, gate_id=0)
+
+    result = search_module.search(
+        initial_state,
+        make_circuit({0: gate}),
+        architecture,
+        config=exhaustive_config(informed_action_prioritization=True),
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert Shuttle(ion=0, src=0, dst=4) in result.path
+    result.validate()
+
+
 def test_independent_gates_share_a_timestep() -> None:
     """Run gates concurrently when they use separate ions and zones."""
     architecture = LinearArchitecture(

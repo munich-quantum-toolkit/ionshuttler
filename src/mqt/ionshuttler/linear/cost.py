@@ -120,24 +120,21 @@ def min_distance_to_valid_pair(
     pos_a: int,
     pos_b: int,
     valid_pairs: tuple[tuple[int, int], ...],
+    architecture: LinearArchitecture,
 ) -> int:
     """Return the fewest simultaneous site moves needed to reach a valid pair.
 
-    The result depends only on the two sites and the architecture's fixed pair
-    list, so repeated lookups during search reuse a cached value.
+    The result depends only on the two sites, the fixed pair list, and the
+    architecture, so repeated lookups during search reuse a cached value.
     """
     if not valid_pairs:
         return 0
+    distance = architecture.distance
     best = maxsize
     for left, right in valid_pairs:
-        forward = abs(pos_a - left)
-        other = abs(pos_b - right)
-        forward = max(forward, other)
-        reverse = abs(pos_a - right)
-        other = abs(pos_b - left)
-        reverse = max(reverse, other)
-        forward = min(forward, reverse)
-        best = min(best, forward)
+        forward = max(distance(pos_a, left), distance(pos_b, right))
+        reverse = max(distance(pos_a, right), distance(pos_b, left))
+        best = min(best, forward, reverse)
     return best
 
 
@@ -186,6 +183,7 @@ def heuristic(
                 positions[gate.ion_a],
                 positions[gate.ion_b],
                 valid_pairs,
+                architecture,
             )
         else:
             routing_estimate += 1
