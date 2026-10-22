@@ -369,6 +369,24 @@ def test_permutation_prefers_the_pre_partitioned_zone(monkeypatch: pytest.Monkey
     assert _permutation_diagnostics(result).gates_in_preferred_zone == 1
 
 
+def test_ring_permutation_picks_the_nearest_zone_across_the_wrap_edge(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Measure zone distance along the ring when no zone is preferred."""
+    monkeypatch.setattr(compiler_module, "compute_gate_zone_assignment", lambda *_args, **_kwargs: {})
+    architecture = LinearArchitecture(
+        num_sites=10,
+        processing_zones={"middle": [3, 4], "end": [8, 9]},
+        topology="ring",
+    )
+    circuit = QuantumCircuit(2)
+    circuit.rzz(0.1, 0, 1)
+
+    result = LinearCompiler(architecture, PermutationConfig()).compile(circuit, initial_placement=[0, 1])
+
+    gate = next(item for item in result.schedule.scheduled_actions if isinstance(item.action, Rzz))
+    assert gate.processing_zone_id == "end"
+    result.validate()
+
+
 def test_permutation_with_one_implicit_zone_needs_no_transport() -> None:
     """Run every gate in place when the whole line is one processing zone."""
     circuit = _random_circuit(num_ions=4, num_gates=50, seed=0)

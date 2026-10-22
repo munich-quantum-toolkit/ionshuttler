@@ -179,9 +179,7 @@ class LinearArchitecture:
 
     def are_adjacent(self, first_site: int, second_site: int) -> bool:
         """Return whether two valid sites share a transport edge."""
-        _validate_site(first_site, self.num_sites)
-        _validate_site(second_site, self.num_sites)
-        return self._are_adjacent(first_site, second_site)
+        return self.distance(first_site, second_site) == 1
 
     def distance(self, first_site: int, second_site: int) -> int:
         """Return the shortest number of transport edges between two sites."""
@@ -340,6 +338,7 @@ class LinearArchitecture:
         """Return JSON-compatible architecture metadata."""
         result: dict[str, object] = {
             "num_sites": self.num_sites,
+            "topology": self.topology,
             "processing_zones": {
                 zone_name: list(zone_sites) for zone_name, zone_sites in self._processing_zones().items()
             },
@@ -353,8 +352,6 @@ class LinearArchitecture:
             result["supported_action_types"] = [
                 action_type.serialized_type for action_type in self.supported_action_types
             ]
-        if self.topology == "ring":
-            result["topology"] = self.topology
         return result
 
     def to_json(self) -> str:
@@ -463,7 +460,7 @@ class LinearArchitecture:
         return (
             positions.get(action.ion) == action.src
             and 0 <= action.dst < self.num_sites
-            and self._are_adjacent(action.src, action.dst)
+            and self.are_adjacent(action.src, action.dst)
             and action.dst not in positions.values()
             and dict(state.ions_busy_until).get(action.ion, state.time + 1) <= state.time
         )
@@ -477,12 +474,8 @@ class LinearArchitecture:
             and positions.get(action.ion_b) == action.pos_b
             and ions_busy.get(action.ion_a, state.time + 1) <= state.time
             and ions_busy.get(action.ion_b, state.time + 1) <= state.time
-            and self._are_adjacent(action.pos_a, action.pos_b)
+            and self.are_adjacent(action.pos_a, action.pos_b)
         )
-
-    def _are_adjacent(self, first_site: int, second_site: int) -> bool:
-        separation = abs(first_site - second_site)
-        return separation == 1 or (self.topology == "ring" and separation == self.num_sites - 1)
 
     def _is_gate_valid(self, state: State, gate: GateAction) -> bool:
         positions = dict(state.positions)
@@ -601,13 +594,7 @@ def _normalize_processing_zones(
                 msg = f"processing zone '{zone_name}' overlaps with another zone at site {site}"
                 raise ValueError(msg)
             seen_sites.add(site)
-        normalized_sites = _normalize_ring_sites(sorted_sites, num_sites) if topology == "ring" else sorted_sites
-        if normalized_sites is None or (
-            topology == "chain" and any(right - left != 1 for left, right in pairwise(sorted_sites))
-        ):
-            msg = f"processing zone '{zone_name}' must contain contiguous sites"
-            raise ValueError(msg)
-        normalized[zone_name] = normalized_sites
+        normalized[zone_name] = _normalize_zone_sites(zone_name, sorted_sites, num_sites, topology)
     return MappingProxyType(normalized)
 
 
@@ -622,7 +609,22 @@ def _site_neighbors(
     )
 
 
-def _normalize_ring_sites(sorted_sites: tuple[int, ...], num_sites: int) -> tuple[int, ...] | None:
+def _normalize_zone_sites(
+    zone_name: str,
+    sorted_sites: tuple[int, ...],
+    num_sites: int,
+    topology: Literal["chain", "ring"],
+) -> tuple[int, ...]:
+    """Return the sites of one zone in transport order.
+
+    Raises:
+        ValueError: If the sites do not form one connected run.
+    """
+    msg = f"processing zone '{zone_name}' must contain contiguous sites"
+    if topology == "chain":
+        if any(right - left != 1 for left, right in pairwise(sorted_sites)):
+            raise ValueError(msg)
+        return sorted_sites
     if len(sorted_sites) == num_sites:
         return sorted_sites
     # A connected proper ring run has one missing edge, which becomes the tuple boundary.
@@ -632,7 +634,7 @@ def _normalize_ring_sites(sorted_sites: tuple[int, ...], num_sites: int) -> tupl
         if (sorted_sites[(index + 1) % len(sorted_sites)] - site) % num_sites != 1
     ]
     if len(breaks) != 1:
-        return None
+        raise ValueError(msg)
     start = (breaks[0] + 1) % len(sorted_sites)
     return sorted_sites[start:] + sorted_sites[:start]
 

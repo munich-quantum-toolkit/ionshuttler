@@ -88,7 +88,10 @@ class _ProcessingZone:
 
     def distance(self, site: int, architecture: LinearArchitecture) -> int:
         """Return the shortest architecture distance from a site to the zone."""
-        return min(architecture.distance(site, zone_site) for zone_site in self.sites)
+        # The zone sites form one connected run, so the nearest zone site outside the run is one of its ends.
+        if (site - self.first_site) % architecture.num_sites < self.capacity:
+            return 0
+        return min(architecture.distance(site, self.first_site), architecture.distance(site, self.last_site))
 
 
 class _UnavailableTransportError(Exception):

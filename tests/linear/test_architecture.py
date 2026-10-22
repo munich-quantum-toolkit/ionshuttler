@@ -80,6 +80,8 @@ def test_architecture_owns_chain_and_ring_site_geometry() -> None:
     assert ring.distance(1, 4) == 2
     with pytest.raises(ValueError, match=r"site must be within \[0, 4\]"):
         ring.neighbors(5)
+    with pytest.raises(ValueError, match=r"site must be within \[0, 4\]"):
+        ring.are_adjacent(0, 5)
 
 
 @pytest.mark.parametrize(
@@ -234,10 +236,11 @@ def test_ring_architecture_round_trips_through_json_and_pickle() -> None:
     assert restored_json.processing_zones == {"wrap": (5, 0, 1)}
 
 
-def test_default_architecture_keeps_the_chain_serialized_form() -> None:
-    """Keep the default chain metadata free of an explicit topology field."""
+def test_default_architecture_serializes_the_chain_topology() -> None:
+    """Write the default chain topology explicitly in the serialized form."""
     assert LinearArchitecture(num_sites=3).to_dict() == {
         "num_sites": 3,
+        "topology": "chain",
         "processing_zones": {"all_sites": [0, 1, 2]},
         "gate_timing": {
             "rx": 1,
