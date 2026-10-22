@@ -40,8 +40,8 @@ def test_processing_zones_are_validated_and_normalized() -> None:
 
     assert architecture.processing_zones == {"pz_1": (2, 3, 4), "pz_2": (8, 9)}
     assert architecture.valid_two_qubit_site_pairs == ((2, 3), (2, 4), (3, 4), (8, 9))
-    assert architecture.get_processing_zone(3) == "pz_1"
-    assert architecture.get_processing_zone(7) is None
+    assert architecture.processing_zone_at(3) == "pz_1"
+    assert architecture.processing_zone_at(7) is None
 
 
 def test_ring_processing_zones_follow_one_connected_cyclic_run() -> None:
@@ -113,7 +113,7 @@ def test_processing_zones_cannot_change_after_construction() -> None:
         stored_zones["other"] = (3,)
     assert architecture.processing_zones == {"pz": (0, 1)}
     assert architecture.valid_two_qubit_site_pairs == ((0, 1),)
-    assert architecture.get_processing_zone(3) is None
+    assert architecture.processing_zone_at(3) is None
 
 
 @pytest.mark.parametrize(

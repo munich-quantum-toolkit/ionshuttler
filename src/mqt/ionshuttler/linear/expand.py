@@ -418,7 +418,7 @@ def _good_moves(
     zone_sites = tuple(site for sites in (architecture.processing_zones or {}).values() for site in sites)
     moves: list[TransitionCandidate] = []
     for ion, position in state.positions:
-        if ion in busy_ions or ion not in considered_ions or architecture.get_processing_zone(position) is not None:
+        if ion in busy_ions or ion not in considered_ions or architecture.processing_zone_at(position) is not None:
             continue
         distance = _distance_to_processing_zone(position, zone_sites, architecture)
         if distance is None:
@@ -496,7 +496,7 @@ def _is_good_swap(
     ):
         if ion not in considered_ions:
             continue
-        if architecture.get_processing_zone(current_position) is not None:
+        if architecture.processing_zone_at(current_position) is not None:
             continue
         current_distance = _distance_to_processing_zone(current_position, zone_sites, architecture)
         next_distance = _distance_to_processing_zone(next_position, zone_sites, architecture)

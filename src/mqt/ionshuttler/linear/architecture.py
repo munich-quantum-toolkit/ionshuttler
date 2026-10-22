@@ -192,7 +192,7 @@ class LinearArchitecture:
             return min(separation, self.num_sites - separation)
         return separation
 
-    def get_processing_zone(self, site: int) -> str | None:
+    def processing_zone_at(self, site: int) -> str | None:
         """Return the processing zone containing a site, if any."""
         for zone_name, zone_sites in self._processing_zones().items():
             if site in zone_sites:
@@ -215,9 +215,9 @@ class LinearArchitecture:
         if isinstance(action, SingleQubitGate):
             if self.is_virtual_gate(action):
                 return None
-            return self.get_processing_zone(dict(state.positions)[action.ion])
+            return self.processing_zone_at(dict(state.positions)[action.ion])
         if isinstance(action, TwoQubitGate):
-            return self.get_processing_zone(dict(state.positions)[action.ion_a])
+            return self.processing_zone_at(dict(state.positions)[action.ion_a])
         return None
 
     def field_at(self, site: int) -> float:
@@ -327,10 +327,10 @@ class LinearArchitecture:
         """Return whether all supplied sites belong to one processing zone."""
         if not sites:
             return False
-        first_zone = self.get_processing_zone(sites[0])
+        first_zone = self.processing_zone_at(sites[0])
         if first_zone is None:
             return False
-        return all(self.get_processing_zone(site) == first_zone for site in sites[1:])
+        return all(self.processing_zone_at(site) == first_zone for site in sites[1:])
 
     def initial_pzs_busy_until(self) -> tuple[tuple[str, int], ...]:
         """Return every processing zone as available at the start of a schedule."""
@@ -495,7 +495,7 @@ class LinearArchitecture:
             position = positions.get(gate.ion)
             if position is None or ions_busy.get(gate.ion, state.time + 1) > state.time:
                 return False
-            zone = self.get_processing_zone(position)
+            zone = self.processing_zone_at(position)
             return zone is not None and dict(state.pzs_busy_until).get(zone, state.time + 1) <= state.time
         if isinstance(gate, TwoQubitGate):
             pos_a = positions.get(gate.ion_a)
@@ -507,8 +507,8 @@ class LinearArchitecture:
                 or ions_busy.get(gate.ion_b, state.time + 1) > state.time
             ):
                 return False
-            zone_a = self.get_processing_zone(pos_a)
-            zone_b = self.get_processing_zone(pos_b)
+            zone_a = self.processing_zone_at(pos_a)
+            zone_b = self.processing_zone_at(pos_b)
             return (
                 zone_a is not None
                 and zone_a == zone_b
@@ -528,11 +528,11 @@ class LinearArchitecture:
         free_time = state.time + self.action_duration(gate)
         if isinstance(gate, SingleQubitGate):
             ions_busy[gate.ion] = free_time
-            zone = self.get_processing_zone(positions[gate.ion])
+            zone = self.processing_zone_at(positions[gate.ion])
         elif isinstance(gate, TwoQubitGate):
             ions_busy[gate.ion_a] = free_time
             ions_busy[gate.ion_b] = free_time
-            zone = self.get_processing_zone(positions[gate.ion_a])
+            zone = self.processing_zone_at(positions[gate.ion_a])
         else:
             msg = f"LinearArchitecture defines no rules for {type(gate).__name__}"
             raise TypeError(msg)
