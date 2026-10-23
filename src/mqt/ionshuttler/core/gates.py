@@ -315,7 +315,7 @@ class Rx(SingleQubitGate):
     """Rotate one ion around the x axis."""
 
     theta: float
-    circuit_name: ClassVar[str] = "rx"
+    circuit_name: ClassVar[str | None] = "rx"
     serialized_type: ClassVar[str] = "gate.rx"
 
 
@@ -324,7 +324,7 @@ class Ry(SingleQubitGate):
     """Rotate one ion around the y axis."""
 
     theta: float
-    circuit_name: ClassVar[str] = "ry"
+    circuit_name: ClassVar[str | None] = "ry"
     serialized_type: ClassVar[str] = "gate.ry"
 
 
@@ -333,7 +333,7 @@ class Rz(SingleQubitGate):
     """Rotate one ion around the z axis."""
 
     theta: float
-    circuit_name: ClassVar[str] = "rz"
+    circuit_name: ClassVar[str | None] = "rz"
     serialized_type: ClassVar[str] = "gate.rz"
 
 
@@ -342,7 +342,7 @@ class Rxx(TwoQubitGate):
     """Rotate two ions around the xx axis."""
 
     theta: float
-    circuit_name: ClassVar[str] = "rxx"
+    circuit_name: ClassVar[str | None] = "rxx"
     serialized_type: ClassVar[str] = "gate.rxx"
     parameter_names: ClassVar[tuple[str, ...]] = ("theta",)
 
@@ -352,7 +352,7 @@ class Ryy(TwoQubitGate):
     """Rotate two ions around the yy axis."""
 
     theta: float
-    circuit_name: ClassVar[str] = "ryy"
+    circuit_name: ClassVar[str | None] = "ryy"
     serialized_type: ClassVar[str] = "gate.ryy"
     parameter_names: ClassVar[tuple[str, ...]] = ("theta",)
 
@@ -362,7 +362,7 @@ class Rzz(TwoQubitGate):
     """Rotate two ions around the zz axis."""
 
     theta: float
-    circuit_name: ClassVar[str] = "rzz"
+    circuit_name: ClassVar[str | None] = "rzz"
     serialized_type: ClassVar[str] = "gate.rzz"
     parameter_names: ClassVar[tuple[str, ...]] = ("theta",)
 
