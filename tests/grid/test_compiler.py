@@ -30,6 +30,7 @@ from mqt.ionshuttler.grid import (
     ProcessingZone,
     Segment,
     SegmentOccupancy,
+    TransportTiming,
     result_from_json,
     square_grid,
 )
@@ -95,6 +96,141 @@ def test_compiler_uses_a_simultaneous_cycle_when_every_segment_is_full(strategy:
     assert result.diagnostics is not None
     assert result.diagnostics.cycles == 1
     assert result.diagnostics.junction_moves == 3
+
+
+@pytest.mark.parametrize("strategy", list(GridCompilerStrategy))
+def test_compiler_routes_to_an_exact_target_placement(strategy: GridCompilerStrategy) -> None:
+    """Reach a final full-occupancy placement with a simultaneous cycle."""
+    a = Segment("a")
+    b = Segment("b")
+    c = Segment("c")
+    architecture = GridArchitecture(
+        (a, b, c),
+        (
+            Junction("ab", (a.end, b.start)),
+            Junction("bc", (b.end, c.start)),
+            Junction("ca", (c.end, a.start)),
+        ),
+    )
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=strategy)).compile(
+        _qasm(3),
+        initial_placement={"a": (0,), "b": (1,), "c": (2,)},
+        target_placement={"a": (2,), "b": (0,), "c": (1,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert len(result.path) == 1
+    assert isinstance(result.path[0], Cycle)
+    assert result.final_state.occupancy == architecture.initial_state({"a": (2,), "b": (0,), "c": (1,)}).occupancy
+    assert result.diagnostics is not None
+    assert result.diagnostics.cycles == 1
+    assert result.diagnostics.junction_moves == 3
+
+
+@pytest.mark.parametrize("strategy", list(GridCompilerStrategy))
+def test_compiler_routes_to_a_partial_target_placement(strategy: GridCompilerStrategy) -> None:
+    """Reach active ion targets without constraining spectator destinations."""
+    a = Segment("a")
+    b = Segment("b")
+    c = Segment("c")
+    architecture = GridArchitecture(
+        (a, b, c),
+        (
+            Junction("ab", (a.end, b.start)),
+            Junction("bc", (b.end, c.start)),
+            Junction("ca", (c.end, a.start)),
+        ),
+    )
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=strategy)).compile(
+        _qasm(3),
+        initial_placement={"a": (0,), "b": (1,), "c": (2,)},
+        target_placement={"b": (0,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.final_state.ion_segment(0) == "b"
+    assert result.final_state.ions == (0, 1, 2)
+    assert result.diagnostics is not None
+    assert result.diagnostics.stop_reason is GridStopReason.COMPLETED
+
+
+def test_compiler_rejects_unknown_target_ion() -> None:
+    """Every constrained ion must occur in the initial placement."""
+    architecture = GridArchitecture((Segment("memory", capacity=2),), ())
+
+    with pytest.raises(ValueError, match="outside the initial placement"):
+        GridCompiler(architecture).compile(
+            _qasm(1),
+            initial_placement={"memory": (0,)},
+            target_placement={"memory": (1,)},
+        )
+
+
+@pytest.mark.parametrize("strategy", list(GridCompilerStrategy))
+def test_compiler_routes_to_target_after_gates_finish(strategy: GridCompilerStrategy) -> None:
+    """Perform final target transport only after the circuit gates."""
+    memory = Segment("memory")
+    processor = Segment("processor", processing_zones=(ProcessingZone("pz"),))
+    architecture = GridArchitecture(
+        (memory, processor),
+        (Junction("junction", (memory.end, processor.start)),),
+    )
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=strategy)).compile(
+        _qasm(1, "rx(0.5) q[0];"),
+        initial_placement={"memory": (0,)},
+        target_placement={"memory": (0,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert [type(action) for action in result.path] == [JunctionMove, Rx, JunctionMove]
+    assert result.final_state.occupants("memory") == (0,)
+
+
+def test_greedy_target_routing_waits_for_busy_transport_resources() -> None:
+    """Wait for one target move to finish before reusing its ion and junction."""
+    left = Segment("left")
+    middle = Segment("middle")
+    right = Segment("right")
+    architecture = GridArchitecture(
+        (left, middle, right),
+        (
+            Junction("left-middle", (left.end, middle.start)),
+            Junction("middle-right", (middle.end, right.start)),
+        ),
+        transport_timing=TransportTiming(junction_move=3),
+    )
+
+    result = GridCompiler(
+        architecture,
+        GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY),
+    ).compile(
+        _qasm(1),
+        initial_placement={"left": (0,)},
+        target_placement={"right": (0,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert [item.start_time for item in result.schedule.scheduled_actions] == [0, 3]
+    assert result.duration == 6
+
+
+def test_compiler_returns_failure_when_target_has_no_route() -> None:
+    """Return the unchanged partial result when no target route exists."""
+    architecture = GridArchitecture((Segment("left"), Segment("right")), ())
+
+    result = GridCompiler(architecture).compile(
+        _qasm(2),
+        initial_placement={"left": (0,), "right": (1,)},
+        target_placement={"left": (1,), "right": (0,)},
+    )
+
+    assert result.status is CompilationStatus.FAILED
+    assert result.path == []
+    assert result.diagnostics is not None
+    assert result.diagnostics.stop_reason is GridStopReason.NO_PROGRESS
 
 
 def test_compiler_schedules_independent_ready_gates_together() -> None:

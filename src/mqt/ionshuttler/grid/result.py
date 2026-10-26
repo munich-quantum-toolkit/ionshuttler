@@ -29,7 +29,7 @@ class GridStopReason(StrEnum):
     """State why the Grid compiler stopped scheduling.
 
     Attributes:
-        COMPLETED: All gates completed.
+        COMPLETED: All gates and the optional target placement completed.
         NO_PROGRESS: The compiler found no gate and no movement to select,
             and no busy resource becomes free later.
         ITERATION_LIMIT: The compiler reached ``max_iterations``.

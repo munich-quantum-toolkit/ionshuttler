@@ -72,6 +72,27 @@ individual gate IDs to processing-zone IDs explicitly. An explicit mapping
 replaces pre-partitioning, even when `pre_partition=True`. Unassigned gates
 select a processing zone while scheduling.
 
+Use `target_placement` to request a final placement after all gates. The mapping
+uses the same format as `initial_placement`. A target that contains every ion is
+exact, and omitted segments are empty. A target that contains a subset
+constrains only those ions; all other ions and segments remain unconstrained.
+
+```{code-cell} ipython3
+result = GridCompiler(architecture).compile(
+    circuit,
+    initial_placement={"memory": (0, 1)},
+    target_placement={"memory": (0, 1)},
+)
+```
+
+```{code-cell} ipython3
+result = GridCompiler(architecture).compile(
+    circuit,
+    initial_placement={"memory": (0, 1)},
+    target_placement={"processor": (0,)},
+)
+```
+
 ### Configuration
 
 {py:class}`~mqt.ionshuttler.grid.config.GridCompilerConfig` provides the main

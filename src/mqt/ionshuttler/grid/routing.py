@@ -18,7 +18,7 @@ from mqt.ionshuttler.grid.actions import Cycle, JunctionMove
 from mqt.ionshuttler.grid.model import SegmentOccupancy
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from mqt.ionshuttler.core.actions import Action
     from mqt.ionshuttler.core.gates import GateAction
@@ -73,6 +73,48 @@ def route_gate_bfs(
                 following = architecture.apply_layer(current, (timed_action,)).at_time(timed_action.end_time)
             except ValueError:
                 continue
+            key = _occupancy_key(following)
+            if key in visited:
+                continue
+            visited.add(key)
+            queue.append((following, (*path, action)))
+    return None, explored
+
+
+def route_placement_bfs(
+    architecture: GridArchitecture,
+    state: GridMachineState,
+    reached: Callable[[GridMachineState], bool],
+    *,
+    max_states: int,
+    allowed_crossings: JunctionCrossings = None,
+) -> tuple[tuple[Action, ...] | None, int]:
+    """Find a shortest legal movement sequence to a placement goal.
+
+    Returns:
+        The movement sequence, or ``None`` if the bound is exhausted, and the
+        number of explored occupancy states and cycle-search steps.
+    """
+    queue: deque[tuple[GridMachineState, tuple[Action, ...]]] = deque([(state, ())])
+    visited = {_occupancy_key(state)}
+    explored = 0
+    while queue and explored < max_states:
+        current, path = queue.popleft()
+        explored += 1
+        if reached(current):
+            return path, explored
+        moves = junction_moves(architecture, current, allowed_crossings=allowed_crossings)
+        cycles, cycle_work = _cycle_candidates(architecture, current, moves, max_work=max_states - explored)
+        explored += cycle_work
+        for action in (*moves, *cycles):
+            duration = architecture.action_duration(action)
+            timed_action = ScheduledAction(0, action, current.time, duration)
+            try:
+                following = architecture.apply_layer(current, (timed_action,)).at_time(timed_action.end_time)
+            except ValueError:
+                continue
+            if reached(following):
+                return (*path, action), explored
             key = _occupancy_key(following)
             if key in visited:
                 continue
@@ -730,6 +772,7 @@ __all__ = [
     "next_segment_toward",
     "route_gate_bfs",
     "route_junction_crossing_greedy_cycle",
+    "route_placement_bfs",
     "routing_distance",
     "select_greedy_target",
 ]
