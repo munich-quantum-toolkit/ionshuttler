@@ -31,6 +31,7 @@ from mqt.ionshuttler.grid import (
     Segment,
     SegmentOccupancy,
     TransportTiming,
+    rectangular_grid,
     result_from_json,
     square_grid,
 )
@@ -154,6 +155,62 @@ def test_compiler_routes_to_a_partial_target_placement(strategy: GridCompilerStr
     assert result.final_state.ions == (0, 1, 2)
     assert result.diagnostics is not None
     assert result.diagnostics.stop_reason is GridStopReason.COMPLETED
+
+
+def test_greedy_partial_target_uses_a_cycle_when_the_grid_is_full() -> None:
+    """Skip false segment cycles and rotate a physical plaquette instead."""
+    architecture = rectangular_grid(3, 3)
+    segment_ids = tuple(segment.segment_id for segment in architecture.segments)
+    source = "h:0:0"
+    target = "v:0:1"
+    ion = segment_ids.index(source)
+    placement = {segment_id: (placed_ion,) for placed_ion, segment_id in enumerate(segment_ids)}
+
+    result = GridCompiler(
+        architecture,
+        GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY),
+    ).compile(
+        _qasm(len(segment_ids)),
+        initial_placement=placement,
+        target_placement={target: (ion,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.final_state.ion_segment(ion) == target
+    assert isinstance(result.path[0], Cycle)
+
+
+def test_greedy_partial_target_routes_multiple_ions_on_a_full_grid() -> None:
+    """Try other active-ion orders when the first order repeats a placement."""
+    architecture = rectangular_grid(3, 3)
+    placement = {
+        "h:0:0": (7,),
+        "h:0:1": (10,),
+        "h:1:0": (1,),
+        "h:1:1": (6,),
+        "h:2:0": (3,),
+        "h:2:1": (11,),
+        "v:0:0": (5,),
+        "v:0:1": (9,),
+        "v:0:2": (8,),
+        "v:1:0": (4,),
+        "v:1:1": (0,),
+        "v:1:2": (2,),
+    }
+
+    result = GridCompiler(
+        architecture,
+        GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY),
+    ).compile(
+        _qasm(12),
+        initial_placement=placement,
+        target_placement={"h:0:1": (7,), "v:0:0": (11,), "v:1:1": (6,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.final_state.ion_segment(6) == "v:1:1"
+    assert result.final_state.ion_segment(7) == "h:0:1"
+    assert result.final_state.ion_segment(11) == "v:0:0"
 
 
 def test_compiler_rejects_unknown_target_ion() -> None:

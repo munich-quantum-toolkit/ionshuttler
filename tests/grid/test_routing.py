@@ -10,8 +10,15 @@
 from __future__ import annotations
 
 from mqt.ionshuttler.core.gates import Rx
-from mqt.ionshuttler.grid import GridArchitecture, Junction, JunctionMove, Segment
-from mqt.ionshuttler.grid.routing import clear_blocked_path, junction_moves, route_gate_bfs
+from mqt.ionshuttler.core.schedule import ScheduledAction
+from mqt.ionshuttler.grid import Cycle, GridArchitecture, Junction, JunctionMove, Segment, rectangular_grid
+from mqt.ionshuttler.grid.routing import (
+    clear_blocked_path,
+    junction_moves,
+    next_segments_toward,
+    route_gate_bfs,
+    route_junction_crossing_greedy_cycle,
+)
 
 
 def _blocked_exit_architecture(*, with_side: bool = True, side_capacity: int = 1) -> GridArchitecture:
@@ -152,3 +159,104 @@ def test_route_gate_bfs_counts_bounded_cycle_search_work() -> None:
 
     assert route is None
     assert explored == 3
+
+
+def test_next_segments_toward_returns_all_equal_shortest_choices() -> None:
+    """Expose each shortest next segment so that the scheduler can prefer free capacity."""
+    architecture = rectangular_grid(4, 4)
+
+    candidates = next_segments_toward(architecture, "v:2:1", "v:2:0")
+
+    assert candidates == ("h:2:0", "h:3:0")
+
+
+def _two_cycle_architecture() -> GridArchitecture:
+    """Return two cycles of different lengths that share their first crossing."""
+    source = Segment("source")
+    destination = Segment("destination")
+    short = Segment("short")
+    long_first = Segment("long-first")
+    long_second = Segment("long-second")
+    return GridArchitecture(
+        (source, destination, short, long_first, long_second),
+        (
+            Junction("requested", (source.end, destination.start)),
+            Junction("fork", (destination.end, short.start, long_first.start)),
+            Junction("return", (source.start, short.end, long_second.end)),
+            Junction("long", (long_first.end, long_second.start)),
+        ),
+    )
+
+
+def test_greedy_cycle_tries_a_larger_cycle_when_the_short_cycle_is_unavailable() -> None:
+    """Continue past a short cycle that would move a protected ion."""
+    architecture = _two_cycle_architecture()
+    state = architecture.initial_state({
+        "source": (0,),
+        "destination": (2,),
+        "short": (1,),
+        "long-first": (3,),
+        "long-second": (4,),
+    })
+    moves = tuple(move for move in junction_moves(architecture, state) if 1 not in move.ions)
+
+    route, _explored = route_junction_crossing_greedy_cycle(
+        architecture,
+        state,
+        0,
+        "destination",
+        max_states=100,
+        moves=moves,
+        ion_priorities={1: 0, 0: 1},
+        allow_larger_cycles=True,
+    )
+
+    assert route is not None
+    assert len(route) == 1
+    assert isinstance(route[0], Cycle)
+    assert len(route[0].moves) == 4
+
+
+def test_greedy_cycle_skips_an_excluded_placement() -> None:
+    """Use another cycle when the first cycle returns to a known placement."""
+    architecture = _two_cycle_architecture()
+    state = architecture.initial_state({
+        "source": (0,),
+        "destination": (2,),
+        "short": (1,),
+        "long-first": (3,),
+        "long-second": (4,),
+    })
+    moves = junction_moves(architecture, state)
+    first_route, _explored = route_junction_crossing_greedy_cycle(
+        architecture,
+        state,
+        0,
+        "destination",
+        max_states=100,
+        moves=moves,
+        ion_priorities={0: 0},
+    )
+    assert first_route is not None
+    first_action = first_route[0]
+    first_state = architecture.apply_layer(
+        state,
+        (ScheduledAction(0, first_action, state.time, architecture.action_duration(first_action)),),
+    )
+
+    route, _explored = route_junction_crossing_greedy_cycle(
+        architecture,
+        state,
+        0,
+        "destination",
+        max_states=100,
+        moves=moves,
+        ion_priorities={0: 0},
+        excluded_occupancies={first_state.occupancy},
+        allow_larger_cycles=True,
+    )
+
+    assert route is not None
+    assert len(route) == 1
+    assert isinstance(route[0], Cycle)
+    assert len(route[0].moves) == 4

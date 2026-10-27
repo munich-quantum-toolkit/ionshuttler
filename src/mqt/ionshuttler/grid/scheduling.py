@@ -22,7 +22,7 @@ from mqt.ionshuttler.grid.result import GridDiagnostics, GridStopReason
 from mqt.ionshuttler.grid.routing import (
     clear_blocked_path,
     junction_moves,
-    next_segment_toward,
+    next_segments_toward,
     route_gate_bfs,
     route_junction_crossing_greedy_cycle,
     route_placement_bfs,
@@ -31,11 +31,12 @@ from mqt.ionshuttler.grid.routing import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Collection, Mapping, Sequence
 
     from mqt.ionshuttler.circuit import Circuit
     from mqt.ionshuttler.grid.architecture import GridArchitecture
     from mqt.ionshuttler.grid.config import GridCompilerConfig
+    from mqt.ionshuttler.grid.routing import OccupancyKey
     from mqt.ionshuttler.grid.state import GridMachineState
 
 
@@ -388,6 +389,8 @@ def schedule_greedy(
 
     gates_complete = len(completed) == len(circuit.gates)
     seen_placements = {state.occupancy}
+    # Partial targets identify active ions but treat passive ion identities as interchangeable.
+    seen_target_states = {_target_routing_key(state, partial_target_by_ion)}
     while (
         (target_state is not None or partial_target_by_ion is not None)
         and gates_complete
@@ -396,19 +399,48 @@ def schedule_greedy(
     ):
         iterations += 1
         priority = _target_placement_priority(state, target_state, partial_target_by_ion)
-        planning_requests: list[PrioritizedIon] | None = None if planning_trace is None else []
-        movement_layer, explored, _blocked_targets = _priority_movement_layer(
-            architecture,
-            state,
-            len(scheduled_actions),
-            priority,
-            (),
-            frozenset(),
-            max_states=config.max_routing_states,
-            allowed_crossings=config.allowed_junction_crossings,
-            planning_requests=planning_requests,
-        )
-        explored_states += explored
+        excluded_occupancies: Collection[OccupancyKey] = ()
+        # When one target remains, let its router skip every full placement already visited.
+        if (
+            partial_target_by_ion is not None
+            and sum(state.ion_segment(ion) != segment_id for ion, segment_id in partial_target_by_ion.items()) == 1
+        ):
+            excluded_occupancies = seen_placements
+        priority_orders = (priority,)
+        if partial_target_by_ion is not None:
+            # Rotate the active-ion order only when the preferred order cannot reach a new state.
+            priority_orders = tuple(priority[offset:] + priority[:offset] for offset in range(len(priority)))
+        planning_requests: list[PrioritizedIon] | None = None
+        movement_layer: tuple[ScheduledAction[Action], ...] = ()
+        following: GridMachineState | None = None
+        for priority_order in priority_orders:
+            candidate_requests: list[PrioritizedIon] | None = None if planning_trace is None else []
+            candidate_layer, explored, _blocked_targets = _priority_movement_layer(
+                architecture,
+                state,
+                len(scheduled_actions),
+                priority_order,
+                (),
+                frozenset(),
+                max_states=config.max_routing_states,
+                allowed_crossings=config.allowed_junction_crossings,
+                planning_requests=candidate_requests,
+                excluded_occupancies=excluded_occupancies,
+                allow_larger_cycles=partial_target_by_ion is not None,
+            )
+            explored_states += explored
+            if not candidate_layer:
+                if planning_requests is None:
+                    planning_requests = candidate_requests
+                continue
+            candidate_state = architecture.apply_layer(state, candidate_layer)
+            # Ignore changes that only permute anonymous passive ions in an already seen state.
+            if _target_routing_key(candidate_state, partial_target_by_ion) in seen_target_states:
+                continue
+            movement_layer = candidate_layer
+            following = candidate_state
+            planning_requests = candidate_requests
+            break
         next_time = None if movement_layer else _next_resource_release(state)
         if planning_trace is not None:
             planning_trace.append(
@@ -429,10 +461,9 @@ def schedule_greedy(
                 break
             state = state.at_time(next_time)
             continue
-        following = architecture.apply_layer(state, movement_layer)
-        repeated_placement = following.occupancy in seen_placements
-        if not repeated_placement:
-            seen_placements.add(following.occupancy)
+        assert following is not None
+        seen_placements.add(following.occupancy)
+        seen_target_states.add(_target_routing_key(following, partial_target_by_ion))
         state = following
         scheduled_actions.extend(movement_layer)
         for movement_item in movement_layer:
@@ -443,9 +474,6 @@ def schedule_greedy(
             )
         if any(item.end_time > state.time for item in movement_layer):
             state = state.at_time(state.time + 1)
-        if repeated_placement:
-            stalled = True
-            break
 
     if scheduled_actions:
         state = state.at_time(max(state.time, *(action.end_time for action in scheduled_actions)))
@@ -479,21 +507,43 @@ def _placement_reached(
     return True
 
 
+def _target_routing_key(
+    state: GridMachineState,
+    partial_target_by_ion: Mapping[int, str] | None,
+) -> tuple[tuple[str, tuple[int | None, ...]], ...]:
+    """Return target-routing state with passive ions treated as anonymous."""
+    if partial_target_by_ion is None:
+        return state.occupancy
+    active_ions = partial_target_by_ion.keys()
+    return tuple(
+        (
+            segment_id,
+            tuple(ion if ion in active_ions else None for ion in occupants),
+        )
+        for segment_id, occupants in state.occupancy
+    )
+
+
 def _target_placement_priority(
     state: GridMachineState,
     target_state: GridMachineState | None,
     partial_target_by_ion: Mapping[int, str] | None,
 ) -> tuple[tuple[int, str], ...]:
-    """Return misplaced ions and their target segments in ion order.
+    """Return ions and target segments in deterministic transport order.
 
     Returns:
         The deterministic greedy transport priority.
     """
     if partial_target_by_ion is not None:
         target_by_ion = dict(partial_target_by_ion)
-    else:
-        assert target_state is not None
-        target_by_ion = {ion: segment_id for segment_id, occupants in target_state.occupancy for ion in occupants}
+        return tuple(
+            sorted(
+                target_by_ion.items(),
+                key=lambda item: (state.ion_segment(item[0]) != item[1], item[0]),
+            )
+        )
+    assert target_state is not None
+    target_by_ion = {ion: segment_id for segment_id, occupants in target_state.occupancy for ion in occupants}
     return tuple(
         (ion, segment_id) for ion, segment_id in sorted(target_by_ion.items()) if state.ion_segment(ion) != segment_id
     )
@@ -832,6 +882,8 @@ def _priority_movement_layer(
     allowed_crossings: frozenset[tuple[str, str]] | None,
     selected_gate_requests: frozenset[tuple[int, str]] = frozenset(),
     planning_requests: list[PrioritizedIon] | None = None,
+    excluded_occupancies: Collection[OccupancyKey] = (),
+    allow_larger_cycles: bool = False,
 ) -> tuple[tuple[ScheduledAction[Action], ...], int, frozenset[str]]:
     """Pack next-step transport candidates in global ion-priority order.
 
@@ -876,25 +928,48 @@ def _priority_movement_layer(
         if source_segment_id == target_segment_id:
             record_request(ion, target_segment_id, MoveStatus.AT_TARGET)
             continue
-        destination_segment_id = next_segment_toward(
+        destination_segment_ids = next_segments_toward(
             architecture,
             source_segment_id,
             target_segment_id,
             allowed_crossings,
         )
-        if destination_segment_id is None:
+        if not destination_segment_ids:
             record_request(ion, target_segment_id, MoveStatus.NO_ROUTE)
             continue
-        candidate_actions, candidates_explored = route_junction_crossing_greedy_cycle(
-            architecture,
-            state,
-            ion,
-            destination_segment_id,
-            max_states=max_states,
-            moves=available_moves,
-            allowed_crossings=allowed_crossings,
-            ion_priorities=ion_priorities,
+        destination_segment_ids = tuple(
+            sorted(
+                destination_segment_ids,
+                # Prefer free capacity when several next segments keep the route shortest.
+                key=lambda segment_id: (
+                    len(state.occupants(segment_id)) >= architecture.segment(segment_id).capacity,
+                    len(state.occupants(segment_id)),
+                    segment_id,
+                ),
+            )
         )
+        # First try routes that leave every higher-priority active ion untouched.
+        protected_ions = {other_ion for other_ion, rank in ion_priorities.items() if rank < ion_priorities[ion]}
+        candidate_moves = tuple(move for move in available_moves if protected_ions.isdisjoint(move.ions))
+        candidate_actions: tuple[Action, ...] | None = None
+        candidates_explored = 0
+        for destination_segment_id in destination_segment_ids:
+            # All equally short choices share the configured routing-work budget.
+            candidate_actions, destination_explored = route_junction_crossing_greedy_cycle(
+                architecture,
+                state,
+                ion,
+                destination_segment_id,
+                max_states=max_states - candidates_explored,
+                moves=candidate_moves,
+                allowed_crossings=allowed_crossings,
+                ion_priorities=ion_priorities,
+                excluded_occupancies=excluded_occupancies,
+                allow_larger_cycles=allow_larger_cycles,
+            )
+            candidates_explored += destination_explored
+            if candidate_actions is not None or candidates_explored >= max_states:
+                break
         explored += candidates_explored
         if not candidate_actions:
             record_request(ion, target_segment_id, MoveStatus.NO_CANDIDATE)
@@ -980,14 +1055,15 @@ def _build_clearing_layer_for_gate(
         )
         if focus_gate is None:
             continue
-        destination_segment_id = next_segment_toward(
+        destination_segment_ids = next_segments_toward(
             architecture,
             state.ion_segment(ion),
             target_segment_id,
             allowed_crossings,
         )
-        if destination_segment_id is None:
+        if not destination_segment_ids:
             return (), 0
+        destination_segment_id = destination_segment_ids[0]
         retained_ions = frozenset(
             operand for operand in focus_gate.ions if state.ion_segment(operand) == target_segment_id
         )

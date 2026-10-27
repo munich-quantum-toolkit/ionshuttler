@@ -18,7 +18,7 @@ from mqt.ionshuttler.grid.actions import Cycle, JunctionMove
 from mqt.ionshuttler.grid.model import SegmentOccupancy
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Collection, Mapping, Sequence
 
     from mqt.ionshuttler.core.actions import Action
     from mqt.ionshuttler.core.gates import GateAction
@@ -133,6 +133,8 @@ def route_junction_crossing_greedy_cycle(
     moves: Sequence[JunctionMove],
     allowed_crossings: JunctionCrossings = None,
     ion_priorities: Mapping[int, int],
+    excluded_occupancies: Collection[OccupancyKey] = (),
+    allow_larger_cycles: bool = False,
 ) -> tuple[tuple[Action, ...] | None, int]:
     """Realize one requested junction crossing directly or with a cycle.
 
@@ -157,38 +159,31 @@ def route_junction_crossing_greedy_cycle(
         explored += 1
         timed_move = ScheduledAction(0, move, state.time, architecture.action_duration(move))
         try:
-            architecture.apply_layer(state, (timed_move,))
+            following = architecture.apply_layer(state, (timed_move,))
         except ValueError:
+            continue
+        if following.occupancy in excluded_occupancies:
             continue
         return (move,), explored
 
     adjacency = _segment_adjacency(architecture, allowed_crossings)
-    cycle_segments, cycle_paths_explored = _shortest_cycle_segments(
+    candidate_actions, cycle_paths_explored = _find_cycle_transport(
+        architecture,
+        state,
         adjacency,
+        ion,
         source_segment_id,
         destination_segment_id,
         max_paths=max_states - explored,
+        moves=moves,
+        allowed_crossings=allowed_crossings,
+        ion_priorities=ion_priorities,
+        excluded_occupancies=excluded_occupancies,
+        allow_larger_cycles=allow_larger_cycles,
     )
     explored += cycle_paths_explored
-    if cycle_segments is not None:
-        candidate_actions = _build_cycle_transport(
-            state,
-            ion,
-            cycle_segments,
-            moves,
-            ion_priorities=ion_priorities,
-        )
-        if candidate_actions is not None:
-            timed_actions = tuple(
-                ScheduledAction(index, action, state.time, architecture.action_duration(action))
-                for index, action in enumerate(candidate_actions)
-            )
-            try:
-                architecture.apply_layer(state, timed_actions)
-            except ValueError:
-                pass
-            else:
-                return candidate_actions, explored
+    if candidate_actions is not None:
+        return candidate_actions, explored
     path_clearing_moves, clearing_paths_explored = clear_blocked_path(
         architecture,
         state,
@@ -328,18 +323,19 @@ def _clear_exit(
     return None, explored
 
 
-def next_segment_toward(
+def next_segments_toward(
     architecture: GridArchitecture,
     source_segment_id: str,
     target_segment_id: str,
     allowed_crossings: JunctionCrossings = None,
-) -> str | None:
-    """Return the first segment on a shortest directed route to a target."""
+) -> tuple[str, ...]:
+    """Return all next segments on shortest directed routes to a target."""
+    distances = _segment_distances(architecture, target_segment_id, allowed_crossings, reverse=True)
+    distance = distances.get(source_segment_id)
+    if distance is None or distance == 0:
+        return ()
     adjacency = _segment_adjacency(architecture, allowed_crossings)
-    route = _shortest_segment_path(adjacency, source_segment_id, target_segment_id)
-    if route is None or len(route) < 2:
-        return None
-    return route[1]
+    return tuple(neighbor for neighbor in adjacency[source_segment_id] if distances.get(neighbor) == distance - 1)
 
 
 def routing_distance(
@@ -353,32 +349,108 @@ def routing_distance(
     return distances.get(source_segment_id)
 
 
-def _shortest_cycle_segments(
+def _find_cycle_transport(
+    architecture: GridArchitecture,
+    state: GridMachineState,
     adjacency: dict[str, tuple[str, ...]],
+    requested_ion: int,
     source_segment_id: str,
     destination_segment_id: str,
     *,
     max_paths: int,
-) -> tuple[tuple[str, ...] | None, int]:
-    """Find the shortest segment cycle containing a requested junction crossing.
+    moves: Sequence[JunctionMove],
+    allowed_crossings: JunctionCrossings,
+    ion_priorities: Mapping[int, int],
+    excluded_occupancies: Collection[OccupancyKey],
+    allow_larger_cycles: bool,
+) -> tuple[tuple[Action, ...] | None, int]:
+    """Find the first usable junction-simple cycle containing one crossing.
 
     Returns:
-        The ordered cycle segments and number of paths examined.
+        The cycle transport and number of paths examined.
     """
-    queue: deque[tuple[str, ...]] = deque([(destination_segment_id,)])
+    # Map each directed segment pair to the physical junction that connects it.
+    junction_by_segments = {
+        (source.segment_id, destination.segment_id): junction.junction_id
+        for junction in architecture.junctions
+        for source in junction.endpoints
+        for destination in junction.endpoints
+        if source.segment_id != destination.segment_id
+        and (allowed_crossings is None or (source.segment_id, destination.segment_id) in allowed_crossings)
+    }
+    first_junction = junction_by_segments[source_segment_id, destination_segment_id]
+    if allow_larger_cycles and not _can_supply_cycle_move(
+        state,
+        source_segment_id,
+        destination_segment_id,
+        moves,
+        requested_ion=requested_ion,
+    ):
+        return None, 0
+    # Track used junctions with each BFS path so that one cycle never reuses a junction.
+    queue: deque[tuple[tuple[str, ...], frozenset[str]]] = deque([
+        ((destination_segment_id,), frozenset({first_junction}))
+    ])
     explored = 0
     while queue and explored < max_paths:
-        path = queue.popleft()
+        path, used_junctions = queue.popleft()
         explored += 1
         for neighbor in adjacency[path[-1]]:
+            junction_id = junction_by_segments[path[-1], neighbor]
+            if junction_id in used_junctions:
+                continue
+            # Larger-cycle search discards a partial path as soon as one edge cannot move an ion.
+            if allow_larger_cycles and not _can_supply_cycle_move(state, path[-1], neighbor, moves):
+                continue
             if neighbor == source_segment_id:
                 if len(path) >= 2:
-                    return (source_segment_id, *path), explored
+                    # Lower each closed segment path immediately and return the first legal new placement.
+                    candidate_actions = _build_cycle_transport(
+                        state,
+                        requested_ion,
+                        (source_segment_id, *path),
+                        moves,
+                        ion_priorities=ion_priorities,
+                    )
+                    if candidate_actions is not None:
+                        timed_actions = tuple(
+                            ScheduledAction(index, action, state.time, architecture.action_duration(action))
+                            for index, action in enumerate(candidate_actions)
+                        )
+                        try:
+                            following = architecture.apply_layer(state, timed_actions)
+                        except ValueError:
+                            pass
+                        else:
+                            if following.occupancy not in excluded_occupancies:
+                                return candidate_actions, explored
+                    if not allow_larger_cycles:
+                        return None, explored
                 continue
             if neighbor in path or neighbor == destination_segment_id:
                 continue
-            queue.append((*path, neighbor))
+            queue.append(((*path, neighbor), used_junctions | {junction_id}))
     return None, explored
+
+
+def _can_supply_cycle_move(
+    state: GridMachineState,
+    source_segment_id: str,
+    destination_segment_id: str,
+    moves: Sequence[JunctionMove],
+    *,
+    requested_ion: int | None = None,
+) -> bool:
+    """Return whether one ion can leave an occupied cycle segment along an edge."""
+    if not state.occupants(source_segment_id):
+        return True
+    return any(
+        len(move.ions) == 1
+        and move.source.segment_id == source_segment_id
+        and move.destination.segment_id == destination_segment_id
+        and (requested_ion is None or move.ions[0] == requested_ion)
+        for move in moves
+    )
 
 
 def _build_cycle_transport(
@@ -769,7 +841,7 @@ __all__ = [
     "clear_blocked_path",
     "junction_moves",
     "movement_candidates",
-    "next_segment_toward",
+    "next_segments_toward",
     "route_gate_bfs",
     "route_junction_crossing_greedy_cycle",
     "route_placement_bfs",
