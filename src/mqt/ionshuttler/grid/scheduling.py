@@ -333,6 +333,24 @@ def schedule_greedy(
             movement_layer = (*movement_layer, *path_clearing_layer)
         action_layer = (*gate_layer, *movement_layer)
         next_time = None if action_layer else _next_resource_release(state)
+        if not action_layer and next_time is None:
+            # Let a blocked incoming operand temporarily displace an operand already in its zone.
+            incoming_ions_first = tuple(
+                sorted(priority, key=lambda request: state.ion_segment(request[0]) == request[1])
+            )
+            movement_layer, additional_moves_explored, _blocked_targets = _priority_movement_layer(
+                architecture,
+                state,
+                len(scheduled_actions),
+                incoming_ions_first,
+                (),
+                frozenset(),
+                max_states=config.max_routing_states,
+                allowed_crossings=config.allowed_junction_crossings,
+                selected_gate_requests=selected_gate_requests,
+            )
+            explored_states += additional_moves_explored
+            action_layer = movement_layer
         if not action_layer and next_time is None and not stall_clear_attempted_since_gate_completion:
             stall_clear_attempted_since_gate_completion = True
             path_clearing_layer, clearing_paths_explored = _build_clearing_layer_for_gate(

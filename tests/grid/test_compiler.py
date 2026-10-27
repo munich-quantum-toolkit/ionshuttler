@@ -937,6 +937,43 @@ def test_greedy_compiler_rotates_a_sparse_topology_cycle() -> None:
     assert result.duration == 2
 
 
+def test_greedy_compiler_can_temporarily_move_an_operand_out_of_its_processing_zone() -> None:
+    """Move a waiting operand when retaining it would block the other operand."""
+    base = rectangular_grid(3, 3)
+    processing_zone_segments = {"v:0:1", "v:1:1"}
+    segments = tuple(
+        Segment(
+            segment.segment_id,
+            capacity=2,
+            occupancy=segment.occupancy,
+            processing_zones=(ProcessingZone(f"pz:{segment.segment_id}"),),
+        )
+        if segment.segment_id in processing_zone_segments
+        else segment
+        for segment in base.segments
+    )
+    architecture = GridArchitecture(segments, base.junctions)
+    placement = {
+        "h:0:0": (2,),
+        "h:1:1": (5,),
+        "h:2:0": (6,),
+        "h:2:1": (7,),
+        "v:0:1": (1, 3),
+        "v:1:1": (0, 4),
+    }
+
+    result = GridCompiler(architecture).compile(
+        _qasm(8, "rzz(0.5) q[7],q[0];"),
+        initial_placement=placement,
+        gate_to_processing_zone={0: "pz:v:1:1"},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.final_state.ion_segment(0) == "v:1:1"
+    assert result.final_state.ion_segment(7) == "v:1:1"
+    result.validate()
+
+
 def test_greedy_compiler_routes_to_the_nearest_processing_zone() -> None:
     """Choose the nearest reachable processing zone that supports the gate."""
     source = Segment("source")
