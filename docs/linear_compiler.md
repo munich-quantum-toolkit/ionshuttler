@@ -200,10 +200,10 @@ explicitly.
 
 The configuration type selects one of two scheduling strategies:
 
-| Configuration       | Method                                                                                                                           | Use it for                                              |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `SearchConfig`      | Search-based: explores schedules one gate, shuttle, or swap at a time. This is the default.                                      | Small circuits and reference schedules.                 |
-| `PermutationConfig` | Permutation-based: constructs complete target placements for groups of gates and routes directly between consecutive placements. | Large circuits where action-level search is too costly. |
+| Configuration       | Method                                                                                                                                                | Use it for                              |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `PermutationConfig` | Permutation-based: constructs complete target placements for groups of gates and routes directly between consecutive placements. This is the default. | Most circuits, including large ones.    |
+| `SearchConfig`      | Search-based: explores schedules one gate, shuttle, or swap at a time.                                                                                | Small circuits and reference schedules. |
 
 Both configuration types inherit these settings from
 {py:class}`~mqt.ionshuttler.linear.LinearCompilerConfig`:
