@@ -25,9 +25,9 @@ if TYPE_CHECKING:
 PROGRAM_SCHEMA = "mqt.ionshuttler.program"
 PROGRAM_VERSION = 1
 
+# One measured value: the outcome number, followed by the iteration of each
+# enclosing loop for an outcome measured inside loops.
 OutcomeKey: TypeAlias = "int | tuple[int, ...]"
-"""Identify one measured value: the outcome number, followed by the iteration
-of each enclosing loop for an outcome measured inside loops."""
 
 
 @dataclass(frozen=True)

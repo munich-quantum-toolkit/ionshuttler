@@ -13,7 +13,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
 
 from mqt.ionshuttler.circuit import Circuit, with_commutation_aware_dependencies
 from mqt.ionshuttler.core.gates import GateAction
@@ -28,7 +28,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from mqt.ionshuttler.core.actions import Action
+    from mqt.ionshuttler.core.result import CompilationResult
     from mqt.ionshuttler.grid.compiler import GridCompiler
+    from mqt.ionshuttler.linear.compiler import LinearCompiler
 
     from .program import OutcomeKey, Step
     from .schedule import ScheduleStep
@@ -36,7 +38,33 @@ if TYPE_CHECKING:
 PROGRAM_RESULT_SCHEMA = "mqt.ionshuttler.program_result"
 PROGRAM_RESULT_VERSION = 1
 
-Placement = dict[str, tuple[int, ...]]
+# Grid placements map segments to ions; Linear placements list the site of each ion.
+_PlacementT = TypeVar("_PlacementT")
+_PlacementT_contra = TypeVar("_PlacementT_contra", contravariant=True)
+
+
+class _CircuitCompiler(Protocol[_PlacementT_contra]):
+    """Compile one straight-line circuit between placements of one architecture.
+
+    ``GridCompiler`` and ``LinearCompiler`` satisfy this protocol. The machine
+    state of each result reports its placement in the form that ``compile``
+    accepts.
+    """
+
+    @property
+    def architecture(self) -> object:
+        """The architecture that the compiler targets."""
+        ...
+
+    def compile(
+        self,
+        circuit: Circuit,
+        *,
+        initial_placement: _PlacementT_contra | None = None,
+        target_placement: _PlacementT_contra | None = None,
+    ) -> CompilationResult[Any, Any, Any, Any]:
+        """Compile a circuit that starts in ``initial_placement`` and ends in ``target_placement``."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -187,14 +215,34 @@ class _CompilationFailedError(Exception):
     """Stop compilation at the first part that cannot be compiled."""
 
 
+@overload
 def compile_program(
     program: Program,
     compiler: GridCompiler,
     *,
     initial_placement: Mapping[str, Sequence[int]] | None = None,
     feedback_delay: int = 0,
+) -> ProgramResult: ...
+
+
+@overload
+def compile_program(
+    program: Program,
+    compiler: LinearCompiler,
+    *,
+    initial_placement: Sequence[int] | None = None,
+    feedback_delay: int = 0,
+) -> ProgramResult: ...
+
+
+def compile_program(
+    program: Program,
+    compiler: _CircuitCompiler[_PlacementT],
+    *,
+    initial_placement: _PlacementT | None = None,
+    feedback_delay: int = 0,
 ) -> ProgramResult:
-    """Compile every path of a dynamic program with a Grid compiler.
+    """Compile every path of a dynamic program with a Grid or Linear compiler.
 
     Each straight-line circuit is compiled once. Both sides of a branch start
     from the placement before the branch. When later steps follow the branch,
@@ -207,8 +255,10 @@ def compile_program(
 
     Args:
         program: Program to compile.
-        compiler: Compiler for the straight-line circuits.
-        initial_placement: Optional segment-to-ion placement before the program.
+        compiler: ``GridCompiler`` or ``LinearCompiler`` for the straight-line
+            circuits.
+        initial_placement: Optional placement before the program, in the form
+            that ``compiler.compile`` accepts.
         feedback_delay: Time from the end of a measurement until a branch that
             reads its outcome can start.
 
@@ -217,8 +267,13 @@ def compile_program(
         circuit or a return to the placement before a branch fails.
     """
     started = perf_counter()
+    # A circuit without gates checks the placement and brings it into the form of the machine state.
     placement = (
-        None if initial_placement is None else _placement_of(compiler.architecture.initial_state(initial_placement))
+        None
+        if initial_placement is None
+        else compiler.compile(
+            Circuit(program.num_ions, (), ()), initial_placement=initial_placement
+        ).final_state.placement
     )
     builder = _ProgramBuilder(program, compiler, placement)
     status = CompilationStatus.SUCCESS
@@ -236,25 +291,32 @@ def compile_program(
     return ProgramResult(status, program, schedule, compiler.architecture, perf_counter() - started, message)
 
 
-class _ProgramBuilder:
+class _ProgramBuilder(Generic[_PlacementT]):
     """Compile program steps while tracking the placement between them."""
 
-    def __init__(self, program: Program, compiler: GridCompiler, placement: Placement | None) -> None:
+    def __init__(
+        self,
+        program: Program,
+        compiler: _CircuitCompiler[_PlacementT],
+        placement: _PlacementT | None,
+    ) -> None:
         self.program = program
         self.compiler = compiler
         self.placement = placement
         self.initial_state: Any = None
         self.compiled: list[ScheduleStep] = []
 
-    def compile_circuit(self, circuit: Circuit, target: Placement | None = None) -> Any:  # ruff: ignore[any-type] - compiler result
+    def compile_circuit(
+        self, circuit: Circuit, target: _PlacementT | None = None
+    ) -> CompilationResult[Any, Any, Any, Any]:
         result = self.compiler.compile(circuit, initial_placement=self.placement, target_placement=target)
         if self.initial_state is None:
             self.initial_state = result.schedule.initial_state
-        self.placement = _placement_of(result.final_state)
+        self.placement = result.final_state.placement
         return result
 
     def compile_steps(
-        self, steps: tuple[Step, ...], target: Placement | None, where: str, *, record: bool = False
+        self, steps: tuple[Step, ...], target: _PlacementT | None, where: str, *, record: bool = False
     ) -> tuple[ScheduleStep, ...]:
         """Compile steps that end in ``target`` when it is given.
 
@@ -276,7 +338,7 @@ class _ProgramBuilder:
                 result = self.compile_circuit(step, target if last else None)
                 compiled.append(result.schedule)
                 if result.status is not CompilationStatus.SUCCESS:
-                    gates_done = result.diagnostics is not None and result.diagnostics.gates == len(step.gates)
+                    gates_done = sum(isinstance(action, GateAction) for action in result.path) == len(step.gates)
                     reason = (
                         "returning to the placement before the branch failed"
                         if gates_done
@@ -301,7 +363,7 @@ class _ProgramBuilder:
                 raise _CompilationFailedError(msg)
         return tuple(compiled)
 
-    def compile_branch(self, branch: Branch, join: Placement | None, where: str) -> ScheduledBranch:
+    def compile_branch(self, branch: Branch, join: _PlacementT | None, where: str) -> ScheduledBranch:
         """Compile both sides of a branch so that each ends in ``join`` when it is given.
 
         Returns:
@@ -324,10 +386,6 @@ class _ProgramBuilder:
         steps = self.compile_steps(loop.steps, start, f"{where}, loop")
         self.placement = start
         return ScheduledLoop(steps, loop.count, loop.entry, loop.repeat)
-
-
-def _placement_of(state: Any) -> Placement:  # ruff: ignore[any-type] - architecture machine state
-    return dict(state.occupancy)
 
 
 def _same_idle_state(first: Any, second: Any) -> bool:  # ruff: ignore[any-type] - architecture machine states

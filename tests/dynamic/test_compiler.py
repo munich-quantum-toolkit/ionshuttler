@@ -43,6 +43,7 @@ from mqt.ionshuttler.grid import (
     square_grid,
 )
 from mqt.ionshuttler.grid.actions import decode_grid_action
+from mqt.ionshuttler.linear import DEFAULT_ACTION_TYPES, LinearArchitecture, LinearCompiler
 
 if TYPE_CHECKING:
     from mqt.ionshuttler.dynamic import BranchingSchedule
@@ -50,6 +51,12 @@ if TYPE_CHECKING:
 FIXTURES = Path(__file__).parent / "fixtures"
 GRID = square_grid(3, processing_zone_segments=("h:1:0", "h:1:1"), segment_capacity=2)
 BREADTH_FIRST = GridCompilerConfig(strategy=GridCompilerStrategy.BREADTH_FIRST)
+# The fixtures use rxx, which Linear supports only on request.
+LINEAR = LinearArchitecture(
+    num_sites=16,
+    processing_zones={"left": [4, 5], "right": [10, 11]},
+    supported_action_types=(*DEFAULT_ACTION_TYPES, Rxx),
+)
 
 
 def _program(name: str) -> Program:
@@ -312,3 +319,42 @@ def test_loop_results_round_trip_through_json() -> None:
     )
 
     assert restored == result
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "teleportation",
+        "nested_branches",
+        "reset_and_reuse",
+        "register_conditions",
+        "counted_loop",
+        "repeat_until_success",
+        "steane_flagged_error_correction",
+    ],
+)
+def test_every_fixture_program_compiles_on_a_linear_architecture(name: str) -> None:
+    """Compile the same programs with the Linear compiler and check every connection."""
+    result = compile_program(_program(name), LinearCompiler(LINEAR), feedback_delay=1)
+
+    assert result.status is CompilationStatus.SUCCESS
+    result.validate()
+    assert all(summary.gates > 0 for summary in result.path_summaries(max_iterations=3))
+
+
+def test_linear_branches_return_to_the_sites_before_them() -> None:
+    """Start from a given Linear placement and continue from it after a branch."""
+    suffix = Circuit(num_ions=2, gates=(Rx(ion=0, theta=0.1, gate_id=0),), predecessors=(frozenset(),))
+    program = Program(2, (*_measure_then_branch().steps, suffix))
+
+    result = compile_program(program, LinearCompiler(LINEAR), initial_placement=(0, 15), feedback_delay=1)
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.schedule.initial_state.placement == (0, 15)
+    result.validate()
+    prefix = result.schedule.steps[0]
+    assert isinstance(prefix, Schedule)
+    before = LINEAR.replay_schedule(prefix).placement
+    for values in result.schedule.paths():
+        timeline = result.schedule.timeline_for(values)
+        assert timeline[-1].schedule.initial_state.placement == before
