@@ -159,6 +159,27 @@ def test_compiler_routes_to_an_exact_target_placement(strategy: GridCompilerStra
     assert result.diagnostics.junction_moves == 3
 
 
+def test_greedy_compiler_starts_a_virtual_gate_after_its_predecessor_ends() -> None:
+    """Keep a virtual rotation after the running gate on the same ion."""
+    memory = Segment("memory")
+    middle = Segment("middle")
+    processor = Segment("processor", capacity=3, processing_zones=(ProcessingZone("pz"),))
+    architecture = GridArchitecture(
+        (memory, middle, processor),
+        (Junction("j0", (memory.end, middle.start)), Junction("j1", (middle.end, processor.start))),
+        gate_timing=GateTiming(rxx=4),
+    )
+
+    result = GridCompiler(architecture).compile(
+        _qasm(3, "rxx(0.5) q[0],q[1];", "rz(0.5) q[0];", "rx(0.5) q[2];"),
+        initial_placement={"processor": (0, 1), "memory": (2,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    times = {type(item.action).__name__: item for item in result.schedule.scheduled_actions}
+    assert times["Rz"].start_time >= times["Rxx"].end_time
+
+
 @pytest.mark.parametrize("strategy", list(GridCompilerStrategy))
 def test_compiler_routes_to_a_partial_target_placement(strategy: GridCompilerStrategy) -> None:
     """Reach active ion targets without constraining spectator destinations."""

@@ -700,7 +700,13 @@ def _greedy_gate_plan(
         ready = tuple(gate for gate in _ready_gates(circuit, virtually_completed) if gate.gate_id not in started_ids)
         if not ready:
             break
-        virtual = tuple(gate for gate in ready if architecture.is_virtual_gate(gate))
+        # A virtual gate claims no ion, so it may start only after its predecessors finish.
+        virtual = tuple(
+            gate
+            for gate in ready
+            if architecture.is_virtual_gate(gate)
+            and (round_index > 0 or (gate.gate_id is not None and circuit.predecessors[gate.gate_id] <= completed))
+        )
         gates_by_segment: dict[str, list[GateAction]] = defaultdict(list)
         for gate in ready:
             if architecture.is_virtual_gate(gate):
