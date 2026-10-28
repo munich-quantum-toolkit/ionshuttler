@@ -30,7 +30,11 @@ from mqt.ionshuttler.linear import (
     PermutationConfig,
 )
 from mqt.ionshuttler.linear.actions import PhysicalSwap, Shuttle
-from mqt.ionshuttler.linear.permutation import compile_with_permutations, route_to_placement
+from mqt.ionshuttler.linear.permutation import (
+    append_route_to_placement,
+    compile_with_permutations,
+    route_to_placement,
+)
 from mqt.ionshuttler.linear.result import PermutationDiagnostics
 from mqt.ionshuttler.linear.state import State, create_initial_state
 
@@ -557,3 +561,19 @@ def test_interruption_keeps_the_completed_groups(monkeypatch: pytest.MonkeyPatch
     assert 0 < len(_gate_time_windows(result)) < 60
     assert _permutation_diagnostics(result).groups == 1
     result.validate()
+
+
+def test_appended_route_starts_after_the_schedule_and_moves_independent_ions_together() -> None:
+    """Start each transport of the route as soon as its ions and target site are free."""
+    architecture = LinearArchitecture(num_sites=6, processing_zones={"pz": [2, 3]})
+    qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nrx(0.5) q[0];\n'
+    schedule = LinearCompiler(architecture).compile(qasm, initial_placement=[2, 3]).schedule
+
+    extended = append_route_to_placement(schedule, (1, 4), architecture, (Shuttle, PhysicalSwap))
+
+    assert extended is not None
+    route = extended.scheduled_actions[len(schedule.scheduled_actions) :]
+    assert {type(item.action) for item in route} == {Shuttle}
+    assert [item.start_time for item in route] == [schedule.end_time, schedule.end_time]
+    assert architecture.replay_schedule(extended).placement == (1, 4)
+    assert append_route_to_placement(schedule, (3, 2), architecture, (Shuttle,)) is None

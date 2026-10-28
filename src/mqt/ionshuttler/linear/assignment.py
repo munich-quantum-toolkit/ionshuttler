@@ -12,7 +12,7 @@ from __future__ import annotations
 from itertools import combinations
 from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.core.gates import SingleQubitGate, TwoQubitGate
+from mqt.ionshuttler.core.gates import GlobalGate
 from mqt.ionshuttler.partitioning import GateInfo, compute_fine_grained_gate_partition
 
 if TYPE_CHECKING:
@@ -98,11 +98,9 @@ def _physical_gate_qubits(
     gate: GateAction,
     architecture: LinearArchitecture,
 ) -> tuple[int, ...]:
-    if isinstance(gate, TwoQubitGate):
-        return (gate.ion_a, gate.ion_b)
-    if isinstance(gate, SingleQubitGate) and not architecture.is_virtual_gate(gate):
-        return (gate.ion,)
-    return ()
+    if isinstance(gate, GlobalGate) or architecture.is_virtual_gate(gate):
+        return ()
+    return gate.ions
 
 
 def _ring_distance(first_position: float, second_position: float, num_sites: int) -> float:

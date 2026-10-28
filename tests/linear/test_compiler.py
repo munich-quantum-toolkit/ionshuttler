@@ -10,15 +10,15 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
 from qiskit import QuantumCircuit
 
 import mqt.ionshuttler.linear.compiler as compiler_module
 import mqt.ionshuttler.linear.search as search_module
-from mqt.ionshuttler.circuit import parse_circuit
-from mqt.ionshuttler.core.gates import GateAction, Rx, Rxx, Ry, Rz, Rzz
+from mqt.ionshuttler.circuit import Circuit, parse_circuit
+from mqt.ionshuttler.core.gates import GateAction, Measure, Reset, Rx, Rxx, Ry, Rz, Rzz
 from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.linear import (
     DEFAULT_ACTION_TYPES,
@@ -131,7 +131,16 @@ def test_compiler_defaults_to_all_built_in_hardware_actions() -> None:
 
     assert compiler.config.action_types is None
     assert compiler.architecture.supported_action_types == DEFAULT_ACTION_TYPES
-    assert compiler.architecture.supported_action_types == (PhysicalSwap, Shuttle, Rx, Ry, Rz, Rzz)
+    assert compiler.architecture.supported_action_types == (
+        PhysicalSwap,
+        Shuttle,
+        Rx,
+        Ry,
+        Rz,
+        Rzz,
+        Measure,
+        Reset,
+    )
 
 
 def test_compiler_requires_explicit_opt_in_for_non_default_gates() -> None:
@@ -489,3 +498,76 @@ def test_compiler_reports_a_makespan_lower_bound() -> None:
         assert result.diagnostics is not None
         assert result.diagnostics.makespan_lower_bound == 3
         assert result.duration >= result.diagnostics.makespan_lower_bound
+
+
+@pytest.mark.parametrize("config", [PermutationConfig(), SearchConfig()])
+def test_compiler_schedules_measurement_and_reset_in_a_processing_zone(
+    config: PermutationConfig | SearchConfig,
+) -> None:
+    """Treat measurement and reset as timed single-ion operations in a processing zone."""
+    architecture = LinearArchitecture(
+        num_sites=5,
+        processing_zones={"pz": [2]},
+        gate_timing=GateTiming(measure=3, reset=2),
+    )
+    circuit = Circuit(
+        num_ions=1,
+        gates=(Measure(ion=0, outcome=0, gate_id=0), Reset(ion=0, gate_id=1)),
+        predecessors=(frozenset(), frozenset({0})),
+    )
+
+    result = LinearCompiler(architecture, config).compile(circuit, initial_placement=[0])
+
+    assert result.status is CompilationStatus.SUCCESS
+    timed = {type(item.action): item for item in result.schedule.scheduled_actions}
+    assert timed[Measure].duration == 3
+    assert timed[Measure].processing_zone_id == "pz"
+    assert timed[Reset].duration == 2
+    assert timed[Reset].start_time >= timed[Measure].end_time
+    result.validate()
+
+
+@pytest.mark.parametrize("topology", ["chain", "ring"])
+@pytest.mark.parametrize("config", [PermutationConfig(), SearchConfig()])
+def test_compiler_moves_ions_to_the_target_placement_after_the_last_gate(
+    config: PermutationConfig | SearchConfig,
+    topology: Literal["chain", "ring"],
+) -> None:
+    """Reach the requested sites after all gates."""
+    architecture = LinearArchitecture(num_sites=6, processing_zones={"pz": [2, 3]}, topology=topology)
+    qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[3];\nrzz(0.5) q[0],q[2];\n'
+
+    result = LinearCompiler(architecture, config).compile(
+        qasm,
+        initial_placement=[0, 1, 2],
+        target_placement=[5, 4, 3],
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.final_state.placement == (5, 4, 3)
+    gate_end = max(item.end_time for item in result.schedule.scheduled_actions if isinstance(item.action, GateAction))
+    route = [item for item in result.schedule.scheduled_actions if item.start_time >= gate_end]
+    assert route
+    assert not any(isinstance(item.action, GateAction) for item in route)
+    assert result.diagnostics is not None
+    assert result.diagnostics.score == result.final_state.time
+    result.validate()
+
+
+def test_target_placement_fails_when_the_route_needs_a_disabled_transport() -> None:
+    """Report failure instead of a schedule that misses the target."""
+    architecture = LinearArchitecture(
+        num_sites=3,
+        processing_zones={"pz": [0, 1]},
+        supported_action_types=(Shuttle, Rx, Ry, Rz, Rzz),
+    )
+    qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nrx(0.5) q[0];\n'
+
+    result = LinearCompiler(architecture).compile(qasm, initial_placement=[0, 1], target_placement=[1, 0])
+
+    assert result.status is CompilationStatus.FAILED
+    assert result.final_state.placement == (0, 1)
+    with pytest.raises(ValueError, match="distinct site of the architecture for each circuit ion"):
+        LinearCompiler(architecture).compile(qasm, initial_placement=[0, 1], target_placement=[1, 1])
+    with pytest.raises(ValueError, match="distinct site of the architecture for each circuit ion"):
+        LinearCompiler(architecture).compile(qasm, initial_placement=[0, 1], target_placement=[0, 3])

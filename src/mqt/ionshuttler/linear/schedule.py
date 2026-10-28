@@ -87,6 +87,34 @@ class LinearMachineState:
             time=state.time,
         )
 
+    @property
+    def placement(self) -> tuple[int, ...]:
+        """The site of each ion, in ion order, as ``LinearCompiler.compile`` accepts it."""
+        return tuple(site for _ion, site in self.positions)
+
+    def at_time(self, time: int) -> LinearMachineState:
+        """Return this state with its clock advanced.
+
+        Returns:
+            The state at the requested time.
+
+        Raises:
+            TypeError: If the time is not an integer.
+            ValueError: If time moves backwards.
+        """
+        if isinstance(time, bool) or not isinstance(time, int):
+            msg = "time must be an integer"
+            raise TypeError(msg)
+        if time < self.time:
+            msg = "time must not move backwards"
+            raise ValueError(msg)
+        return LinearMachineState(
+            positions=self.positions,
+            ions_busy_until=tuple((ion, max(free_time, time)) for ion, free_time in self.ions_busy_until),
+            pzs_busy_until=tuple((zone, max(free_time, time)) for zone, free_time in self.pzs_busy_until),
+            time=time,
+        )
+
     def to_replay_state(self) -> State:
         """Return a Linear state with empty circuit progress."""
         return State(
