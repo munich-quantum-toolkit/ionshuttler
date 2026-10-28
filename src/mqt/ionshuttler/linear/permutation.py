@@ -36,7 +36,8 @@ from enum import Enum, auto
 from time import perf_counter
 from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.core.gates import GlobalGate, SingleQubitGate, TwoQubitGate
+from mqt.ionshuttler.core.actions import Action
+from mqt.ionshuttler.core.gates import GlobalGate
 from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 from mqt.ionshuttler.linear.actions import PhysicalSwap, Shuttle
@@ -45,11 +46,10 @@ from mqt.ionshuttler.linear.schedule import LinearMachineState
 from mqt.ionshuttler.linear.state import normalize_initial_state
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Collection, Mapping, Sequence
 
     from mqt.ionshuttler.circuit import Circuit
-    from mqt.ionshuttler.core.actions import Action
-    from mqt.ionshuttler.linear.actions import TransportAction
+    from mqt.ionshuttler.linear.actions import TransportAction, TransportTiming
     from mqt.ionshuttler.linear.architecture import LinearArchitecture
     from mqt.ionshuttler.linear.config import PermutationConfig
     from mqt.ionshuttler.linear.result import LinearCompilationResult
@@ -168,6 +168,86 @@ def route_to_placement(
         actions = _actions_at_physical_sites(position_actions, first_site, num_sites)
         candidates.append((_route_score(actions, architecture, first_site), actions))
     return min(candidates, key=operator.itemgetter(0))[1]
+
+
+def append_route_to_placement(
+    schedule: Schedule[Action, LinearMachineState],
+    target_site_of_ion: Sequence[int],
+    architecture: LinearArchitecture,
+    action_types: Collection[type[Action]],
+) -> Schedule[Action, LinearMachineState] | None:
+    """Extend a schedule so that every ion ends on its target site.
+
+    The route from :func:`route_to_placement` starts when the schedule ends.
+    Each transport starts as soon as its ions and its target site are free.
+
+    Args:
+        schedule: Schedule to extend.
+        target_site_of_ion: Target site indexed by ion.
+        architecture: Hardware layout that defines sites, topology, and timing.
+        action_types: Transport types that the route may use.
+
+    Returns:
+        The extended schedule, or ``None`` if the route needs a transport type
+        outside ``action_types``.
+    """
+    source_site_of_ion = architecture.replay_schedule(schedule).placement
+    actions = route_to_placement(source_site_of_ion, target_site_of_ion, architecture)
+    if not _route_uses_available_actions(
+        actions,
+        swaps_enabled=PhysicalSwap in action_types,
+        shuttles_enabled=Shuttle in action_types,
+    ):
+        return None
+    start = schedule.end_time
+    timed = sorted(
+        _earliest_transport_starts(
+            actions,
+            architecture.transport_timing,
+            [start] * len(source_site_of_ion),
+            [start] * architecture.num_sites,
+        ),
+        key=operator.itemgetter(1),
+    )
+    first_id = schedule.next_action_id
+    route = tuple(
+        ScheduledAction[Action](first_id + offset, action, start_time, duration)
+        for offset, (action, start_time, duration) in enumerate(timed)
+    )
+    end_time = max([schedule.end_time, *(item.end_time for item in route)])
+    return Schedule((*schedule.scheduled_actions, *route), end_time, schedule.initial_state)
+
+
+def _earliest_transport_starts(
+    actions: Sequence[TransportAction],
+    timing: TransportTiming,
+    ion_available_at: list[int],
+    site_vacated_at: list[int],
+) -> list[tuple[TransportAction, int, int]]:
+    """Return each transport with its earliest legal start time and its duration.
+
+    The transports keep their order. A shuttle waits for its ion and for the
+    last occupant of its target site to leave; a swap waits for both ions. The
+    function updates ``ion_available_at`` and ``site_vacated_at``.
+
+    Returns:
+        Each transport with its start time and duration.
+    """
+    timed: list[tuple[TransportAction, int, int]] = []
+    for action in actions:
+        if isinstance(action, Shuttle):
+            start_time = max(ion_available_at[action.ion], site_vacated_at[action.dst])
+            duration = timing.shuttle
+            site_vacated_at[action.src] = start_time
+            ion_available_at[action.ion] = start_time + duration
+        else:
+            assert isinstance(action, PhysicalSwap)
+            start_time = max(ion_available_at[action.ion_a], ion_available_at[action.ion_b])
+            duration = timing.swap
+            ion_available_at[action.ion_a] = start_time + duration
+            ion_available_at[action.ion_b] = start_time + duration
+        timed.append((action, start_time, duration))
+    return timed
 
 
 def _route_in_site_order(
@@ -719,28 +799,13 @@ class _PermutationCompilation:
         shuttle_count = len(actions) - swap_count
         if (swap_count and not self.swaps_enabled) or (shuttle_count and not self.shuttles_enabled):
             raise _UnavailableTransportError
-        timing = self.architecture.transport_timing
         schedule_entries = self.schedule_entries
-        for action in actions:
-            if isinstance(action, Shuttle):
-                # The target site must be empty: its last occupant has left.
-                start_time = max(
-                    self.ion_available_at[action.ion],
-                    self.site_vacated_at[action.dst],
-                )
-                self.site_vacated_at[action.src] = start_time
-                self.ion_available_at[action.ion] = start_time + timing.shuttle
-                duration = timing.shuttle
-            else:
-                assert isinstance(action, PhysicalSwap)
-                start_time = max(
-                    self.ion_available_at[action.ion_a],
-                    self.ion_available_at[action.ion_b],
-                )
-                duration = timing.swap
-                end_time = start_time + duration
-                self.ion_available_at[action.ion_a] = end_time
-                self.ion_available_at[action.ion_b] = end_time
+        for action, start_time, duration in _earliest_transport_starts(
+            actions,
+            self.architecture.transport_timing,
+            self.ion_available_at,
+            self.site_vacated_at,
+        ):
             schedule_entries.append(
                 _ScheduleEntry(
                     start_time=start_time,
@@ -923,11 +988,11 @@ def _initialize_compilation(
     zone_by_name = {zone.name: zone for zone in processing_zones}
     gate_kind: list[_GateKind] = []
     for gate in circuit.gates:
-        if isinstance(gate, GlobalGate) or (isinstance(gate, SingleQubitGate) and architecture.is_virtual_gate(gate)):
+        if isinstance(gate, GlobalGate) or architecture.is_virtual_gate(gate):
             gate_kind.append(_GateKind.NO_PROCESSING_ZONE)
-        elif isinstance(gate, SingleQubitGate):
+        elif len(gate.ions) == 1:
             gate_kind.append(_GateKind.ONE_ION)
-        elif isinstance(gate, TwoQubitGate):
+        elif len(gate.ions) == 2:
             gate_kind.append(_GateKind.TWO_IONS)
         else:
             msg = f"the permutation strategy supports no {type(gate).__name__}"
@@ -1020,4 +1085,4 @@ def _build_result(
     )
 
 
-__all__ = ["compile_with_permutations", "route_to_placement"]
+__all__ = ["append_route_to_placement", "compile_with_permutations", "route_to_placement"]

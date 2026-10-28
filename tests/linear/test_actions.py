@@ -16,7 +16,20 @@ from typing import ClassVar
 import pytest
 
 from mqt.ionshuttler.core.actions import Action
-from mqt.ionshuttler.core.gates import GateAction, GlobalGate, Rx, Rxx, Ry, Ryy, Rz, Rzz, SingleQubitGate, TwoQubitGate
+from mqt.ionshuttler.core.gates import (
+    GateAction,
+    GlobalGate,
+    Measure,
+    Reset,
+    Rx,
+    Rxx,
+    Ry,
+    Ryy,
+    Rz,
+    Rzz,
+    SingleQubitGate,
+    TwoQubitGate,
+)
 from mqt.ionshuttler.linear import GateTiming, TransportTiming
 from mqt.ionshuttler.linear.actions import (
     DEFAULT_ACTION_TYPES,
@@ -107,7 +120,19 @@ def test_supported_action_types_switch_implemented_capabilities() -> None:
     assert not without_swaps.supports(PhysicalSwap)
     assert with_global_control.supports(GlobalGate)
     assert with_global_control.supports(Rxx)
-    assert set(LINEAR_ACTION_TYPES.values()) == {Rx, Ry, Rz, Rxx, Ryy, Rzz, GlobalGate, Shuttle, PhysicalSwap}
+    assert set(LINEAR_ACTION_TYPES.values()) == {
+        Rx,
+        Ry,
+        Rz,
+        Rxx,
+        Ryy,
+        Rzz,
+        GlobalGate,
+        Measure,
+        Reset,
+        Shuttle,
+        PhysicalSwap,
+    }
 
 
 def test_architecture_owns_gate_timing_and_implementation() -> None:

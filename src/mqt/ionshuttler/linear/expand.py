@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.core.gates import GateAction, SingleQubitGate, TwoQubitGate
+from mqt.ionshuttler.core.gates import GateAction, GlobalGate, SingleQubitGate
 from mqt.ionshuttler.linear.actions import (
     DEFAULT_ACTION_TYPES,
     PhysicalSwap,
@@ -463,10 +463,8 @@ def _considered_ions(
         if len(remaining_predecessors) > gate_horizon:
             continue
         gate = circuit.gates[gate_id]
-        if isinstance(gate, SingleQubitGate):
-            ions.add(gate.ion)
-        elif isinstance(gate, TwoQubitGate):
-            ions.update({gate.ion_a, gate.ion_b})
+        if not isinstance(gate, GlobalGate):
+            ions.update(gate.ions)
     return ions
 
 
@@ -511,11 +509,9 @@ def _is_good_swap(
 
 def _gate_ions_are_free(gate: GateAction, busy_ions: set[int], architecture: LinearArchitecture) -> bool:
     """Return whether every physical participant of a gate is available."""
-    if isinstance(gate, SingleQubitGate):
-        return architecture.is_virtual_gate(gate) or gate.ion not in busy_ions
-    if isinstance(gate, TwoQubitGate):
-        return gate.ion_a not in busy_ions and gate.ion_b not in busy_ions
-    return True
+    if isinstance(gate, GlobalGate) or architecture.is_virtual_gate(gate):
+        return True
+    return busy_ions.isdisjoint(gate.ions)
 
 
 def _circuit_view(

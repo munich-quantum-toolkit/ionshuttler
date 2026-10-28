@@ -143,9 +143,12 @@ DEFAULT_ACTION_TYPES: tuple[type[_Action], ...] = (
     core_gates.Ry,
     core_gates.Rz,
     core_gates.Rzz,
+    core_gates.Measure,
+    core_gates.Reset,
 )
 LINEAR_ACTION_TYPES: Mapping[str, type[_Action]] = index_action_types((
     *core_gates.BUILTIN_GATE_TYPES,
+    *core_gates.NON_UNITARY_OPERATION_TYPES,
     Shuttle,
     PhysicalSwap,
 ))

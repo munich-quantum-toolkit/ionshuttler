@@ -212,6 +212,8 @@ def test_architecture_round_trips_through_json() -> None:
         "gate.ry",
         "gate.rz",
         "gate.rzz",
+        "gate.measure",
+        "gate.reset",
         "gate.global",
     ]
     assert architecture.to_dict()["transport_timing"] == {"shuttle": 2, "swap": 4}

@@ -20,12 +20,11 @@ from typing import TYPE_CHECKING, Literal, cast
 from mqt.ionshuttler.core.actions import Action
 from mqt.ionshuttler.core.gates import (
     GATE_NAMES,
+    NON_UNITARY_OPERATION_NAMES,
     SINGLE_QUBIT_GATE_NAMES,
     GateAction,
     GateTiming,
     GlobalGate,
-    SingleQubitGate,
-    TwoQubitGate,
 )
 from mqt.ionshuttler.linear.actions import (
     DEFAULT_ACTION_TYPES,
@@ -219,15 +218,9 @@ class LinearArchitecture:
             The zone name, or ``None`` if the action occupies no zone. Global
             gates, virtual single-ion gates, and transport occupy none.
         """
-        if isinstance(action, GlobalGate):
+        if not isinstance(action, GateAction) or isinstance(action, GlobalGate) or self.is_virtual_gate(action):
             return None
-        if isinstance(action, SingleQubitGate):
-            if self.is_virtual_gate(action):
-                return None
-            return self.processing_zone_at(dict(state.positions)[action.ion])
-        if isinstance(action, TwoQubitGate):
-            return self.processing_zone_at(dict(state.positions)[action.ion_a])
-        return None
+        return self.processing_zone_at(dict(state.positions)[action.ions[0]])
 
     def field_at(self, site: int) -> float:
         """Return the configured field value at one site."""
@@ -245,8 +238,9 @@ class LinearArchitecture:
     def action_duration(self, action: Action) -> int:
         """Return the architecture's duration for one action.
 
-        Gates use :attr:`gate_timing`, and a global gate takes the duration of
-        its rotation. Transport uses :attr:`transport_timing`.
+        Gates, measurements, and resets use :attr:`gate_timing`, and a global
+        gate takes the duration of its rotation. Transport uses
+        :attr:`transport_timing`.
 
         Returns:
             The duration in timesteps.
@@ -261,12 +255,12 @@ class LinearArchitecture:
         if isinstance(action, GlobalGate):
             return self.gate_timing.duration_for(action.gate_name)
         gate_name = action.circuit_name if isinstance(action, GateAction) else None
-        if gate_name is not None and gate_name in GATE_NAMES:
+        if gate_name is not None and gate_name in GATE_NAMES | NON_UNITARY_OPERATION_NAMES:
             return self.gate_timing.duration_for(gate_name)
         msg = f"LinearArchitecture defines no duration for {type(action).__name__}"
         raise TypeError(msg)
 
-    def is_virtual_gate(self, gate: SingleQubitGate) -> bool:
+    def is_virtual_gate(self, gate: GateAction) -> bool:
         """Return whether this architecture implements a single-ion gate virtually."""
         gate_name = gate.circuit_name
         if gate_name is None or gate_name not in SINGLE_QUBIT_GATE_NAMES:
@@ -490,56 +484,29 @@ class LinearArchitecture:
 
     def _is_gate_valid(self, state: State, gate: GateAction) -> bool:
         positions = dict(state.positions)
-        if isinstance(gate, GlobalGate):
+        if isinstance(gate, GlobalGate) or self.is_virtual_gate(gate):
             return all(ion in positions for ion in gate.ions)
+        _require_one_or_two_ions(gate)
         ions_busy = dict(state.ions_busy_until)
-        if isinstance(gate, SingleQubitGate):
-            if self.is_virtual_gate(gate):
-                return gate.ion in positions
-            position = positions.get(gate.ion)
-            if position is None or ions_busy.get(gate.ion, state.time + 1) > state.time:
-                return False
-            zone = self.processing_zone_at(position)
-            return zone is not None and dict(state.pzs_busy_until).get(zone, state.time + 1) <= state.time
-        if isinstance(gate, TwoQubitGate):
-            pos_a = positions.get(gate.ion_a)
-            pos_b = positions.get(gate.ion_b)
-            if (
-                pos_a is None
-                or pos_b is None
-                or ions_busy.get(gate.ion_a, state.time + 1) > state.time
-                or ions_busy.get(gate.ion_b, state.time + 1) > state.time
-            ):
-                return False
-            zone_a = self.processing_zone_at(pos_a)
-            zone_b = self.processing_zone_at(pos_b)
-            return (
-                zone_a is not None
-                and zone_a == zone_b
-                and dict(state.pzs_busy_until).get(zone_a, state.time + 1) <= state.time
-            )
-        msg = f"LinearArchitecture defines no rules for {type(gate).__name__}"
-        raise TypeError(msg)
+        if any(ion not in positions or ions_busy.get(ion, state.time + 1) > state.time for ion in gate.ions):
+            return False
+        zones = {self.processing_zone_at(positions[ion]) for ion in gate.ions}
+        zone = zones.pop()
+        return not zones and zone is not None and dict(state.pzs_busy_until).get(zone, state.time + 1) <= state.time
 
     def _apply_gate(self, state: State, gate: GateAction) -> State:
         # Global gates act through a schedule-wide control field and reserve no
         # ions or processing zones in the Linear model.
-        if isinstance(gate, GlobalGate) or (isinstance(gate, SingleQubitGate) and self.is_virtual_gate(gate)):
+        if isinstance(gate, GlobalGate) or self.is_virtual_gate(gate):
             return state
+        _require_one_or_two_ions(gate)
         positions = dict(state.positions)
         ions_busy = dict(state.ions_busy_until)
         pzs_busy = dict(state.pzs_busy_until)
         free_time = state.time + self.action_duration(gate)
-        if isinstance(gate, SingleQubitGate):
-            ions_busy[gate.ion] = free_time
-            zone = self.processing_zone_at(positions[gate.ion])
-        elif isinstance(gate, TwoQubitGate):
-            ions_busy[gate.ion_a] = free_time
-            ions_busy[gate.ion_b] = free_time
-            zone = self.processing_zone_at(positions[gate.ion_a])
-        else:
-            msg = f"LinearArchitecture defines no rules for {type(gate).__name__}"
-            raise TypeError(msg)
+        for ion in gate.ions:
+            ions_busy[ion] = free_time
+        zone = self.processing_zone_at(positions[gate.ions[0]])
         if zone is not None:
             pzs_busy[zone] = free_time
         return replace(state, ions_busy_until=tuple(ions_busy.items()), pzs_busy_until=tuple(pzs_busy.items()))
@@ -663,6 +630,12 @@ def _has_nontrivial_field_profile(field_profile: FieldProfile) -> bool:
         value != 1.0  # ruff: ignore[float-equality-comparison] - One is the exact default field value.
         for _, value in field_profile.site_field
     )
+
+
+def _require_one_or_two_ions(gate: GateAction) -> None:
+    if len(gate.ions) not in {1, 2}:
+        msg = f"LinearArchitecture defines no rules for {type(gate).__name__}"
+        raise TypeError(msg)
 
 
 def _validate_site(site: int, num_sites: int) -> None:
