@@ -65,7 +65,7 @@ def test_pre_partition_is_a_strict_single_zone_no_op() -> None:
     architecture = LinearArchitecture(num_sites=5, processing_zones={"pz": [2, 3]})
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nrzz(0.3) q[0],q[1];\n'
 
-    baseline = LinearCompiler(architecture).compile(qasm)
+    baseline = LinearCompiler(architecture, SearchConfig()).compile(qasm)
     partitioned = LinearCompiler(architecture, SearchConfig(pre_partition=True)).compile(qasm)
 
     assert partitioned == baseline
@@ -340,7 +340,7 @@ def test_failed_search_result_is_returned(monkeypatch: pytest.MonkeyPatch) -> No
         return failed
 
     monkeypatch.setattr(compiler_module, "search", fail_search)
-    compiler = LinearCompiler(LinearArchitecture(num_sites=1))
+    compiler = LinearCompiler(LinearArchitecture(num_sites=1), SearchConfig())
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.5) q[0];\n'
 
     result = compiler.compile(qasm)
@@ -357,7 +357,7 @@ def test_interruption_returns_an_interrupted_result(monkeypatch: pytest.MonkeyPa
         raise KeyboardInterrupt
 
     monkeypatch.setattr(search_module, "_run_search", interrupt)
-    compiler = LinearCompiler(LinearArchitecture(num_sites=1))
+    compiler = LinearCompiler(LinearArchitecture(num_sites=1), SearchConfig())
     qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[1];\nrx(0.5) q[0];\n'
 
     result = compiler.compile(qasm)
