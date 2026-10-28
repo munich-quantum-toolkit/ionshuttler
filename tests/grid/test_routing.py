@@ -9,16 +9,47 @@
 
 from __future__ import annotations
 
+import pytest
+
 from mqt.ionshuttler.core.gates import Rx
 from mqt.ionshuttler.core.schedule import ScheduledAction
 from mqt.ionshuttler.grid import Cycle, GridArchitecture, Junction, JunctionMove, Segment, rectangular_grid
 from mqt.ionshuttler.grid.routing import (
     clear_blocked_path,
     junction_moves,
+    movement_candidates,
     next_segments_toward,
     route_gate_bfs,
     route_junction_crossing_greedy_cycle,
 )
+
+
+@pytest.mark.parametrize("capacity", [2, 3])
+def test_cycle_candidates_move_whole_crystals(capacity: int) -> None:
+    """Construct cycles whose junction moves contain every ion in a crystal."""
+    segments = tuple(Segment(name, capacity=capacity) for name in ("a", "b", "c"))
+    a, b, c = segments
+    architecture = GridArchitecture(
+        segments,
+        (
+            Junction("ab", (a.end, b.start)),
+            Junction("bc", (b.end, c.start)),
+            Junction("ca", (c.end, a.start)),
+        ),
+    )
+    state = architecture.initial_state({
+        segment.segment_id: tuple(range(index * capacity, (index + 1) * capacity))
+        for index, segment in enumerate(segments)
+    })
+
+    candidates, _explored = movement_candidates(architecture, state, max_cycle_work=10_000)
+
+    assert any(
+        isinstance(candidate, Cycle)
+        and {move.source.segment_id for move in candidate.moves} == {"a", "b", "c"}
+        and all(len(move.ions) == capacity for move in candidate.moves)
+        for candidate in candidates
+    )
 
 
 def _blocked_exit_architecture(*, with_side: bool = True, side_capacity: int = 1) -> GridArchitecture:

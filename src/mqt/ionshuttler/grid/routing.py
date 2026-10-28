@@ -406,6 +406,7 @@ def _find_cycle_transport(
                 if len(path) >= 2:
                     # Lower each closed segment path immediately and return the first legal new placement.
                     candidate_actions = _build_cycle_transport(
+                        architecture,
                         state,
                         requested_ion,
                         (source_segment_id, *path),
@@ -441,19 +442,19 @@ def _can_supply_cycle_move(
     *,
     requested_ion: int | None = None,
 ) -> bool:
-    """Return whether one ion can leave an occupied cycle segment along an edge."""
+    """Return whether a crystal containing the requested ion can leave along an edge."""
     if not state.occupants(source_segment_id):
         return True
     return any(
-        len(move.ions) == 1
-        and move.source.segment_id == source_segment_id
+        move.source.segment_id == source_segment_id
         and move.destination.segment_id == destination_segment_id
-        and (requested_ion is None or move.ions[0] == requested_ion)
+        and (requested_ion is None or requested_ion in move.ions)
         for move in moves
     )
 
 
 def _build_cycle_transport(
+    architecture: GridArchitecture,
     state: GridMachineState,
     requested_ion: int,
     cycle_segments: tuple[str, ...],
@@ -466,31 +467,54 @@ def _build_cycle_transport(
     Returns:
         A full cycle or sparse move layer, or ``None`` if lowering fails.
     """
-    cycle_moves: list[JunctionMove] = []
-    crossings = pairwise((*cycle_segments, cycle_segments[0]))
-    for index, (source_segment_id, destination_segment_id) in enumerate(crossings):
-        if not state.occupants(source_segment_id):
-            continue
-        candidates = tuple(
+    crossings = tuple(pairwise((*cycle_segments, cycle_segments[0])))
+    first_source, first_destination = crossings[0]
+    requested_moves = sorted(
+        (
             move
             for move in moves
-            if len(move.ions) == 1
-            and move.source.segment_id == source_segment_id
-            and move.destination.segment_id == destination_segment_id
-        )
-        if index == 0:
-            candidates = tuple(move for move in candidates if move.ions[0] == requested_ion)
-        if not candidates:
-            return None
-        cycle_moves.append(_least_important_move(candidates, ion_priorities))
-    if len(cycle_moves) < 2:
-        return None
-    if len(cycle_moves) == len(cycle_segments):
-        try:
-            return (Cycle(tuple(cycle_moves)),)
-        except ValueError:
-            return None
-    return tuple(cycle_moves)
+            if move.source.segment_id == first_source
+            and move.destination.segment_id == first_destination
+            and requested_ion in move.ions
+        ),
+        key=lambda move: (len(move.ions), move.ions),
+    )
+    for requested_move in requested_moves:
+        chain_size = len(requested_move.ions)
+        cycle_moves = [requested_move]
+        for source_segment_id, destination_segment_id in crossings[1:]:
+            if not state.occupants(source_segment_id):
+                continue
+            candidates = tuple(
+                move
+                for move in moves
+                if move.source.segment_id == source_segment_id and move.destination.segment_id == destination_segment_id
+            )
+            if not candidates:
+                break
+            same_size = tuple(move for move in candidates if len(move.ions) == chain_size)
+            cycle_moves.append(_least_important_move(same_size or candidates, ion_priorities))
+        else:
+            if len(cycle_moves) < 2:
+                continue
+            actions: tuple[Action, ...]
+            if len(cycle_moves) == len(cycle_segments):
+                try:
+                    actions = (Cycle(tuple(cycle_moves)),)
+                except ValueError:
+                    continue
+            else:
+                actions = tuple(cycle_moves)
+            timed_actions = tuple(
+                ScheduledAction(index, action, state.time, architecture.action_duration(action))
+                for index, action in enumerate(actions)
+            )
+            try:
+                architecture.apply_layer(state, timed_actions)
+            except ValueError:
+                continue
+            return actions
+    return None
 
 
 def _moves_to_clear_path(
@@ -651,13 +675,10 @@ def _cycle_candidates(
     max_work: int,
 ) -> tuple[tuple[Cycle, ...], int]:
     """Return legal simultaneous rotations and the number of examined moves."""
-    # Restrict discovery to one-ion moves to bound the candidate combinations.
-    # Cycle validation itself supports mixed chain sizes.
-    one_ion_moves = tuple(move for move in moves if len(move.ions) == 1)
     by_source: dict[str, list[JunctionMove]] = {}
-    for move in one_ion_moves:
+    for move in moves:
         by_source.setdefault(move.source.segment_id, []).append(move)
-    cycles: dict[tuple[tuple[str, str, str, str], ...], Cycle] = {}
+    cycles: dict[tuple[tuple[str, str, str, str, tuple[int, ...]], ...], Cycle] = {}
     explored = 0
     for start in sorted(by_source):
         if explored >= max_work:
@@ -686,7 +707,7 @@ def _extend_cycles(
     path: tuple[JunctionMove, ...],
     used_segments: frozenset[str],
     used_junctions: frozenset[str],
-    cycles: dict[tuple[tuple[str, str, str, str], ...], Cycle],
+    cycles: dict[tuple[tuple[str, str, str, str, tuple[int, ...]], ...], Cycle],
     *,
     max_work: int,
 ) -> int:
@@ -704,7 +725,9 @@ def _extend_cycles(
         explored += 1
         junction_id = architecture.junction_for(move.source).junction_id
         destination = move.destination.segment_id
-        if junction_id in used_junctions or move.ions[0] in {prior_move.ions[0] for prior_move in path}:
+        if junction_id in used_junctions or not set(move.ions).isdisjoint(
+            ion for prior_move in path for ion in prior_move.ions
+        ):
             continue
         extended = (*path, move)
         if destination == start:
@@ -736,7 +759,9 @@ def _extend_cycles(
     return explored
 
 
-def _canonical_cycle_key(moves: Sequence[JunctionMove]) -> tuple[tuple[str, str, str, str], ...]:
+def _canonical_cycle_key(
+    moves: Sequence[JunctionMove],
+) -> tuple[tuple[str, str, str, str, tuple[int, ...]], ...]:
     """Return a rotation-independent identity for a cycle's endpoint sequence."""
     parts = tuple(
         (
@@ -744,6 +769,7 @@ def _canonical_cycle_key(moves: Sequence[JunctionMove]) -> tuple[tuple[str, str,
             move.source.orientation,
             move.destination.segment_id,
             move.destination.orientation,
+            move.ions,
         )
         for move in moves
     )

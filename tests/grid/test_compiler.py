@@ -99,6 +99,36 @@ def test_compiler_uses_a_simultaneous_cycle_when_every_segment_is_full(strategy:
     assert result.diagnostics.junction_moves == 3
 
 
+@pytest.mark.parametrize("capacity", [2, 3])
+def test_greedy_compiler_routes_whole_crystals_in_a_cycle(capacity: int) -> None:
+    """Move a gate ion at the back of a full crystal without splitting the crystal."""
+    a = Segment("a", capacity=capacity)
+    b = Segment("b", capacity=capacity, processing_zones=(ProcessingZone("pz"),))
+    c = Segment("c", capacity=capacity)
+    architecture = GridArchitecture(
+        (a, b, c),
+        (
+            Junction("ab", (a.end, b.start)),
+            Junction("bc", (b.end, c.start)),
+            Junction("ca", (c.end, a.start)),
+        ),
+    )
+    placement = {
+        segment.segment_id: tuple(range(index * capacity, (index + 1) * capacity))
+        for index, segment in enumerate((a, b, c))
+    }
+
+    result = GridCompiler(architecture).compile(
+        _qasm(3 * capacity, "rx(0.5) q[0];"),
+        initial_placement=placement,
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert isinstance(result.path[0], Cycle)
+    assert all(len(move.ions) == capacity for move in result.path[0].moves)
+    assert result.final_state.ion_segment(0) == "b"
+
+
 @pytest.mark.parametrize("strategy", list(GridCompilerStrategy))
 def test_compiler_routes_to_an_exact_target_placement(strategy: GridCompilerStrategy) -> None:
     """Reach a final full-occupancy placement with a simultaneous cycle."""
