@@ -78,6 +78,11 @@ class GridMachineState:
         """All placed ion identifiers in sorted order."""
         return tuple(sorted(ion for _segment_id, ions in self.occupancy for ion in ions))
 
+    @property
+    def placement(self) -> dict[str, tuple[int, ...]]:
+        """The ions of each segment, as ``GridCompiler.compile`` accepts it."""
+        return dict(self.occupancy)
+
     def occupants(self, segment_id: str) -> tuple[int, ...]:
         """Return the ions in one segment's canonical order."""
         return dict(self.occupancy)[segment_id]

@@ -10,7 +10,7 @@ mystnb:
 
 A dynamic program measures ions during execution and chooses later operations
 from the outcomes. {py:func}`~mqt.ionshuttler.dynamic.compiler.compile_program`
-compiles such a program for a Grid architecture. The result holds one
+compiles such a program for a Grid or Linear architecture. The result holds one
 precompiled schedule for every straight-line part of the program and a decision
 for every branch, so the control system only selects the next schedule when an
 outcome arrives.
@@ -25,7 +25,9 @@ pip install "mqt.ionshuttler[dynamic]"
 
 {py:func}`~mqt.ionshuttler.dynamic.qco.program_from_qasm` imports the program
 with MQT Core, synthesizes the native gates `rx`, `ry`, `rz`, and `rxx` together
-with measurement and reset, and reads the outcome.
+with measurement and reset, and reads the outcome. Linear architectures support
+`rzz` instead of `rxx` by default, so pass `gates=(Rx, Ry, Rz, Rzz)` to
+synthesize a program for both architectures.
 
 ```python
 from mqt.ionshuttler.dynamic import program_from_qasm
