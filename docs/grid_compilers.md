@@ -74,8 +74,12 @@ select a processing zone while scheduling.
 
 Use `target_placement` to request a final placement after all gates. The mapping
 uses the same format as `initial_placement`. A target that contains every ion is
-exact, and omitted segments are empty. A target that contains a subset
-constrains only those ions; all other ions and segments remain unconstrained.
+exact, and omitted segments are empty; in ordered segments, the ion order is
+part of the target. A target that contains a subset constrains only those ions;
+all other ions and segments remain unconstrained. Both strategies reach the
+target with the same search after the last gate, and independent moves run at
+the same time. A circuit without gates therefore only moves ions into the
+target.
 
 ```{code-cell} ipython3
 result = GridCompiler(architecture).compile(
@@ -89,7 +93,7 @@ result = GridCompiler(architecture).compile(
 result = GridCompiler(architecture).compile(
     circuit,
     initial_placement={"memory": (0, 1)},
-    target_placement={"processor": (0,)},
+    target_placement={"processing": (0,)},
 )
 ```
 

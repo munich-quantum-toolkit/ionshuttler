@@ -216,6 +216,80 @@ def test_greedy_compiler_starts_a_virtual_gate_after_its_predecessor_ends() -> N
     assert times["Rz"].start_time >= times["Rxx"].end_time
 
 
+def test_compiler_routes_an_empty_circuit_to_its_target_placement() -> None:
+    """Compile pure transport when a circuit has no gates but a target placement."""
+    memory = Segment("memory", capacity=2)
+    processor = Segment("processor", capacity=2, processing_zones=(ProcessingZone("pz"),))
+    architecture = GridArchitecture((memory, processor), (Junction("j0", (memory.end, processor.start)),))
+
+    result = GridCompiler(architecture).compile(
+        Circuit(num_ions=2, gates=(), predecessors=()),
+        initial_placement={"memory": (0, 1)},
+        target_placement={"processor": (0, 1)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.final_state.occupants("processor") == (0, 1)
+    assert all(isinstance(action, JunctionMove | Cycle) for action in result.path)
+
+
+@pytest.mark.parametrize("strategy", list(GridCompilerStrategy))
+def test_compiler_reaches_an_exact_permutation_of_nine_ions(strategy: GridCompilerStrategy) -> None:
+    """Reach a nine-ion placement that needs ions to leave and re-enter segments."""
+    architecture = square_grid(3, processing_zone_segments=("h:1:0", "h:1:1"), segment_capacity=2)
+    start = {
+        "h:0:0": (4,),
+        "h:1:0": (0, 5),
+        "h:2:0": (2,),
+        "v:0:0": (8,),
+        "v:0:1": (7,),
+        "v:0:2": (6,),
+        "v:1:0": (3,),
+        "v:1:1": (1,),
+    }
+    target = {
+        "h:0:0": (2,),
+        "h:1:0": (1,),
+        "h:1:1": (0, 6),
+        "v:0:1": (4, 5),
+        "v:0:2": (7,),
+        "v:1:0": (3,),
+        "v:1:1": (8,),
+    }
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=strategy)).compile(
+        Circuit(num_ions=9, gates=(), predecessors=()),
+        initial_placement=start,
+        target_placement=target,
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.final_state.occupancy == architecture.initial_state(target).occupancy
+    starts = [item.start_time for item in result.schedule.scheduled_actions]
+    assert len(set(starts)) < len(starts)
+
+
+@pytest.mark.parametrize("strategy", list(GridCompilerStrategy))
+def test_compiler_reverses_the_ion_order_inside_a_segment(strategy: GridCompilerStrategy) -> None:
+    """Treat the ion order of an ordered segment as part of an exact target."""
+    a = Segment("a", capacity=2)
+    b = Segment("b", capacity=2)
+    c = Segment("c", capacity=2)
+    architecture = GridArchitecture(
+        (a, b, c),
+        (Junction("ab", (a.end, b.start)), Junction("bc", (b.end, c.start)), Junction("ca", (c.end, a.start))),
+    )
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=strategy)).compile(
+        Circuit(num_ions=2, gates=(), predecessors=()),
+        initial_placement={"a": (0, 1)},
+        target_placement={"a": (1, 0)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.final_state.occupants("a") == (1, 0)
+
+
 def test_compiler_rejects_measurement_without_a_measuring_processing_zone() -> None:
     """Require a processing zone that declares measurement support."""
     processor = Segment("processor", processing_zones=(ProcessingZone("pz", (Rx,)),))

@@ -9,8 +9,10 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections import deque
-from itertools import combinations, pairwise
+from heapq import heappop, heappush
+from itertools import combinations, count, pairwise
 from typing import TYPE_CHECKING
 
 from mqt.ionshuttler.core.schedule import ScheduledAction
@@ -18,7 +20,7 @@ from mqt.ionshuttler.grid.actions import Cycle, JunctionMove
 from mqt.ionshuttler.grid.model import SegmentOccupancy
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
 
     from mqt.ionshuttler.core.actions import Action
     from mqt.ionshuttler.core.gates import GateAction
@@ -28,6 +30,10 @@ if TYPE_CHECKING:
 
 OccupancyKey = tuple[tuple[str, tuple[int, ...]], ...]
 JunctionCrossings = frozenset[tuple[str, str]] | None
+# Favor states close to the target over short paths: the placement search needs a legal sequence, not the shortest.
+_PLACEMENT_SEARCH_WEIGHT = 3
+# Cycle-search steps per expanded placement state; on full grids, only cycles through several segments can move.
+_PLACEMENT_CYCLE_WORK = 1024
 
 
 def route_gate_bfs(
@@ -81,46 +87,146 @@ def route_gate_bfs(
     return None, explored
 
 
-def route_placement_bfs(
+def route_to_placement(
     architecture: GridArchitecture,
     state: GridMachineState,
-    reached: Callable[[GridMachineState], bool],
     *,
     max_states: int,
+    target_state: GridMachineState | None = None,
+    partial_target_by_ion: Mapping[int, str] | None = None,
     allowed_crossings: JunctionCrossings = None,
 ) -> tuple[tuple[Action, ...] | None, int]:
-    """Find a shortest legal movement sequence to a placement goal.
+    """Find a legal movement sequence that reaches a target placement.
+
+    ``target_state`` requests an exact placement, including the ion order in
+    ordered segments. ``partial_target_by_ion`` requests a segment for some
+    ions and leaves the others free; their identities do not matter. Give
+    exactly one of them.
+
+    The search first expands the states that look closest to the target: the
+    sum of each targeted ion's routing distance to its target segment, plus,
+    for an exact target, two moves for each ion that sits in its target
+    segment in the wrong order. The sequence is legal but not necessarily the
+    shortest one. ``max_states`` bounds the number of expanded states.
 
     Returns:
-        The movement sequence, or ``None`` if the bound is exhausted, and the
-        number of explored occupancy states and cycle-search steps.
+        The movement sequence, or ``None`` if the target is unreachable or the
+        bound is exhausted, and the number of explored states and
+        cycle-search steps.
+
+    Raises:
+        ValueError: If not exactly one target is given.
     """
-    queue: deque[tuple[GridMachineState, tuple[Action, ...]]] = deque([(state, ())])
-    visited = {_occupancy_key(state)}
+    if (target_state is None) == (partial_target_by_ion is None):
+        msg = "give exactly one of target_state and partial_target_by_ion"
+        raise ValueError(msg)
+    if target_state is not None:
+        target_segment = {ion: segment_id for segment_id, ions in target_state.occupancy for ion in ions}
+        target_position = {
+            ion: position for _segment_id, ions in target_state.occupancy for position, ion in enumerate(ions)
+        }
+    else:
+        assert partial_target_by_ion is not None
+        target_segment = dict(partial_target_by_ion)
+        target_position = None
+
+    def search_key(current: GridMachineState) -> OccupancyKey | tuple[tuple[str, tuple[int | None, ...]], ...]:
+        if target_position is not None:
+            return current.occupancy
+        # Ions without a target are interchangeable, so states that differ only in them are one state.
+        return tuple(
+            (segment_id, tuple(ion if ion in target_segment else None for ion in ions))
+            for segment_id, ions in current.occupancy
+        )
+
+    def remaining(current: GridMachineState) -> int | None:
+        total = 0
+        for segment_id, ions in current.occupancy:
+            positions: list[int] = []
+            for ion in ions:
+                if ion not in target_segment:
+                    continue
+                distance = routing_distance(architecture, segment_id, target_segment[ion], allowed_crossings)
+                if distance is None:
+                    return None
+                total += distance
+                if distance == 0 and target_position is not None:
+                    positions.append(target_position[ion])
+            if architecture.segment(segment_id).occupancy is SegmentOccupancy.ORDERED:
+                total += 2 * (len(positions) - _longest_increasing_length(positions))
+        return total
+
+    def reached(current: GridMachineState) -> bool:
+        if target_state is not None:
+            return current.occupancy == target_state.occupancy
+        return all(current.ion_segment(ion) == segment_id for ion, segment_id in target_segment.items())
+
+    start_estimate = remaining(state)
+    if start_estimate is None:
+        return None, 0
+    order = count()
+    frontier = [(_PLACEMENT_SEARCH_WEIGHT * start_estimate, next(order), 0, state)]
+    # Parents use the full occupancy, because a recorded move names the ions it moves.
+    parents: dict[OccupancyKey, tuple[OccupancyKey, Action] | None] = {state.occupancy: None}
+    best_cost = {search_key(state): 0}
+    expanded = 0
     explored = 0
-    while queue and explored < max_states:
-        current, path = queue.popleft()
+    while frontier and expanded < max_states:
+        _priority, _tie, cost, current = heappop(frontier)
+        if cost > best_cost[search_key(current)]:
+            continue
+        expanded += 1
         explored += 1
         if reached(current):
-            return path, explored
-        moves = junction_moves(architecture, current, allowed_crossings=allowed_crossings)
-        cycles, cycle_work = _cycle_candidates(architecture, current, moves, max_work=max_states - explored)
+            return _movement_path(parents, current.occupancy), explored
+        candidates, cycle_work = movement_candidates(
+            architecture,
+            current,
+            max_cycle_work=_PLACEMENT_CYCLE_WORK,
+            allowed_crossings=allowed_crossings,
+        )
         explored += cycle_work
-        for action in (*moves, *cycles):
-            duration = architecture.action_duration(action)
-            timed_action = ScheduledAction(0, action, current.time, duration)
+        for action in candidates:
+            timed_action = ScheduledAction(0, action, current.time, architecture.action_duration(action))
             try:
                 following = architecture.apply_layer(current, (timed_action,)).at_time(timed_action.end_time)
             except ValueError:
                 continue
-            if reached(following):
-                return (*path, action), explored
-            key = _occupancy_key(following)
-            if key in visited:
+            following_key = search_key(following)
+            if cost + 1 >= best_cost.get(following_key, cost + 2):
                 continue
-            visited.add(key)
-            queue.append((following, (*path, action)))
+            estimate = remaining(following)
+            if estimate is None:
+                continue
+            best_cost[following_key] = cost + 1
+            parents[following.occupancy] = (current.occupancy, action)
+            heappush(frontier, (cost + 1 + _PLACEMENT_SEARCH_WEIGHT * estimate, next(order), cost + 1, following))
     return None, explored
+
+
+def _longest_increasing_length(values: Sequence[int]) -> int:
+    """Return the length of the longest increasing subsequence."""
+    tails: list[int] = []
+    for value in values:
+        position = bisect_left(tails, value)
+        if position == len(tails):
+            tails.append(value)
+        else:
+            tails[position] = value
+    return len(tails)
+
+
+def _movement_path(
+    parents: Mapping[OccupancyKey, tuple[OccupancyKey, Action] | None], key: OccupancyKey
+) -> tuple[Action, ...]:
+    """Return the actions that led from the search start to ``key``."""
+    actions: list[Action] = []
+    step = parents[key]
+    while step is not None:
+        key, action = step
+        actions.append(action)
+        step = parents[key]
+    return tuple(reversed(actions))
 
 
 def route_junction_crossing_greedy_cycle(
@@ -133,8 +239,6 @@ def route_junction_crossing_greedy_cycle(
     moves: Sequence[JunctionMove],
     allowed_crossings: JunctionCrossings = None,
     ion_priorities: Mapping[int, int],
-    excluded_occupancies: Collection[OccupancyKey] = (),
-    allow_larger_cycles: bool = False,
 ) -> tuple[tuple[Action, ...] | None, int]:
     """Realize one requested junction crossing directly or with a cycle.
 
@@ -159,10 +263,8 @@ def route_junction_crossing_greedy_cycle(
         explored += 1
         timed_move = ScheduledAction(0, move, state.time, architecture.action_duration(move))
         try:
-            following = architecture.apply_layer(state, (timed_move,))
+            architecture.apply_layer(state, (timed_move,))
         except ValueError:
-            continue
-        if following.occupancy in excluded_occupancies:
             continue
         return (move,), explored
 
@@ -178,8 +280,6 @@ def route_junction_crossing_greedy_cycle(
         moves=moves,
         allowed_crossings=allowed_crossings,
         ion_priorities=ion_priorities,
-        excluded_occupancies=excluded_occupancies,
-        allow_larger_cycles=allow_larger_cycles,
     )
     explored += cycle_paths_explored
     if candidate_actions is not None:
@@ -361,8 +461,6 @@ def _find_cycle_transport(
     moves: Sequence[JunctionMove],
     allowed_crossings: JunctionCrossings,
     ion_priorities: Mapping[int, int],
-    excluded_occupancies: Collection[OccupancyKey],
-    allow_larger_cycles: bool,
 ) -> tuple[tuple[Action, ...] | None, int]:
     """Find the first usable junction-simple cycle containing one crossing.
 
@@ -379,14 +477,6 @@ def _find_cycle_transport(
         and (allowed_crossings is None or (source.segment_id, destination.segment_id) in allowed_crossings)
     }
     first_junction = junction_by_segments[source_segment_id, destination_segment_id]
-    if allow_larger_cycles and not _can_supply_cycle_move(
-        state,
-        source_segment_id,
-        destination_segment_id,
-        moves,
-        requested_ion=requested_ion,
-    ):
-        return None, 0
     # Track used junctions with each BFS path so that one cycle never reuses a junction.
     queue: deque[tuple[tuple[str, ...], frozenset[str]]] = deque([
         ((destination_segment_id,), frozenset({first_junction}))
@@ -398,9 +488,6 @@ def _find_cycle_transport(
         for neighbor in adjacency[path[-1]]:
             junction_id = junction_by_segments[path[-1], neighbor]
             if junction_id in used_junctions:
-                continue
-            # Larger-cycle search discards a partial path as soon as one edge cannot move an ion.
-            if allow_larger_cycles and not _can_supply_cycle_move(state, path[-1], neighbor, moves):
                 continue
             if neighbor == source_segment_id:
                 if len(path) >= 2:
@@ -419,38 +506,17 @@ def _find_cycle_transport(
                             for index, action in enumerate(candidate_actions)
                         )
                         try:
-                            following = architecture.apply_layer(state, timed_actions)
+                            architecture.apply_layer(state, timed_actions)
                         except ValueError:
                             pass
                         else:
-                            if following.occupancy not in excluded_occupancies:
-                                return candidate_actions, explored
-                    if not allow_larger_cycles:
-                        return None, explored
+                            return candidate_actions, explored
+                    return None, explored
                 continue
             if neighbor in path or neighbor == destination_segment_id:
                 continue
             queue.append(((*path, neighbor), used_junctions | {junction_id}))
     return None, explored
-
-
-def _can_supply_cycle_move(
-    state: GridMachineState,
-    source_segment_id: str,
-    destination_segment_id: str,
-    moves: Sequence[JunctionMove],
-    *,
-    requested_ion: int | None = None,
-) -> bool:
-    """Return whether a crystal containing the requested ion can leave along an edge."""
-    if not state.occupants(source_segment_id):
-        return True
-    return any(
-        move.source.segment_id == source_segment_id
-        and move.destination.segment_id == destination_segment_id
-        and (requested_ion is None or requested_ion in move.ions)
-        for move in moves
-    )
 
 
 def _build_cycle_transport(
@@ -870,7 +936,7 @@ __all__ = [
     "next_segments_toward",
     "route_gate_bfs",
     "route_junction_crossing_greedy_cycle",
-    "route_placement_bfs",
+    "route_to_placement",
     "routing_distance",
     "select_greedy_target",
 ]
