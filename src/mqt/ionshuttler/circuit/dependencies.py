@@ -47,7 +47,7 @@ def with_commutation_aware_dependencies(circuit: Circuit) -> Circuit:
     quantum_circuit = _as_quantum_circuit(circuit)
     dependency_graph = circuit_to_dagdependency(quantum_circuit)
     qubit_indices = {qubit: index for index, qubit in enumerate(dependency_graph.qubits)}
-    operation_nodes = tuple(node for node in dependency_graph.get_nodes() if node.op.name not in {"barrier", "measure"})
+    operation_nodes = tuple(node for node in dependency_graph.get_nodes() if node.op.name != "barrier")
     if len(operation_nodes) != len(circuit.gates):
         msg = "source operations do not match the parsed circuit"
         raise ValueError(msg)

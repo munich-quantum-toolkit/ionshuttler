@@ -16,7 +16,19 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from mqt.ionshuttler.core.actions import decode_action
-from mqt.ionshuttler.core.gates import GATE_TYPES, GateTiming, GlobalGate, Rx, Rxx, Ry, Ryy, Rz, Rzz
+from mqt.ionshuttler.core.gates import (
+    GATE_TYPES,
+    GateTiming,
+    GlobalGate,
+    Measure,
+    Reset,
+    Rx,
+    Rxx,
+    Ry,
+    Ryy,
+    Rz,
+    Rzz,
+)
 from mqt.ionshuttler.linear import GateTiming as LinearGateTiming
 
 if TYPE_CHECKING:
@@ -73,7 +85,48 @@ def test_built_in_gate_types_have_stable_serialized_types() -> None:
         "gate.ryy": Ryy,
         "gate.rzz": Rzz,
         "gate.global": GlobalGate,
+        "gate.measure": Measure,
+        "gate.reset": Reset,
     }
+
+
+@pytest.mark.parametrize("operation_type", [Measure, Reset])
+def test_measure_and_reset_act_on_one_ion_without_parameters(operation_type: type[Measure | Reset]) -> None:
+    """Build measurement and reset from circuit operands and restore them from JSON."""
+    operation = operation_type.from_instruction((3,), (), gate_id=7)
+
+    assert operation == operation_type(ion=3)
+    assert operation.ions == (3,)
+    assert operation.gate_id == 7
+    assert decode_action(json.loads(json.dumps(operation.to_dict())), GATE_TYPES) == operation
+    with pytest.raises(ValueError, match="requires 0 parameters"):
+        operation_type.from_instruction((3,), (0.5,))
+    with pytest.raises(ValueError, match="requires 1 ions"):
+        operation_type.from_instruction((0, 1), ())
+
+
+def test_measure_keeps_an_optional_outcome_number() -> None:
+    """Number a measurement outcome so that later decisions can refer to it."""
+    measurement = Measure(ion=2, outcome=4)
+
+    assert measurement.to_dict() == {"type": "gate.measure", "ion": 2, "outcome": 4}
+    assert decode_action(measurement.to_dict(), GATE_TYPES) == measurement
+    assert measurement != Measure(ion=2, outcome=5)
+    with pytest.raises(ValueError, match="outcome must be a non-negative integer"):
+        Measure(ion=2, outcome=-1)
+
+
+def test_gate_timing_sets_measurement_and_reset_durations() -> None:
+    """Configure measurement and reset like gates and keep them non-virtual."""
+    timing = GateTiming(measure=3, reset=2)
+
+    assert timing.duration_for("measure") == 3
+    assert timing.duration_for("reset") == 2
+    assert timing.gate_durations["measure"] == 3
+    assert GateTiming.from_dict(timing.to_dict()) == timing
+    assert GateTiming.from_dict({"rx": 1}).measure == GateTiming().measure
+    with pytest.raises(ValueError, match="measure duration must be an integer >= 1"):
+        GateTiming(measure=0)
 
 
 def test_global_gate_stores_explicit_targets_in_ascending_order() -> None:

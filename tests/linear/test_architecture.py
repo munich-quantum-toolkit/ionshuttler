@@ -243,6 +243,8 @@ def test_default_architecture_serializes_the_chain_topology() -> None:
         "topology": "chain",
         "processing_zones": {"all_sites": [0, 1, 2]},
         "gate_timing": {
+            "measure": 1,
+            "reset": 1,
             "rx": 1,
             "rxx": 2,
             "ry": 1,

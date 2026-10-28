@@ -13,14 +13,14 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Literal
 
-from mqt.ionshuttler.core.gates import GateAction, Rx, Rxx, Ry, Ryy, Rz, Rzz
+from mqt.ionshuttler.core.gates import GateAction, Measure, Reset, Rx, Rxx, Ry, Ryy, Rz, Rzz
 
 from .._json_utils import require_int, require_list, require_mapping, require_str
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-LOCAL_GATE_TYPES: tuple[type[GateAction], ...] = (Rx, Ry, Rz, Rxx, Ryy, Rzz)
+LOCAL_GATE_TYPES: tuple[type[GateAction], ...] = (Rx, Ry, Rz, Rxx, Ryy, Rzz, Measure, Reset)
 
 
 class SegmentOccupancy(StrEnum):

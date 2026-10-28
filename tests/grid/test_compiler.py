@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from mqt.ionshuttler.core.gates import GateAction, Rx, Ry
+from mqt.ionshuttler.circuit import Circuit
+from mqt.ionshuttler.core.gates import GateAction, Measure, Reset, Rx, Ry
 from mqt.ionshuttler.grid import (
     CompilationStatus,
     Cycle,
@@ -159,6 +160,41 @@ def test_compiler_routes_to_an_exact_target_placement(strategy: GridCompilerStra
     assert result.diagnostics.junction_moves == 3
 
 
+@pytest.mark.parametrize("strategy", list(GridCompilerStrategy))
+def test_compiler_schedules_measurement_and_reset_in_a_processing_zone(strategy: GridCompilerStrategy) -> None:
+    """Treat measurement and reset as timed single-ion operations in a processing zone."""
+    memory = Segment("memory", capacity=2)
+    processor = Segment("processor", capacity=2, processing_zones=(ProcessingZone("pz"),))
+    architecture = GridArchitecture(
+        (memory, processor),
+        (Junction("j0", (memory.end, processor.start)),),
+        gate_timing=GateTiming(measure=3, reset=2),
+    )
+    circuit = Circuit(
+        num_ions=2,
+        gates=(
+            Rx(ion=0, theta=0.5, gate_id=0),
+            Measure(ion=0, outcome=0, gate_id=1),
+            Reset(ion=0, gate_id=2),
+        ),
+        predecessors=(frozenset(), frozenset({0}), frozenset({1})),
+    )
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=strategy)).compile(
+        circuit,
+        initial_placement={"memory": (0, 1)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    timed = {type(item.action): item for item in result.schedule.scheduled_actions}
+    assert timed[Measure].duration == 3
+    assert timed[Measure].processing_zone_id == "pz"
+    assert timed[Reset].duration == 2
+    assert timed[Reset].start_time >= timed[Measure].end_time
+    result.validate()
+    assert result_from_json(result.to_json()) == result
+
+
 def test_greedy_compiler_starts_a_virtual_gate_after_its_predecessor_ends() -> None:
     """Keep a virtual rotation after the running gate on the same ion."""
     memory = Segment("memory")
@@ -178,6 +214,17 @@ def test_greedy_compiler_starts_a_virtual_gate_after_its_predecessor_ends() -> N
     assert result.status is CompilationStatus.SUCCESS
     times = {type(item.action).__name__: item for item in result.schedule.scheduled_actions}
     assert times["Rz"].start_time >= times["Rxx"].end_time
+
+
+def test_compiler_rejects_measurement_without_a_measuring_processing_zone() -> None:
+    """Require a processing zone that declares measurement support."""
+    processor = Segment("processor", processing_zones=(ProcessingZone("pz", (Rx,)),))
+    architecture = GridArchitecture((processor,), ())
+
+    with pytest.raises(ValueError, match="Grid architecture has no processing zone for Measure"):
+        GridCompiler(architecture).compile(
+            Circuit(num_ions=1, gates=(Measure(ion=0, gate_id=0),), predecessors=(frozenset(),))
+        )
 
 
 @pytest.mark.parametrize("strategy", list(GridCompilerStrategy))
