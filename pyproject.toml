@@ -66,6 +66,9 @@ dd = [
   "ortools>=9.14.6206; python_version<'3.13'",
   "ortools>=9.15.6755; python_version>='3.13'",
 ]
+dynamic = [
+  "mqt-core==4.1.1",
+]
 
 [project.urls]
 Discussions = "https://github.com/munich-quantum-toolkit/ionshuttler/discussions"
@@ -84,6 +87,7 @@ dev = [
   "nox>=2025.11.12",
 ]
 test = [
+  "mqt-core==4.1.1",
   "ortools>=9.14.6206",
   "pytest>=9.0.1",
   "pytest-cov>=7.1",

@@ -80,6 +80,7 @@ self
 installation
 hardware_models
 grid_compilers
+dynamic_programs
 linear_compiler
 linear_dd
 references

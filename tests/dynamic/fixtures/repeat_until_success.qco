@@ -1,0 +1,43 @@
+module attributes {mqt.layout = {initial = array<i64: 0, 1>, input_count = 2 : i64, sites = array<i64: 0, 1>}, mqt.target_env = #mqt.target_env<compilation_target = <sites = [<id = 0>, <id = 1>], connectivity = all_to_all, couplings = [], native_operations = explicit, operations = [<name = "rx", arity = <kind = fixed, value = 1>, num_parameters = 1, site_tuples = []>, <name = "ry", arity = <kind = fixed, value = 1>, num_parameters = 1, site_tuples = []>, <name = "rz", arity = <kind = fixed, value = 1>, num_parameters = 1, site_tuples = []>, <name = "rxx", arity = <kind = fixed, value = 2>, num_parameters = 1, site_tuples = []>, <name = "measure", arity = <kind = fixed, value = 1>, num_parameters = 0, site_tuples = []>, <name = "reset", arity = <kind = fixed, value = 1>, num_parameters = 0, site_tuples = []>]>, payload_specification = <format = <id = "qco", version = "1.0.0", profile = "", encoding = text>, capabilities = [<id = "forward-branching", value = 0, constraints = []>, <id = "counted-iteration", value = 0, constraints = []>, <id = "conditional-loop", value = 0, constraints = []>], optional_capabilities_known = false>>} {
+  func.func @main() -> !cbit.reg<1> attributes {mqt.entry_point} {
+    %cst = arith.constant 1.5707963267948966 : f64
+    %cst_0 = arith.constant -3.1415926535897931 : f64
+    %cst_1 = arith.constant -1.5707963267948966 : f64
+    %true = arith.constant true
+    %c0 = arith.constant 0 : index
+    %q = qco.static 0 : !qco.qubit
+    %q_2 = qco.static 1 : !qco.qubit
+    %c = cbit.alloc(#cbit.init<undefined>) {mqt.register_name = "c"} : !cbit.reg<1>
+    cbit.write %true, %c : i1, !cbit.reg<1>
+    %q_3, %q_4 = scf.while (%q_5 = %q, %q_6 = %q_2) : (!qco.qubit, !qco.qubit) -> (!qco.qubit, !qco.qubit) {
+      %b = cbit.load %c[%c0] : !cbit.reg<1>
+      scf.condition(%b) %q_5, %q_6 : !qco.qubit, !qco.qubit
+    } do {
+    ^bb0(%q_5: !qco.qubit, %q_6: !qco.qubit):
+      %q_7 = qco.reset %q_5 : !qco.qubit
+      %q_8 = qco.rz(%cst) %q_7 : !qco.qubit
+      %q_9 = qco.rx(%cst_0) %q_8 : !qco.qubit
+      %q_10 = qco.rz(%cst) %q_9 : !qco.qubit
+      %q_11 = qco.rz(%cst_0) %q_6 : !qco.qubit
+      %qubit0_out, %qubit1_out = qco.rxx(%cst_1) %q_10, %q_11 : !qco.qubit, !qco.qubit
+      %q_12 = qco.rx(%cst) %qubit1_out : !qco.qubit
+      %q_13 = qco.rz(%cst_0) %q_12 : !qco.qubit
+      %q_14 = qco.rz(%cst_1) %qubit0_out : !qco.qubit
+      %q_15 = qco.rx(%cst_1) %q_14 : !qco.qubit
+      %q_16, %b = qco.measure %q_15 : !qco.qubit
+      cbit.store %b, %c[%c0] : !cbit.reg<1>
+      %linearResults = qco.if %b args(%q_17 = %q_13) -> (!qco.qubit) {
+        %q_18 = qco.rz(%cst_1) %q_17 : !qco.qubit
+        %q_19 = qco.rx(%cst_0) %q_18 : !qco.qubit
+        %q_20 = qco.rz(%cst_1) %q_19 : !qco.qubit
+        qco.yield %q_20 : !qco.qubit
+      } else args(%q_17 = %q_13) {
+        qco.yield %q_17 : !qco.qubit
+      }
+      scf.yield %q_16, %linearResults : !qco.qubit, !qco.qubit
+    }
+    qco.sink %q_3 : !qco.qubit
+    qco.sink %q_4 : !qco.qubit
+    return %c : !cbit.reg<1>
+  }
+}
