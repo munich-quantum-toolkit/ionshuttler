@@ -100,6 +100,32 @@ for summary in result.path_summaries():
   covers every path, also through many loop iterations.
 - `paths` and `path_summaries` list paths explicitly. A `while` loop needs
   `max_iterations` there; longer paths are left out.
+- Commuting gates of a circuit may change order. A Grid compiler configured with
+  conservative dependencies keeps the circuit order.
 
 If a return finds no movement sequence within `max_routing_states`, the result
 has status `FAILED` and names the failing branch.
+
+## Compiling along a predicted path
+
+Each circuit compiles on its own by default, so transport for a circuit after a
+branch starts only when the branch decision is known. Often one outcome is much
+more likely, for example a trivial syndrome in error correction. With
+`predicted_outcome`, the compiler assumes that every measurement that a
+condition reads returns this value. It compiles the circuits of this predicted
+path as one circuit, so transport for later circuits can start while earlier
+circuits still run. Gates of a circuit still start only after every gate of the
+circuits before it ends, and the result keeps one schedule per circuit. The
+other side of each branch on the predicted path starts from the placement that
+the predicted path reaches at the branch. When later steps follow, it ends in
+the placement where the predicted path continues. A loop ends a predicted path;
+its body is compiled along its own predicted path.
+
+```python
+result = compile_program(program, GridCompiler(architecture), feedback_delay=2, predicted_outcome=0)
+result.validate()
+```
+
+The predicted path is often shorter than with separate circuits, and other paths
+can get longer. Compile both ways and compare the path summaries to pick one for
+a given objective.

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from mqt.ionshuttler.circuit import Circuit
-from mqt.ionshuttler.core.gates import GateAction, Measure, Rx, Rxx
+from mqt.ionshuttler.core.gates import GateAction, GateTiming, Measure, Rx, Rxx, Rzz
 from mqt.ionshuttler.core.schedule import Schedule
 from mqt.ionshuttler.dynamic import (
     Branch,
@@ -38,6 +38,7 @@ from mqt.ionshuttler.grid import (
     GridCompilerStrategy,
     GridMachineState,
     Junction,
+    JunctionMove,
     ProcessingZone,
     Segment,
     square_grid,
@@ -46,7 +47,11 @@ from mqt.ionshuttler.grid.actions import decode_grid_action
 from mqt.ionshuttler.linear import DEFAULT_ACTION_TYPES, LinearArchitecture, LinearCompiler
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from mqt.ionshuttler.circuit import CircuitInput
     from mqt.ionshuttler.dynamic import BranchingSchedule
+    from mqt.ionshuttler.linear import LinearCompilationResult
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GRID = square_grid(3, processing_zone_segments=("h:1:0", "h:1:1"), segment_capacity=2)
@@ -358,3 +363,106 @@ def test_linear_branches_return_to_the_sites_before_them() -> None:
     for values in result.schedule.paths():
         timeline = result.schedule.timeline_for(values)
         assert timeline[-1].schedule.initial_state.placement == before
+
+
+FIXTURE_NAMES = (
+    "teleportation",
+    "nested_branches",
+    "reset_and_reuse",
+    "register_conditions",
+    "counted_loop",
+    "repeat_until_success",
+    "steane_flagged_error_correction",
+)
+
+
+@pytest.mark.parametrize("predicted_outcome", [0, 1])
+@pytest.mark.parametrize("name", FIXTURE_NAMES)
+def test_every_fixture_program_compiles_along_a_predicted_path(name: str, predicted_outcome: int) -> None:
+    """Keep every path valid when the circuits of the predicted path compile as one circuit."""
+    for compiler in (GridCompiler(GRID), LinearCompiler(LINEAR)):
+        result = compile_program(_program(name), compiler, feedback_delay=1, predicted_outcome=predicted_outcome)
+
+        assert result.status is CompilationStatus.SUCCESS
+        result.validate()
+
+
+def test_transport_for_the_predicted_side_starts_before_the_decision() -> None:
+    """Move an ion of the predicted side while the measurement before the branch still runs."""
+    architecture = replace(_two_zone_line(), gate_timing=GateTiming(rx=6, measure=6))
+    prefix = Circuit(
+        num_ions=2,
+        gates=(Rx(ion=0, theta=0.5, gate_id=0), Measure(ion=0, outcome=0, gate_id=1)),
+        predecessors=(frozenset(), frozenset({0})),
+    )
+    predicted = Circuit(num_ions=2, gates=(Rx(ion=1, theta=0.5, gate_id=0),), predecessors=(frozenset(),))
+    program = Program(2, (prefix, Branch(Condition((0,), frozenset({(0,)})), (predicted,))))
+    compiler = GridCompiler(architecture)
+    placement = {"left": (0,), "memory": (1,)}
+
+    separate = compile_program(program, compiler, initial_placement=placement, feedback_delay=1)
+    traced = compile_program(program, compiler, initial_placement=placement, feedback_delay=1, predicted_outcome=0)
+
+    traced.validate()
+    first_separate, first_traced = separate.schedule.steps[0], traced.schedule.steps[0]
+    assert isinstance(first_separate, Schedule)
+    assert isinstance(first_traced, Schedule)
+    assert not any(isinstance(item.action, JunctionMove) for item in first_separate.scheduled_actions)
+    measurement_end = next(item.end_time for item in first_traced.scheduled_actions if isinstance(item.action, Measure))
+    moves = [
+        item
+        for item in first_traced.scheduled_actions
+        if isinstance(item.action, JunctionMove) and 1 in item.action.ions
+    ]
+    assert moves
+    assert moves[0].start_time < measurement_end
+
+
+def test_the_other_side_of_a_predicted_branch_ends_where_the_predicted_path_continues() -> None:
+    """Merge both sides of a branch in the placement after the predicted side."""
+    suffix = Circuit(num_ions=2, gates=(Rx(ion=0, theta=0.1, gate_id=0),), predecessors=(frozenset(),))
+    program = Program(2, (*_measure_then_branch().steps, suffix))
+
+    result = compile_program(program, LinearCompiler(LINEAR), feedback_delay=1, predicted_outcome=0)
+
+    assert result.status is CompilationStatus.SUCCESS
+    result.validate()
+    starts = {
+        result.schedule.timeline_for(values)[-1].schedule.initial_state.placement for values in result.schedule.paths()
+    }
+    assert len(starts) == 1
+
+
+def test_predicted_outcome_must_be_zero_or_one() -> None:
+    """Reject a predicted outcome that no measurement can return."""
+    with pytest.raises(ValueError, match="predicted_outcome must be 0 or 1"):
+        compile_program(_measure_then_branch(), GridCompiler(_two_zone_line()), predicted_outcome=2)
+
+
+def test_linear_circuits_of_a_program_leave_commuting_gates_unordered() -> None:
+    """Give the Linear compiler commutation-aware dependencies, as Grid derives them by default."""
+    received: list[Circuit] = []
+
+    class RecordingCompiler(LinearCompiler):
+        def compile(
+            self,
+            circuit: CircuitInput,
+            *,
+            initial_placement: Sequence[int] | None = None,
+            target_placement: Sequence[int] | None = None,
+        ) -> LinearCompilationResult:
+            assert isinstance(circuit, Circuit)
+            received.append(circuit)
+            return super().compile(circuit, initial_placement=initial_placement, target_placement=target_placement)
+
+    circuit = Circuit(
+        num_ions=3,
+        gates=(Rzz(ion_a=0, ion_b=1, theta=0.5, gate_id=0), Rzz(ion_a=0, ion_b=2, theta=0.5, gate_id=1)),
+        predecessors=(frozenset(), frozenset({0})),
+    )
+
+    result = compile_program(Program(3, (circuit,)), RecordingCompiler(LINEAR))
+
+    assert result.status is CompilationStatus.SUCCESS
+    result.validate()
+    assert [compiled.predecessors for compiled in received if compiled.gates] == [(frozenset(), frozenset())]
