@@ -27,7 +27,9 @@ pip install "mqt.ionshuttler[dynamic]"
 with MQT Core, synthesizes the native gates `rx`, `ry`, `rz`, and `rxx` together
 with measurement and reset, and reads the outcome. Linear architectures support
 `rzz` instead of `rxx` by default, so pass `gates=(Rx, Ry, Rz, Rzz)` to
-synthesize a program for both architectures.
+synthesize a program for both architectures. Ion `k` is qubit `k` of the
+OpenQASM program, also when MQT Core places the qubits on other sites during
+synthesis.
 
 ```python
 from mqt.ionshuttler.dynamic import program_from_qasm
