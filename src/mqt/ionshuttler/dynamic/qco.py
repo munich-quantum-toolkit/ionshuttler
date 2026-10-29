@@ -38,6 +38,7 @@ _INTEGER_TYPE = re.compile(r"\bi(\d+)\b")
 _ARGUMENT_BINDING = re.compile(r"(%[\w\-]+)\s*=\s*(%[\w\-]+(?:#\d+)?)")
 _FOR_BOUNDS = re.compile(r"^\s*(%[\w\-]+)\s*=\s*(%[\w\-]+)\s+to\s+(%[\w\-]+)\s+step\s+(%[\w\-]+)")
 _BLOCK_ARGUMENT = re.compile(r"(%[\w\-]+)\s*:")
+_LAYOUT = re.compile(r"mqt\.layout\s*=\s*\{\s*initial\s*=\s*array<i64:(?P<sites>[^>]*)>")
 
 
 @dataclass(frozen=True)
@@ -119,8 +120,9 @@ _DraftStep: TypeAlias = "list[_Record] | _DraftBranch | _DraftLoop"
 class _Reader:
     """Read the region structure of one QCO function body."""
 
-    def __init__(self, lines: Sequence[str]) -> None:
+    def __init__(self, lines: Sequence[str], ion_of_site: dict[int, int]) -> None:
         self.lines = lines
+        self.ion_of_site = ion_of_site
         self.next_outcome = 0
         self.max_ion = -1
 
@@ -205,7 +207,10 @@ class _Reader:
 
     def read_quantum(self, index: int, operation: str, results: list[str], rest: str, scope: _Scope) -> _Record | None:
         if operation == "static":
-            ion = int(rest.split(":", 1)[0])
+            site = int(rest.split(":", 1)[0])
+            if self.ion_of_site and site not in self.ion_of_site:
+                raise self.error(index, f"site {site} is missing from the recorded qubit placement")
+            ion = self.ion_of_site.get(site, site)
             self.max_ion = max(self.max_ion, ion)
             scope.ions[results[0]] = ion
             return None
@@ -489,8 +494,11 @@ def parse_program(qco: str) -> Program:
     """Read a dynamic program from QCO text after native-gate synthesis.
 
     The text must come from MQT Core's ``QCOProgram.ir`` after
-    ``synthesize_for_target`` with an all-to-all target. Each ``qco.static``
-    qubit becomes the ion with the same number. Supported operations are the
+    ``synthesize_for_target`` with an all-to-all target. Synthesis may place
+    program qubits on other sites and records this placement as
+    ``mqt.layout``. Ion ``k`` is then program qubit ``k``, so ion numbers match
+    the qubit numbers of the source program. Without a recorded placement, each
+    ``qco.static`` site becomes the ion with the same number. Supported operations are the
     native rotations ``rx``, ``ry``, ``rz``, ``rxx``, ``ryy``, and ``rzz``,
     ``measure``, ``reset``, measurement-conditioned ``qco.if``, ``scf.for``
     with constant bounds, ``scf.while`` whose condition region only computes
@@ -513,7 +521,7 @@ def parse_program(qco: str) -> Program:
     if start is None:
         msg = "QCO text contains no function"
         raise ValueError(msg)
-    reader = _Reader(lines)
+    reader = _Reader(lines, _ion_of_site(" ".join(lines[:start])))
     steps, close, _yielded = reader.read_region(start + 1, _Scope({}, {}, {}, {}))
     if any(line.strip().startswith("func.func") for line in lines[close + 1 :]):
         msg = "QCO text must contain exactly one function"
@@ -523,6 +531,33 @@ def parse_program(qco: str) -> Program:
         raise ValueError(msg)
     num_ions = reader.max_ion + 1
     return Program(num_ions=num_ions, steps=_build_steps(steps, num_ions))
+
+
+def _ion_of_site(header: str) -> dict[int, int]:
+    """Return the program qubit on each site from the module's recorded qubit placement.
+
+    ``initial`` lists the site of each program qubit. All-to-all synthesis
+    inserts no swaps, so this placement holds for the whole program.
+
+    Returns:
+        The program qubit of each site, or an empty mapping if the module
+        records no placement.
+
+    Raises:
+        ValueError: If the recorded placement is malformed.
+    """
+    match = _LAYOUT.search(header)
+    if match is None:
+        return {}
+    try:
+        sites = [int(site) for site in match.group("sites").split(",")]
+    except ValueError as error:
+        msg = "QCO text contains a malformed mqt.layout"
+        raise ValueError(msg) from error
+    if len(set(sites)) != len(sites) or min(sites) < 0:
+        msg = "QCO text contains a malformed mqt.layout"
+        raise ValueError(msg)
+    return {site: qubit for qubit, site in enumerate(sites)}
 
 
 def program_from_qasm(

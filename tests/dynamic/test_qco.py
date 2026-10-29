@@ -44,7 +44,29 @@ def test_teleportation_becomes_a_circuit_and_two_branches() -> None:
     assert z_correction.condition == Condition((0,), frozenset({(1,)}))
     correction = z_correction.then_steps[0]
     assert isinstance(correction, Circuit)
+    # MQT places q[2] on site 1; the ion number follows the program qubit.
+    assert all(gate.ions == (2,) for gate in correction.gates)
+
+
+def test_ions_follow_sites_without_a_recorded_placement() -> None:
+    """Use site numbers as ion numbers when the module records no qubit placement."""
+    header, body = _read("teleportation").split("\n", 1)
+    assert header.startswith("module attributes {mqt.layout")
+    program = parse_program("module {\n" + body)
+
+    z_correction = program.steps[2]
+    assert isinstance(z_correction, Branch)
+    correction = z_correction.then_steps[0]
+    assert isinstance(correction, Circuit)
     assert all(gate.ions == (1,) for gate in correction.gates)
+
+
+def test_reader_rejects_a_malformed_qubit_placement() -> None:
+    """Refuse a recorded placement that puts two qubits on one site."""
+    text = _read("teleportation").replace("initial = array<i64: 2, 0, 1>", "initial = array<i64: 2, 2, 1>")
+
+    with pytest.raises(ValueError, match=r"malformed mqt\.layout"):
+        parse_program(text)
 
 
 def test_nested_branch_reads_an_outcome_measured_inside_its_parent() -> None:
