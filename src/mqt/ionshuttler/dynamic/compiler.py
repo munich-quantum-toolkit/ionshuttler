@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
@@ -19,17 +19,18 @@ from mqt.ionshuttler.circuit import Circuit, with_commutation_aware_dependencies
 from mqt.ionshuttler.core.gates import GateAction
 from mqt.ionshuttler.core.result import CompilationStatus
 from mqt.ionshuttler.core.schedule import Schedule
+from mqt.ionshuttler.grid.compiler import GridCompiler
+from mqt.ionshuttler.grid.config import GridDependencyMode
 
 from .._json_utils import require_mapping, require_str
 from .program import Branch, Loop, Program
 from .schedule import BranchingSchedule, ScheduledBranch, ScheduledLoop
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
 
     from mqt.ionshuttler.core.actions import Action
     from mqt.ionshuttler.core.result import CompilationResult
-    from mqt.ionshuttler.grid.compiler import GridCompiler
     from mqt.ionshuttler.linear.compiler import LinearCompiler
 
     from .program import OutcomeKey, Step
@@ -222,6 +223,7 @@ def compile_program(
     *,
     initial_placement: Mapping[str, Sequence[int]] | None = None,
     feedback_delay: int = 0,
+    predicted_outcome: int | None = None,
 ) -> ProgramResult: ...
 
 
@@ -232,6 +234,7 @@ def compile_program(
     *,
     initial_placement: Sequence[int] | None = None,
     feedback_delay: int = 0,
+    predicted_outcome: int | None = None,
 ) -> ProgramResult: ...
 
 
@@ -241,6 +244,7 @@ def compile_program(
     *,
     initial_placement: _PlacementT | None = None,
     feedback_delay: int = 0,
+    predicted_outcome: int | None = None,
 ) -> ProgramResult:
     """Compile every path of a dynamic program with a Grid or Linear compiler.
 
@@ -253,6 +257,16 @@ def compile_program(
     same schedules. Time between a measurement and a decision that reads it is
     at least ``feedback_delay``.
 
+    With ``predicted_outcome``, the compiler assumes that every measurement
+    that a condition reads returns this value. It compiles the circuits of
+    this predicted path up to the next loop as one circuit, so that transport
+    for a later circuit can start while an earlier circuit still runs. Gates
+    of a circuit still start only after every gate of the circuits before it
+    ends. The compiler then cuts the result into one schedule per circuit.
+    The other side of each branch on the predicted path starts from the
+    placement that the predicted path reaches at the branch and, when later
+    steps follow, ends in the placement where the predicted path continues.
+
     Args:
         program: Program to compile.
         compiler: ``GridCompiler`` or ``LinearCompiler`` for the straight-line
@@ -261,11 +275,19 @@ def compile_program(
             that ``compiler.compile`` accepts.
         feedback_delay: Time from the end of a measurement until a branch that
             reads its outcome can start.
+        predicted_outcome: Optional outcome, 0 or 1, that every measurement
+            on the predicted path returns.
 
     Returns:
         The compiled program. Its status is ``FAILED`` with a message when a
         circuit or a return to the placement before a branch fails.
+
+    Raises:
+        ValueError: If ``predicted_outcome`` is neither 0 nor 1.
     """
+    if predicted_outcome is not None and (isinstance(predicted_outcome, bool) or predicted_outcome not in {0, 1}):
+        msg = "predicted_outcome must be 0 or 1"
+        raise ValueError(msg)
     started = perf_counter()
     # A circuit without gates checks the placement and brings it into the form of the machine state.
     placement = (
@@ -275,7 +297,7 @@ def compile_program(
             Circuit(program.num_ions, (), ()), initial_placement=initial_placement
         ).final_state.placement
     )
-    builder = _ProgramBuilder(program, compiler, placement)
+    builder = _ProgramBuilder(program, compiler, placement, predicted_outcome)
     status = CompilationStatus.SUCCESS
     message = ""
     try:
@@ -299,16 +321,21 @@ class _ProgramBuilder(Generic[_PlacementT]):
         program: Program,
         compiler: _CircuitCompiler[_PlacementT],
         placement: _PlacementT | None,
+        predicted_outcome: int | None,
     ) -> None:
         self.program = program
         self.compiler = compiler
         self.placement = placement
+        self.predicted_outcome = predicted_outcome
         self.initial_state: Any = None
         self.compiled: list[ScheduleStep] = []
 
     def compile_circuit(
         self, circuit: Circuit, target: _PlacementT | None = None
     ) -> CompilationResult[Any, Any, Any, Any]:
+        if circuit.gates and not isinstance(self.compiler, GridCompiler):
+            # Grid derives dependencies according to its configuration; Linear keeps the ones it receives.
+            circuit = with_commutation_aware_dependencies(circuit)
         result = self.compiler.compile(circuit, initial_placement=self.placement, target_placement=target)
         if self.initial_state is None:
             self.initial_state = result.schedule.initial_state
@@ -323,7 +350,8 @@ class _ProgramBuilder(Generic[_PlacementT]):
         The last circuit carries ``target`` as its target placement; without
         any steps, a circuit without gates moves the ions there. ``record``
         keeps each finished step, so that a failed compilation can still
-        return the steps before the failure.
+        return the steps before the failure. With a predicted outcome, each
+        run of steps without loops is compiled along its predicted path.
 
         Returns:
             The compiled steps.
@@ -332,29 +360,37 @@ class _ProgramBuilder(Generic[_PlacementT]):
             _CompilationFailedError: If a circuit or the return to ``target`` fails.
         """
         compiled = self.compiled if record else []
-        for position, step in enumerate(steps):
-            last = position == len(steps) - 1
-            if isinstance(step, Circuit):
-                result = self.compile_circuit(step, target if last else None)
-                compiled.append(result.schedule)
-                if result.status is not CompilationStatus.SUCCESS:
-                    gates_done = sum(isinstance(action, GateAction) for action in result.path) == len(step.gates)
-                    reason = (
-                        "returning to the placement before the branch failed"
-                        if gates_done
-                        else f"circuit compilation ended with {result.status.value}"
+        if self.predicted_outcome is None:
+            for position, step in enumerate(steps):
+                last = position == len(steps) - 1
+                if isinstance(step, Circuit):
+                    result = self.compile_circuit(step, target if last else None)
+                    compiled.append(result.schedule)
+                    _raise_if_failed(result, step, f"{where}, step {position}")
+                else:
+                    compiled.append(self.compile_control_step(step, target, f"{where}, step {position}", last=last))
+        else:
+            position = 0
+            while position < len(steps):
+                step = steps[position]
+                if not isinstance(step, Circuit) and _contains_loop(step):
+                    last = position == len(steps) - 1
+                    compiled.append(self.compile_control_step(step, target, f"{where}, step {position}", last=last))
+                    position += 1
+                    continue
+                end = position
+                while end < len(steps) and not _contains_loop(steps[end]):
+                    end += 1
+                final = end == len(steps)
+                compiled.extend(
+                    self.compile_predicted_path(
+                        steps[position:end],
+                        target if final else None,
+                        f"{where}, step {position}",
+                        free_end=final and target is None,
                     )
-                    msg = f"{where}, step {position}: {reason}"
-                    raise _CompilationFailedError(msg)
-                continue
-            if self.placement is None:
-                self.compile_circuit(Circuit(self.program.num_ions, (), ()))
-            if isinstance(step, Loop):
-                compiled.append(self.compile_loop(step, f"{where}, step {position}"))
-                continue
-            # Paths merge only when later steps follow, so a final branch ends where the steps must end.
-            join = target if last else self.placement
-            compiled.append(self.compile_branch(step, join, f"{where}, step {position}"))
+                )
+                position = end
         if target is not None and self.placement != target:
             result = self.compile_circuit(Circuit(self.program.num_ions, (), ()), target)
             compiled.append(result.schedule)
@@ -362,6 +398,166 @@ class _ProgramBuilder(Generic[_PlacementT]):
                 msg = f"{where}: returning to the placement before the branch failed"
                 raise _CompilationFailedError(msg)
         return tuple(compiled)
+
+    def compile_control_step(
+        self, step: Branch | Loop, target: _PlacementT | None, where: str, *, last: bool
+    ) -> ScheduledBranch | ScheduledLoop:
+        """Compile a branch or loop step of a sequence that ends in ``target`` when it is given.
+
+        Returns:
+            The compiled step.
+        """
+        if self.placement is None:
+            self.compile_circuit(Circuit(self.program.num_ions, (), ()))
+        if isinstance(step, Loop):
+            return self.compile_loop(step, where)
+        # Paths merge only when later steps follow, so a final branch ends where the steps must end.
+        join = target if last else self.placement
+        return self.compile_branch(step, join, where)
+
+    def compile_predicted_path(
+        self, steps: tuple[Step, ...], target: _PlacementT | None, where: str, *, free_end: bool
+    ) -> list[ScheduleStep]:
+        """Compile loop-free steps along their predicted path.
+
+        ``free_end`` means that no step follows and no placement is required
+        after ``steps``.
+
+        Returns:
+            The compiled steps.
+        """
+        if self.placement is None:
+            self.compile_circuit(Circuit(self.program.num_ions, (), ()))
+        circuits = tuple(self.predicted_circuits(steps))
+        cut = self.cut_predicted_path(circuits, target, where) if circuits else []
+        return self.build_predicted(steps, iter(cut), where, free_end=free_end)
+
+    def predicted_circuits(self, steps: tuple[Step, ...]) -> Iterator[Circuit]:
+        """Yield the circuits of loop-free steps on their predicted path, in order."""
+        for step in steps:
+            if isinstance(step, Circuit):
+                yield step
+            else:
+                assert isinstance(step, Branch)
+                yield from self.predicted_circuits(self.predicted_side(step)[0])
+
+    def predicted_side(self, branch: Branch) -> tuple[tuple[Step, ...], tuple[Step, ...], bool]:
+        """Return the predicted side of a branch, the other side, and whether the predicted side is ``then``."""
+        assert self.predicted_outcome is not None
+        values = dict.fromkeys(branch.condition.outcomes, self.predicted_outcome)
+        if branch.condition.holds(values):
+            return branch.then_steps, branch.else_steps, True
+        return branch.else_steps, branch.then_steps, False
+
+    def cut_predicted_path(
+        self, circuits: tuple[Circuit, ...], target: _PlacementT | None, where: str
+    ) -> list[tuple[Schedule[Any, Any], _PlacementT]]:
+        """Compile the predicted path as one circuit and cut it into one schedule per circuit.
+
+        The schedule of a circuit contains its gates and the transport that
+        starts after the gates of the circuits before it end and before its
+        own gates end. The last schedule also contains the transport after
+        the last gate. Each schedule starts idle once the schedule before it
+        ends; this only delays transport, so each schedule stays valid.
+
+        Returns:
+            Each circuit's schedule with the placement after it.
+
+        Raises:
+            _CompilationFailedError: If the predicted path does not compile.
+        """
+        compiler, circuits_with_dependencies = _keeping_dependencies(self.compiler, circuits)
+        path, origins = _predicted_path_circuit(self.program.num_ions, circuits_with_dependencies)
+        result = compiler.compile(path, initial_placement=self.placement, target_placement=target)
+        if self.initial_state is None:
+            self.initial_state = result.schedule.initial_state
+        if result.status is not CompilationStatus.SUCCESS:
+            msg = f"{where}: compiling the predicted path ended with {result.status.value}"
+            raise _CompilationFailedError(msg)
+        items = result.schedule.scheduled_actions
+        gate_ends = [result.schedule.start_time] * len(circuits)
+        for item in items:
+            if isinstance(item.action, GateAction):
+                circuit_index = origins[item.action.gate_id][0]
+                gate_ends[circuit_index] = max(gate_ends[circuit_index], item.end_time)
+        for circuit_index in range(1, len(circuits)):
+            gate_ends[circuit_index] = max(gate_ends[circuit_index], gate_ends[circuit_index - 1])
+        architecture: Any = self.compiler.architecture
+        cut: list[tuple[Schedule[Any, Any], _PlacementT]] = []
+        initial_state = result.schedule.initial_state
+        for circuit_index, circuit in enumerate(circuits):
+            begin = result.schedule.start_time if circuit_index == 0 else gate_ends[circuit_index - 1]
+            last = circuit_index == len(circuits) - 1
+            members = [
+                item
+                for item in items
+                if (
+                    origins[item.action.gate_id][0] == circuit_index
+                    if isinstance(item.action, GateAction)
+                    else begin <= item.start_time and (last or item.start_time < gate_ends[circuit_index])
+                )
+            ]
+            scheduled = tuple(
+                replace(
+                    item,
+                    action_id=position,
+                    action=(
+                        circuit.gates[origins[item.action.gate_id][1]]
+                        if isinstance(item.action, GateAction)
+                        else item.action
+                    ),
+                    start_time=item.start_time - begin + initial_state.time,
+                )
+                for position, item in enumerate(members)
+            )
+            end_time = max((item.end_time for item in scheduled), default=initial_state.time)
+            schedule: Schedule[Any, Any] = Schedule(scheduled, end_time, initial_state)
+            placement = architecture.replay_schedule(schedule).placement
+            cut.append((schedule, placement))
+            initial_state = self.compiler.compile(
+                Circuit(self.program.num_ions, (), ()), initial_placement=placement
+            ).schedule.initial_state
+        return cut
+
+    def build_predicted(
+        self,
+        steps: tuple[Step, ...],
+        cut: Iterator[tuple[Schedule[Any, Any], _PlacementT]],
+        where: str,
+        *,
+        free_end: bool,
+    ) -> list[ScheduleStep]:
+        """Arrange the cut schedules of the predicted path and compile the other side of each branch.
+
+        Returns:
+            The compiled steps.
+        """
+        built: list[ScheduleStep] = []
+        for position, step in enumerate(steps):
+            label = f"{where}, step {position}" if position else where
+            last = position == len(steps) - 1
+            if isinstance(step, Circuit):
+                schedule, self.placement = next(cut)
+                built.append(schedule)
+                continue
+            assert isinstance(step, Branch)
+            before = self.placement
+            predicted, other, predicted_then = self.predicted_side(step)
+            names = ("then", "else") if predicted_then else ("else", "then")
+            predicted_steps = tuple(
+                self.build_predicted(predicted, cut, f"{label}, {names[0]}", free_end=free_end and last)
+            )
+            after = self.placement
+            # The other side ends where the predicted path continues; at the end of the program it ends anywhere.
+            join = None if free_end and last else after
+            self.placement = before
+            other_steps = self.compile_steps(other, join, f"{label}, {names[1]}")
+            self.placement = after
+            then_steps, else_steps = (
+                (predicted_steps, other_steps) if predicted_then else (other_steps, predicted_steps)
+            )
+            built.append(ScheduledBranch(step.condition, then_steps, else_steps))
+        return built
 
     def compile_branch(self, branch: Branch, join: _PlacementT | None, where: str) -> ScheduledBranch:
         """Compile both sides of a branch so that each ends in ``join`` when it is given.
@@ -386,6 +582,93 @@ class _ProgramBuilder(Generic[_PlacementT]):
         steps = self.compile_steps(loop.steps, start, f"{where}, loop")
         self.placement = start
         return ScheduledLoop(steps, loop.count, loop.entry, loop.repeat)
+
+
+def _raise_if_failed(result: CompilationResult[Any, Any, Any, Any], circuit: Circuit, where: str) -> None:
+    """Stop the program compilation when a circuit or its return to a placement fails.
+
+    Raises:
+        _CompilationFailedError: If the result is not successful.
+    """
+    if result.status is CompilationStatus.SUCCESS:
+        return
+    gates_done = sum(isinstance(action, GateAction) for action in result.path) == len(circuit.gates)
+    reason = (
+        "returning to the placement before the branch failed"
+        if gates_done
+        else f"circuit compilation ended with {result.status.value}"
+    )
+    msg = f"{where}: {reason}"
+    raise _CompilationFailedError(msg)
+
+
+def _contains_loop(step: Step) -> bool:
+    """Return whether a step is a loop or contains one."""
+    if isinstance(step, Loop):
+        return True
+    if isinstance(step, Branch):
+        return any(_contains_loop(inner) for inner in (*step.then_steps, *step.else_steps))
+    return False
+
+
+def _keeping_dependencies(
+    compiler: _CircuitCompiler[Any], circuits: tuple[Circuit, ...]
+) -> tuple[_CircuitCompiler[Any], tuple[Circuit, ...]]:
+    """Return a compiler that keeps the dependencies of a joined circuit, and the circuits with these dependencies.
+
+    Each circuit gets the dependencies that ``compile_circuit`` gives it alone:
+    commutation-aware ones, unless a Grid compiler is configured for
+    conservative ones. A Grid compiler that derives commutation-aware
+    dependencies itself would derive them for the joined circuit and could
+    move a commuting gate before an earlier circuit, so it receives them per
+    circuit and keeps them.
+
+    Returns:
+        The compiler for the joined circuit and the circuits whose dependencies it keeps.
+    """
+    if isinstance(compiler, GridCompiler):
+        if compiler.config.dependency_mode is not GridDependencyMode.COMMUTATION_AWARE:
+            return compiler, circuits
+        compiler = GridCompiler(
+            compiler.architecture, replace(compiler.config, dependency_mode=GridDependencyMode.CONSERVATIVE)
+        )
+    return compiler, tuple(with_commutation_aware_dependencies(circuit) for circuit in circuits)
+
+
+def _predicted_path_circuit(
+    num_ions: int, circuits: tuple[Circuit, ...]
+) -> tuple[Circuit, tuple[tuple[int, int], ...]]:
+    """Join circuits into one circuit in which every gate follows all gates of the earlier circuits.
+
+    Each gate without a predecessor in its own circuit depends on every gate
+    of the closest earlier circuit with gates that no other gate of that
+    circuit depends on.
+
+    Returns:
+        The joined circuit and, for each of its gates, the position of the
+        source circuit and the gate ID there.
+    """
+    gates: list[GateAction] = []
+    predecessors: list[frozenset[int]] = []
+    barriers: list[tuple[frozenset[int], ...]] = []
+    origins: list[tuple[int, int]] = []
+    previous_last_gates: frozenset[int] = frozenset()
+    pending: list[frozenset[int]] = []
+    for circuit_index, circuit in enumerate(circuits):
+        offset = len(gates)
+        for gate_id, gate in enumerate(circuit.gates):
+            own = frozenset(offset + predecessor for predecessor in circuit.predecessors[gate_id])
+            predecessors.append(own or previous_last_gates)
+            barriers.append((*pending, *circuit.barriers[gate_id]))
+            pending = []
+            gates.append(replace(gate, gate_id=offset + gate_id))
+            origins.append((circuit_index, gate_id))
+        pending.extend(circuit.barriers[-1])
+        if circuit.gates:
+            followed = {predecessor for gate_predecessors in circuit.predecessors for predecessor in gate_predecessors}
+            previous_last_gates = frozenset(offset + gate_id for gate_id in circuit.gate_ids if gate_id not in followed)
+    barriers.append(tuple(pending))
+    return Circuit(num_ions, tuple(gates), tuple(predecessors), tuple(barriers)), tuple(origins)
 
 
 def _same_idle_state(first: Any, second: Any) -> bool:  # ruff: ignore[any-type] - architecture machine states
