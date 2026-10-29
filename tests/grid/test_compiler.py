@@ -9,7 +9,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from dataclasses import replace
+from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -37,8 +39,7 @@ from mqt.ionshuttler.grid import (
     square_grid,
 )
 
-if TYPE_CHECKING:
-    from pathlib import Path
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def _qasm(num_ions: int, *instructions: str) -> str:
@@ -193,6 +194,26 @@ def test_compiler_schedules_measurement_and_reset_in_a_processing_zone(strategy:
     assert timed[Reset].start_time >= timed[Measure].end_time
     result.validate()
     assert result_from_json(result.to_json()) == result
+
+
+def test_greedy_compiler_starts_a_gate_after_its_predecessor_on_another_ion_ends() -> None:
+    """Keep the order that a barrier sets between gates on different ions."""
+    left = Segment("left", processing_zones=(ProcessingZone("left-pz"),))
+    right = Segment("right", processing_zones=(ProcessingZone("right-pz"),))
+    architecture = GridArchitecture(
+        (left, right),
+        (Junction("j0", (left.end, right.start)),),
+        gate_timing=GateTiming(rx=3),
+    )
+
+    result = GridCompiler(architecture).compile(
+        _qasm(2, "rx(0.5) q[0];", "barrier q[0],q[1];", "rx(0.5) q[1];"),
+        initial_placement={"left": (0,), "right": (1,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    gates = {item.action.gate_id: item for item in result.schedule.scheduled_actions if isinstance(item.action, Rx)}
+    assert gates[1].start_time >= gates[0].end_time
 
 
 def test_greedy_compiler_starts_a_virtual_gate_after_its_predecessor_ends() -> None:
@@ -509,6 +530,20 @@ def test_greedy_compiler_clears_a_stall_for_the_selected_gate() -> None:
     assert result.status is CompilationStatus.SUCCESS
     assert result.final_state.occupants("processor") == (0,)
     assert result.final_state.occupants("free") == (1,)
+
+
+def test_greedy_compiler_leaves_a_transport_cycle() -> None:
+    """Finish a circuit whose greedy movement layers would otherwise repeat one placement forever."""
+    architecture = replace(
+        square_grid(3, processing_zone_segments=("h:1:0", "h:1:1"), segment_capacity=2),
+        transport_timing=TransportTiming(junction_move=20),
+    )
+    circuit = (FIXTURES / "transport_cycle.qasm").read_text(encoding="utf-8")
+
+    result = GridCompiler(architecture).compile(circuit)
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert sum(isinstance(item.action, GateAction) for item in result.schedule.scheduled_actions) == 38
 
 
 def test_greedy_compiler_suppresses_same_target_lookahead_when_selected_gate_is_blocked() -> None:
