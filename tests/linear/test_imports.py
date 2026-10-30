@@ -33,6 +33,7 @@ def test_package_exports_only_the_supported_facade() -> None:
         "DEFAULT_ACTION_TYPES",
         "CompilationResult",
         "CompilationStatus",
+        "DependencyMode",
         "GateGroup",
         "GateTiming",
         "HeuristicFn",

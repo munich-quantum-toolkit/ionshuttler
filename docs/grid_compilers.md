@@ -106,9 +106,10 @@ compiler settings:
   default and suits larger inputs.
 - {py:attr}`~mqt.ionshuttler.grid.config.GridCompilerStrategy.BREADTH_FIRST`
   performs bounded routing search and is intended for small architectures.
-- {py:attr}`~mqt.ionshuttler.grid.config.GridDependencyMode.CONSERVATIVE`
+- `dependency_mode` set to
+  {py:attr}`~mqt.ionshuttler.core.dependencies.DependencyMode.CONSERVATIVE`
   preserves the dependencies produced by the shared circuit parser instead of
-  reordering commuting gates.
+  reordering commuting gates. The Linear compiler has the same setting.
 - {py:attr}`~mqt.ionshuttler.grid.config.GridCompilerConfig.allowed_junction_crossings`
   can restrict routing to selected directed segment pairs without changing the
   hardware topology.

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from mqt.ionshuttler.core.actions import Action
+from mqt.ionshuttler.core.dependencies import DependencyMode
 
 if TYPE_CHECKING:
     from mqt.ionshuttler.linear.cost import HeuristicFn
@@ -26,6 +27,7 @@ class LinearCompilerConfig(ABC):
 
     ``action_types`` limits the compiler to a subset of the operations
     supported by the architecture. ``None`` uses every supported operation.
+    ``dependency_mode`` controls whether commuting gates can change order.
     ``max_compile_time`` bounds the complete compilation in seconds; ``None``
     removes the limit. ``pre_partition`` toggles a pre-partitioning step that
     assigns gates to preferred processing zones. ``pre_partition_config``
@@ -36,6 +38,7 @@ class LinearCompilerConfig(ABC):
     """
 
     action_types: tuple[type[Action], ...] | None = None
+    dependency_mode: DependencyMode = DependencyMode.COMMUTATION_AWARE
     max_compile_time: float | None = 1800.0
     pre_partition: bool = False
     pre_partition_config: FineGrainedTabuConfig | None = None
@@ -45,10 +48,13 @@ class LinearCompilerConfig(ABC):
         """Validate the shared settings.
 
         Raises:
-            TypeError: If an action type is invalid.
+            TypeError: If an action type or the dependency mode is invalid.
             ValueError: If the time limit is invalid or an action type is repeated.
         """
         object.__setattr__(self, "action_types", _normalize_action_types(self.action_types))
+        if not isinstance(self.dependency_mode, DependencyMode):
+            msg = "dependency_mode must be a DependencyMode"
+            raise TypeError(msg)
         _validate_compile_time(self.max_compile_time)
         if not isinstance(self.pre_partition, bool):
             msg = "pre_partition must be a boolean"
@@ -84,7 +90,7 @@ class SearchConfig(LinearCompilerConfig):
         """Ensure all search limits are meaningful and mutually consistent.
 
         Raises:
-            TypeError: If a Boolean option or action type is invalid.
+            TypeError: If a Boolean option, an action type, or the dependency mode is invalid.
             ValueError: If a bound is invalid or an action type is repeated.
         """
         super().__post_init__()
@@ -132,7 +138,7 @@ class PermutationConfig(LinearCompilerConfig):
         """Validate the permutation settings.
 
         Raises:
-            TypeError: If a Boolean option or action type is invalid.
+            TypeError: If a Boolean option, an action type, or the dependency mode is invalid.
             ValueError: If pre-partitioning is disabled.
         """
         super().__post_init__()

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from mqt.ionshuttler.circuit import Circuit
+from mqt.ionshuttler.core.dependencies import DependencyMode
 from mqt.ionshuttler.core.gates import GateAction, GateTiming, Measure, Rx, Rxx, Rzz
 from mqt.ionshuttler.core.schedule import Schedule
 from mqt.ionshuttler.dynamic import (
@@ -44,12 +45,12 @@ from mqt.ionshuttler.grid import (
     square_grid,
 )
 from mqt.ionshuttler.grid.actions import decode_grid_action
-from mqt.ionshuttler.linear import DEFAULT_ACTION_TYPES, LinearArchitecture, LinearCompiler
+from mqt.ionshuttler.linear import DEFAULT_ACTION_TYPES, LinearArchitecture, LinearCompiler, SearchConfig
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from mqt.ionshuttler.circuit import CircuitInput
+    from mqt.ionshuttler.core import Compiler
     from mqt.ionshuttler.dynamic import BranchingSchedule
     from mqt.ionshuttler.linear import LinearCompilationResult
 
@@ -439,30 +440,59 @@ def test_predicted_outcome_must_be_zero_or_one() -> None:
         compile_program(_measure_then_branch(), GridCompiler(_two_zone_line()), predicted_outcome=2)
 
 
-def test_linear_circuits_of_a_program_leave_commuting_gates_unordered() -> None:
-    """Give the Linear compiler commutation-aware dependencies, as Grid derives them by default."""
-    received: list[Circuit] = []
+class _ForwardingCompiler:
+    """Compile with a Linear compiler without being one, as another backend would."""
 
-    class RecordingCompiler(LinearCompiler):
-        def compile(
-            self,
-            circuit: CircuitInput,
-            *,
-            initial_placement: Sequence[int] | None = None,
-            target_placement: Sequence[int] | None = None,
-        ) -> LinearCompilationResult:
-            assert isinstance(circuit, Circuit)
-            received.append(circuit)
-            return super().compile(circuit, initial_placement=initial_placement, target_placement=target_placement)
+    def __init__(self, compiler: LinearCompiler) -> None:
+        self.compiler = compiler
+        self.results: list[tuple[Circuit, LinearCompilationResult]] = []
 
-    circuit = Circuit(
-        num_ions=3,
-        gates=(Rzz(ion_a=0, ion_b=1, theta=0.5, gate_id=0), Rzz(ion_a=0, ion_b=2, theta=0.5, gate_id=1)),
-        predecessors=(frozenset(), frozenset({0})),
-    )
+    @property
+    def architecture(self) -> LinearArchitecture:
+        return self.compiler.architecture
 
-    result = compile_program(Program(3, (circuit,)), RecordingCompiler(LINEAR))
+    def compile(
+        self,
+        circuit: Circuit,
+        *,
+        initial_placement: Sequence[int] | None = None,
+        target_placement: Sequence[int] | None = None,
+    ) -> LinearCompilationResult:
+        result = self.compiler.compile(circuit, initial_placement=initial_placement, target_placement=target_placement)
+        self.results.append((circuit, result))
+        return result
+
+
+@pytest.mark.parametrize("predicted_outcome", [None, 0])
+def test_a_compiler_with_the_compiler_interface_compiles_a_program(predicted_outcome: int | None) -> None:
+    """Accept a compiler by its interface, not by its class."""
+    forwarding = _ForwardingCompiler(LinearCompiler(LINEAR))
+    compiler: Compiler[Sequence[int]] = forwarding
+
+    result = compile_program(_program("teleportation"), compiler, feedback_delay=1, predicted_outcome=predicted_outcome)
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert forwarding.results
+    result.validate()
+
+
+@pytest.mark.parametrize("dependency_mode", list(DependencyMode))
+def test_the_predicted_path_starts_no_gate_before_the_earlier_circuits_end(dependency_mode: DependencyMode) -> None:
+    """Keep the circuit order on the predicted path, also for gates that commute across circuits."""
+    # Ions 0 and 1 start in the zone and ion 2 must travel there, so the second gate could start first.
+    architecture = LinearArchitecture(num_sites=8, processing_zones={"zone": [3, 4]})
+    first = Circuit(num_ions=3, gates=(Rzz(ion_a=0, ion_b=2, theta=0.1, gate_id=0),), predecessors=(frozenset(),))
+    second = Circuit(num_ions=3, gates=(Rzz(ion_a=0, ion_b=1, theta=0.2, gate_id=0),), predecessors=(frozenset(),))
+    compiler = _ForwardingCompiler(LinearCompiler(architecture, SearchConfig(dependency_mode=dependency_mode)))
+
+    result = compile_program(Program(3, (first, second)), compiler, initial_placement=[3, 4, 7], predicted_outcome=0)
 
     assert result.status is CompilationStatus.SUCCESS
     result.validate()
-    assert [compiled.predecessors for compiled in received if compiled.gates] == [(frozenset(), frozenset())]
+    joined = next(compiled for circuit, compiled in compiler.results if len(circuit.gates) == 2)
+    windows = {
+        item.action.gate_id: (item.start_time, item.end_time)
+        for item in joined.schedule.scheduled_actions
+        if isinstance(item.action, GateAction)
+    }
+    assert windows[1][0] >= windows[0][1]
