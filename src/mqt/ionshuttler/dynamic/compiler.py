@@ -13,25 +13,23 @@ import json
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from mqt.ionshuttler.circuit import Circuit, with_commutation_aware_dependencies
 from mqt.ionshuttler.core.gates import GateAction
 from mqt.ionshuttler.core.result import CompilationStatus
 from mqt.ionshuttler.core.schedule import Schedule
-from mqt.ionshuttler.grid.compiler import GridCompiler
-from mqt.ionshuttler.grid.config import GridDependencyMode
 
 from .._json_utils import require_mapping, require_str
 from .program import Branch, Loop, Program
 from .schedule import BranchingSchedule, ScheduledBranch, ScheduledLoop
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping
 
     from mqt.ionshuttler.core.actions import Action
+    from mqt.ionshuttler.core.compiler import Compiler
     from mqt.ionshuttler.core.result import CompilationResult
-    from mqt.ionshuttler.linear.compiler import LinearCompiler
 
     from .program import OutcomeKey, Step
     from .schedule import ScheduleStep
@@ -39,33 +37,7 @@ if TYPE_CHECKING:
 PROGRAM_RESULT_SCHEMA = "mqt.ionshuttler.program_result"
 PROGRAM_RESULT_VERSION = 1
 
-# Grid placements map segments to ions; Linear placements list the site of each ion.
-_PlacementT = TypeVar("_PlacementT")
-_PlacementT_contra = TypeVar("_PlacementT_contra", contravariant=True)
-
-
-class _CircuitCompiler(Protocol[_PlacementT_contra]):
-    """Compile one straight-line circuit between placements of one architecture.
-
-    ``GridCompiler`` and ``LinearCompiler`` satisfy this protocol. The machine
-    state of each result reports its placement in the form that ``compile``
-    accepts.
-    """
-
-    @property
-    def architecture(self) -> object:
-        """The architecture that the compiler targets."""
-        ...
-
-    def compile(
-        self,
-        circuit: Circuit,
-        *,
-        initial_placement: _PlacementT_contra | None = None,
-        target_placement: _PlacementT_contra | None = None,
-    ) -> CompilationResult[Any, Any, Any, Any]:
-        """Compile a circuit that starts in ``initial_placement`` and ends in ``target_placement``."""
-        ...
+PlacementT = TypeVar("PlacementT")
 
 
 @dataclass(frozen=True)
@@ -216,37 +188,15 @@ class _CompilationFailedError(Exception):
     """Stop compilation at the first part that cannot be compiled."""
 
 
-@overload
 def compile_program(
     program: Program,
-    compiler: GridCompiler,
+    compiler: Compiler[PlacementT],
     *,
-    initial_placement: Mapping[str, Sequence[int]] | None = None,
-    feedback_delay: int = 0,
-    predicted_outcome: int | None = None,
-) -> ProgramResult: ...
-
-
-@overload
-def compile_program(
-    program: Program,
-    compiler: LinearCompiler,
-    *,
-    initial_placement: Sequence[int] | None = None,
-    feedback_delay: int = 0,
-    predicted_outcome: int | None = None,
-) -> ProgramResult: ...
-
-
-def compile_program(
-    program: Program,
-    compiler: _CircuitCompiler[_PlacementT],
-    *,
-    initial_placement: _PlacementT | None = None,
+    initial_placement: PlacementT | None = None,
     feedback_delay: int = 0,
     predicted_outcome: int | None = None,
 ) -> ProgramResult:
-    """Compile every path of a dynamic program with a Grid or Linear compiler.
+    """Compile every path of a dynamic program.
 
     Each straight-line circuit is compiled once. Both sides of a branch start
     from the placement before the branch. When later steps follow the branch,
@@ -269,8 +219,8 @@ def compile_program(
 
     Args:
         program: Program to compile.
-        compiler: ``GridCompiler`` or ``LinearCompiler`` for the straight-line
-            circuits.
+        compiler: Compiler for the straight-line circuits, see
+            :class:`~mqt.ionshuttler.core.compiler.Compiler`.
         initial_placement: Optional placement before the program, in the form
             that ``compiler.compile`` accepts.
         feedback_delay: Time from the end of a measurement until a branch that
@@ -313,14 +263,14 @@ def compile_program(
     return ProgramResult(status, program, schedule, compiler.architecture, perf_counter() - started, message)
 
 
-class _ProgramBuilder(Generic[_PlacementT]):
+class _ProgramBuilder(Generic[PlacementT]):
     """Compile program steps while tracking the placement between them."""
 
     def __init__(
         self,
         program: Program,
-        compiler: _CircuitCompiler[_PlacementT],
-        placement: _PlacementT | None,
+        compiler: Compiler[PlacementT],
+        placement: PlacementT | None,
         predicted_outcome: int | None,
     ) -> None:
         self.program = program
@@ -331,11 +281,8 @@ class _ProgramBuilder(Generic[_PlacementT]):
         self.compiled: list[ScheduleStep] = []
 
     def compile_circuit(
-        self, circuit: Circuit, target: _PlacementT | None = None
+        self, circuit: Circuit, target: PlacementT | None = None
     ) -> CompilationResult[Any, Any, Any, Any]:
-        if circuit.gates and not isinstance(self.compiler, GridCompiler):
-            # Grid derives dependencies according to its configuration; Linear keeps the ones it receives.
-            circuit = with_commutation_aware_dependencies(circuit)
         result = self.compiler.compile(circuit, initial_placement=self.placement, target_placement=target)
         if self.initial_state is None:
             self.initial_state = result.schedule.initial_state
@@ -343,7 +290,7 @@ class _ProgramBuilder(Generic[_PlacementT]):
         return result
 
     def compile_steps(
-        self, steps: tuple[Step, ...], target: _PlacementT | None, where: str, *, record: bool = False
+        self, steps: tuple[Step, ...], target: PlacementT | None, where: str, *, record: bool = False
     ) -> tuple[ScheduleStep, ...]:
         """Compile steps that end in ``target`` when it is given.
 
@@ -400,7 +347,7 @@ class _ProgramBuilder(Generic[_PlacementT]):
         return tuple(compiled)
 
     def compile_control_step(
-        self, step: Branch | Loop, target: _PlacementT | None, where: str, *, last: bool
+        self, step: Branch | Loop, target: PlacementT | None, where: str, *, last: bool
     ) -> ScheduledBranch | ScheduledLoop:
         """Compile a branch or loop step of a sequence that ends in ``target`` when it is given.
 
@@ -416,7 +363,7 @@ class _ProgramBuilder(Generic[_PlacementT]):
         return self.compile_branch(step, join, where)
 
     def compile_predicted_path(
-        self, steps: tuple[Step, ...], target: _PlacementT | None, where: str, *, free_end: bool
+        self, steps: tuple[Step, ...], target: PlacementT | None, where: str, *, free_end: bool
     ) -> list[ScheduleStep]:
         """Compile loop-free steps along their predicted path.
 
@@ -450,8 +397,8 @@ class _ProgramBuilder(Generic[_PlacementT]):
         return branch.else_steps, branch.then_steps, False
 
     def cut_predicted_path(
-        self, circuits: tuple[Circuit, ...], target: _PlacementT | None, where: str
-    ) -> list[tuple[Schedule[Any, Any], _PlacementT]]:
+        self, circuits: tuple[Circuit, ...], target: PlacementT | None, where: str
+    ) -> list[tuple[Schedule[Any, Any], PlacementT]]:
         """Compile the predicted path as one circuit and cut it into one schedule per circuit.
 
         The schedule of a circuit contains its gates and the transport that
@@ -466,9 +413,8 @@ class _ProgramBuilder(Generic[_PlacementT]):
         Raises:
             _CompilationFailedError: If the predicted path does not compile.
         """
-        compiler, circuits_with_dependencies = _keeping_dependencies(self.compiler, circuits)
-        path, origins = _predicted_path_circuit(self.program.num_ions, circuits_with_dependencies)
-        result = compiler.compile(path, initial_placement=self.placement, target_placement=target)
+        path, origins = _predicted_path_circuit(self.program.num_ions, circuits)
+        result = self.compiler.compile(path, initial_placement=self.placement, target_placement=target)
         if self.initial_state is None:
             self.initial_state = result.schedule.initial_state
         if result.status is not CompilationStatus.SUCCESS:
@@ -483,7 +429,7 @@ class _ProgramBuilder(Generic[_PlacementT]):
         for circuit_index in range(1, len(circuits)):
             gate_ends[circuit_index] = max(gate_ends[circuit_index], gate_ends[circuit_index - 1])
         architecture: Any = self.compiler.architecture
-        cut: list[tuple[Schedule[Any, Any], _PlacementT]] = []
+        cut: list[tuple[Schedule[Any, Any], PlacementT]] = []
         initial_state = result.schedule.initial_state
         for circuit_index, circuit in enumerate(circuits):
             begin = result.schedule.start_time if circuit_index == 0 else gate_ends[circuit_index - 1]
@@ -522,7 +468,7 @@ class _ProgramBuilder(Generic[_PlacementT]):
     def build_predicted(
         self,
         steps: tuple[Step, ...],
-        cut: Iterator[tuple[Schedule[Any, Any], _PlacementT]],
+        cut: Iterator[tuple[Schedule[Any, Any], PlacementT]],
         where: str,
         *,
         free_end: bool,
@@ -559,7 +505,7 @@ class _ProgramBuilder(Generic[_PlacementT]):
             built.append(ScheduledBranch(step.condition, then_steps, else_steps))
         return built
 
-    def compile_branch(self, branch: Branch, join: _PlacementT | None, where: str) -> ScheduledBranch:
+    def compile_branch(self, branch: Branch, join: PlacementT | None, where: str) -> ScheduledBranch:
         """Compile both sides of a branch so that each ends in ``join`` when it is given.
 
         Returns:
@@ -611,30 +557,6 @@ def _contains_loop(step: Step) -> bool:
     return False
 
 
-def _keeping_dependencies(
-    compiler: _CircuitCompiler[Any], circuits: tuple[Circuit, ...]
-) -> tuple[_CircuitCompiler[Any], tuple[Circuit, ...]]:
-    """Return a compiler that keeps the dependencies of a joined circuit, and the circuits with these dependencies.
-
-    Each circuit gets the dependencies that ``compile_circuit`` gives it alone:
-    commutation-aware ones, unless a Grid compiler is configured for
-    conservative ones. A Grid compiler that derives commutation-aware
-    dependencies itself would derive them for the joined circuit and could
-    move a commuting gate before an earlier circuit, so it receives them per
-    circuit and keeps them.
-
-    Returns:
-        The compiler for the joined circuit and the circuits whose dependencies it keeps.
-    """
-    if isinstance(compiler, GridCompiler):
-        if compiler.config.dependency_mode is not GridDependencyMode.COMMUTATION_AWARE:
-            return compiler, circuits
-        compiler = GridCompiler(
-            compiler.architecture, replace(compiler.config, dependency_mode=GridDependencyMode.CONSERVATIVE)
-        )
-    return compiler, tuple(with_commutation_aware_dependencies(circuit) for circuit in circuits)
-
-
 def _predicted_path_circuit(
     num_ions: int, circuits: tuple[Circuit, ...]
 ) -> tuple[Circuit, tuple[tuple[int, int], ...]]:
@@ -642,7 +564,9 @@ def _predicted_path_circuit(
 
     Each gate without a predecessor in its own circuit depends on every gate
     of the closest earlier circuit with gates that no other gate of that
-    circuit depends on.
+    circuit depends on. A barrier on every ion separates the circuits, so a
+    compiler that derives the dependencies again from the gates and barriers
+    keeps this order too.
 
     Returns:
         The joined circuit and, for each of its gates, the position of the
@@ -654,7 +578,10 @@ def _predicted_path_circuit(
     origins: list[tuple[int, int]] = []
     previous_last_gates: frozenset[int] = frozenset()
     pending: list[frozenset[int]] = []
+    every_ion = frozenset(range(num_ions))
     for circuit_index, circuit in enumerate(circuits):
+        if circuit_index:
+            pending.append(every_ion)
         offset = len(gates)
         for gate_id, gate in enumerate(circuit.gates):
             own = frozenset(offset + predecessor for predecessor in circuit.predecessors[gate_id])

@@ -18,6 +18,7 @@ from qiskit import QuantumCircuit
 import mqt.ionshuttler.linear.compiler as compiler_module
 import mqt.ionshuttler.linear.search as search_module
 from mqt.ionshuttler.circuit import Circuit, parse_circuit
+from mqt.ionshuttler.core.dependencies import DependencyMode
 from mqt.ionshuttler.core.gates import GateAction, Measure, Reset, Rx, Rxx, Ry, Rz, Rzz
 from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.linear import (
@@ -35,6 +36,8 @@ from mqt.ionshuttler.linear.state import create_initial_state
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from mqt.ionshuttler.linear.result import LinearCompilationResult
 
 
 def test_compiler_produces_a_compact_replayable_schedule() -> None:
@@ -300,6 +303,31 @@ ry(0.2) q[1];
     assert sequential_result.status is CompilationStatus.SUCCESS
     assert dependency_result.end_time == 1
     assert sequential_result.end_time == 2
+
+
+def test_commutation_aware_dependencies_let_commuting_gates_change_order() -> None:
+    """Shorten a schedule by running a later commuting gate first, unless dependencies are conservative."""
+    # Ions 0 and 1 start in the zone and ion 2 must travel there for the first gate.
+    architecture = LinearArchitecture(num_sites=8, processing_zones={"zone": [3, 4]})
+    qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[3];\nrzz(0.1) q[0], q[2];\nrzz(0.2) q[0], q[1];\n'
+
+    def compile_with(dependency_mode: DependencyMode) -> LinearCompilationResult:
+        config = SearchConfig(dependency_mode=dependency_mode)
+        result = LinearCompiler(architecture, config).compile(qasm, initial_placement=[3, 4, 7])
+        assert result.status is CompilationStatus.SUCCESS
+        result.validate()
+        return result
+
+    conservative = compile_with(DependencyMode.CONSERVATIVE)
+    commutation_aware = compile_with(DependencyMode.COMMUTATION_AWARE)
+
+    gate_windows = {
+        item.action.gate_id: (item.start_time, item.end_time)
+        for item in conservative.schedule.scheduled_actions
+        if isinstance(item.action, GateAction)
+    }
+    assert gate_windows[1][0] >= gate_windows[0][1]
+    assert commutation_aware.end_time < conservative.end_time
 
 
 def test_barrier_delays_gates_on_its_qubits_until_earlier_gates_finish() -> None:

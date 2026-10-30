@@ -21,7 +21,8 @@ from qiskit import QuantumCircuit
 
 import mqt.ionshuttler.linear.compiler as compiler_module
 import mqt.ionshuttler.linear.permutation as permutation_module
-from mqt.ionshuttler.circuit import Circuit, parse_circuit
+from mqt.ionshuttler.circuit import Circuit, parse_circuit, with_commutation_aware_dependencies
+from mqt.ionshuttler.core.dependencies import DependencyMode
 from mqt.ionshuttler.core.gates import GateAction, Rx, Rz, Rzz
 from mqt.ionshuttler.core.result import CompilationStatus
 from mqt.ionshuttler.linear import (
@@ -57,9 +58,11 @@ def _compile(
     action_types: tuple[type[Action], ...] | None = None,
     max_compile_time: float | None = None,
     record_planning_trace: bool = False,
+    dependency_mode: DependencyMode = DependencyMode.COMMUTATION_AWARE,
 ) -> LinearCompilationResult:
     config = PermutationConfig(
         action_types=action_types,
+        dependency_mode=dependency_mode,
         record_planning_trace=record_planning_trace,
         max_compile_time=max_compile_time,
     )
@@ -96,8 +99,7 @@ def _gate_time_windows(result: LinearCompilationResult) -> dict[int, tuple[int, 
     return windows
 
 
-def _assert_dependencies_hold(result: LinearCompilationResult, circuit: QuantumCircuit) -> None:
-    predecessors = parse_circuit(circuit).predecessors
+def _assert_dependencies_hold(result: LinearCompilationResult, predecessors: Sequence[frozenset[int]]) -> None:
     windows = _gate_time_windows(result)
     for gate_id, (start, _end) in windows.items():
         for predecessor in predecessors[gate_id]:
@@ -269,16 +271,20 @@ def test_permutation_routes_into_a_wrapping_ring_zone() -> None:
     result.validate()
 
 
+@pytest.mark.parametrize("dependency_mode", list(DependencyMode))
 @pytest.mark.parametrize("seed", range(5))
-def test_permutation_completes_random_circuits_on_two_zones(seed: int) -> None:
-    """Complete random circuits, keep dependency order, and respect the lower bound."""
+def test_permutation_completes_random_circuits_on_two_zones(seed: int, dependency_mode: DependencyMode) -> None:
+    """Complete random circuits, keep the dependencies of the mode, and respect the lower bound."""
     circuit = _random_circuit(num_ions=7, num_gates=300, seed=seed)
+    parsed = parse_circuit(circuit)
+    if dependency_mode is DependencyMode.COMMUTATION_AWARE:
+        parsed = with_commutation_aware_dependencies(parsed)
 
-    result = _compile(circuit, TWO_ZONE_ARCHITECTURE)
+    result = _compile(circuit, TWO_ZONE_ARCHITECTURE, dependency_mode=dependency_mode)
 
     assert result.status is CompilationStatus.SUCCESS
     assert len(_gate_time_windows(result)) == 300
-    _assert_dependencies_hold(result, circuit)
+    _assert_dependencies_hold(result, parsed.predecessors)
     assert result.diagnostics is not None
     assert result.duration >= result.diagnostics.makespan_lower_bound > 0
     result.validate()

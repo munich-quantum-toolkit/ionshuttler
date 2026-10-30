@@ -13,7 +13,8 @@ from dataclasses import dataclass, field, replace
 from time import perf_counter
 from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.circuit import parse_circuit
+from mqt.ionshuttler.circuit import parse_circuit, with_commutation_aware_dependencies
+from mqt.ionshuttler.core.dependencies import DependencyMode
 from mqt.ionshuttler.core.gates import GateAction
 from mqt.ionshuttler.core.result import CompilationStatus
 from mqt.ionshuttler.linear.assignment import compute_gate_zone_assignment, zone_site_pairs
@@ -91,6 +92,8 @@ class LinearCompiler:
             circuit,
             gate_types=tuple(action_type for action_type in action_types if issubclass(action_type, GateAction)),
         )
+        if config.dependency_mode is DependencyMode.COMMUTATION_AWARE:
+            parsed_circuit = with_commutation_aware_dependencies(parsed_circuit)
         initial_state = create_initial_state(
             parsed_circuit.num_ions,
             self.architecture,

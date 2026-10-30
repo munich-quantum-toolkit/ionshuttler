@@ -14,14 +14,11 @@ from time import perf_counter
 from typing import TYPE_CHECKING
 
 from mqt.ionshuttler.circuit import parse_circuit, with_commutation_aware_dependencies
+from mqt.ionshuttler.core.dependencies import DependencyMode
 from mqt.ionshuttler.core.gates import GateAction
 from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.grid.assignment import compute_gate_zone_assignment
-from mqt.ionshuttler.grid.config import (
-    GridCompilerConfig,
-    GridCompilerStrategy,
-    GridDependencyMode,
-)
+from mqt.ionshuttler.grid.config import GridCompilerConfig, GridCompilerStrategy
 from mqt.ionshuttler.grid.routing import select_greedy_target
 from mqt.ionshuttler.grid.scheduling import schedule_breadth_first, schedule_greedy
 
@@ -83,7 +80,7 @@ class GridCompiler:
             if issubclass(action_type, GateAction)
         )
         parsed = parse_circuit(circuit, gate_types=gate_types)
-        if self.config.dependency_mode is GridDependencyMode.COMMUTATION_AWARE:
+        if self.config.dependency_mode is DependencyMode.COMMUTATION_AWARE:
             parsed = with_commutation_aware_dependencies(parsed)
         placement = (
             _default_placement(parsed.num_ions, self.architecture) if initial_placement is None else initial_placement

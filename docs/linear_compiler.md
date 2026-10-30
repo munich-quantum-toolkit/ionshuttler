@@ -220,12 +220,13 @@ The configuration type selects one of two scheduling strategies:
 Both configuration types inherit these settings from
 {py:class}`~mqt.ionshuttler.linear.LinearCompilerConfig`:
 
-| Shared setting         | User-visible effect                                                                                                                                                                             |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `action_types`         | Operations that the compiler may use. `None` uses every operation supported by the architecture.                                                                                                |
-| `max_compile_time`     | Wall-clock budget in seconds for the complete compilation, including pre-partitioning. A finite value prevents unexpectedly long runs; `None` removes the time limit. Defaults to 1800 seconds. |
-| `pre_partition`        | Assigns gates to preferred processing zones. Search disables it by default; the permutation strategy requires it.                                                                               |
-| `pre_partition_config` | Optional fine-grained tabu settings used when pre-partitioning runs. `None` uses the partitioner's defaults.                                                                                    |
+| Shared setting         | User-visible effect                                                                                                                                                                                       |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `action_types`         | Operations that the compiler may use. `None` uses every operation supported by the architecture.                                                                                                          |
+| `dependency_mode`      | `DependencyMode.COMMUTATION_AWARE`, the default, lets commuting gates change order. `DependencyMode.CONSERVATIVE` keeps the dependencies from the circuit parser. The Grid compiler has the same setting. |
+| `max_compile_time`     | Wall-clock budget in seconds for the complete compilation, including pre-partitioning. A finite value prevents unexpectedly long runs; `None` removes the time limit. Defaults to 1800 seconds.           |
+| `pre_partition`        | Assigns gates to preferred processing zones. Search disables it by default; the permutation strategy requires it.                                                                                         |
+| `pre_partition_config` | Optional fine-grained tabu settings used when pre-partitioning runs. `None` uses the partitioner's defaults.                                                                                              |
 
 (linear-permutation-strategy)=
 

@@ -20,12 +20,12 @@ from mqt.ionshuttler.core.gates import GateAction, Measure, Reset, Rx, Ry
 from mqt.ionshuttler.grid import (
     CompilationStatus,
     Cycle,
+    DependencyMode,
     GateTiming,
     GridArchitecture,
     GridCompiler,
     GridCompilerConfig,
     GridCompilerStrategy,
-    GridDependencyMode,
     GridDiagnostics,
     GridStopReason,
     Junction,
@@ -1379,8 +1379,8 @@ def test_compiler_config_requires_strategy_enum_values() -> None:
 
 def test_compiler_config_requires_dependency_mode_enum_values() -> None:
     """Reject raw strings so dependency choices remain explicit."""
-    with pytest.raises(TypeError, match="dependency_mode must be a GridDependencyMode"):
-        GridCompilerConfig(dependency_mode=cast("GridDependencyMode", "commutation_aware"))
+    with pytest.raises(TypeError, match="dependency_mode must be a DependencyMode"):
+        GridCompilerConfig(dependency_mode=cast("DependencyMode", "commutation_aware"))
 
 
 def test_compiler_config_uses_recommended_defaults() -> None:
@@ -1388,7 +1388,7 @@ def test_compiler_config_uses_recommended_defaults() -> None:
     config = GridCompilerConfig()
 
     assert config.strategy is GridCompilerStrategy.GREEDY
-    assert config.dependency_mode is GridDependencyMode.COMMUTATION_AWARE
+    assert config.dependency_mode is DependencyMode.COMMUTATION_AWARE
 
 
 def test_compiler_config_rejects_malformed_junction_crossings() -> None:

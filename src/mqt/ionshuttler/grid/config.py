@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from mqt.ionshuttler.core.dependencies import DependencyMode
+
 if TYPE_CHECKING:
     from mqt.ionshuttler.partitioning import FineGrainedTabuConfig
 
@@ -22,13 +24,6 @@ class GridCompilerStrategy(StrEnum):
 
     BREADTH_FIRST = "breadth_first"
     GREEDY = "greedy"
-
-
-class GridDependencyMode(StrEnum):
-    """Select which circuit dependencies constrain Grid scheduling."""
-
-    CONSERVATIVE = "conservative"
-    COMMUTATION_AWARE = "commutation_aware"
 
 
 @dataclass(frozen=True)
@@ -46,7 +41,7 @@ class GridCompilerConfig:
     """
 
     strategy: GridCompilerStrategy = GridCompilerStrategy.GREEDY
-    dependency_mode: GridDependencyMode = GridDependencyMode.COMMUTATION_AWARE
+    dependency_mode: DependencyMode = DependencyMode.COMMUTATION_AWARE
     pre_partition_config: FineGrainedTabuConfig | None = None
     allowed_junction_crossings: frozenset[tuple[str, str]] | None = None
     max_iterations: int = 10_000
@@ -65,8 +60,8 @@ class GridCompilerConfig:
         if not isinstance(self.strategy, GridCompilerStrategy):
             msg = "strategy must be a GridCompilerStrategy"
             raise TypeError(msg)
-        if not isinstance(self.dependency_mode, GridDependencyMode):
-            msg = "dependency_mode must be a GridDependencyMode"
+        if not isinstance(self.dependency_mode, DependencyMode):
+            msg = "dependency_mode must be a DependencyMode"
             raise TypeError(msg)
         if self.allowed_junction_crossings is not None:
             crossings = frozenset(self.allowed_junction_crossings)
@@ -93,4 +88,4 @@ def _require_positive_int(value: object, name: str) -> None:
         raise ValueError(msg)
 
 
-__all__ = ["GridCompilerConfig", "GridCompilerStrategy", "GridDependencyMode"]
+__all__ = ["GridCompilerConfig", "GridCompilerStrategy"]

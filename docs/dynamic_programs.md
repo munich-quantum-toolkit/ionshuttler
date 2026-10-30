@@ -100,8 +100,9 @@ for summary in result.path_summaries():
   covers every path, also through many loop iterations.
 - `paths` and `path_summaries` list paths explicitly. A `while` loop needs
   `max_iterations` there; longer paths are left out.
-- Commuting gates of a circuit may change order. A Grid compiler configured with
-  conservative dependencies keeps the circuit order.
+- Commuting gates of a circuit may change order. A Grid or Linear compiler with
+  `dependency_mode=DependencyMode.CONSERVATIVE` in its configuration keeps the
+  circuit order.
 
 If a return finds no movement sequence within `max_routing_states`, the result
 has status `FAILED` and names the failing branch.
@@ -129,3 +130,15 @@ result.validate()
 The predicted path is often shorter than with separate circuits, and other paths
 can get longer. Compile both ways and compare the path summaries to pick one for
 a given objective.
+
+## Using another compiler
+
+`compile_program` does not depend on the Grid or Linear compiler. It accepts
+every compiler with the interface
+{py:class}`~mqt.ionshuttler.core.compiler.Compiler`: an `architecture` that
+replays schedules and a `compile` method that compiles one circuit from
+`initial_placement` to `target_placement`. The interface lists the conditions
+that such a compiler must meet, and
+{py:meth}`~mqt.ionshuttler.dynamic.compiler.ProgramResult.validate` checks the
+resulting schedules. A new compilation method for Grid or Linear works with
+dynamic programs without changes to `compile_program`.
