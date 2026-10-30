@@ -20,6 +20,8 @@ from qiskit.converters import circuit_to_dagdependency
 from .model import Circuit
 
 if TYPE_CHECKING:
+    from qiskit.dagcircuit import DAGDependency
+
     from mqt.ionshuttler.core.gates import GateAction
 
 _QISKIT_GATE_TYPES = {
@@ -34,6 +36,8 @@ _QISKIT_GATE_TYPES = {
 
 def with_commutation_aware_dependencies(circuit: Circuit) -> Circuit:
     """Return a scheduling view that permits commuting gate reordering.
+
+    A barrier still orders every gate on its qubits.
 
     Args:
         circuit: Parsed circuit whose gate IDs define schedule identity.
@@ -59,11 +63,12 @@ def with_commutation_aware_dependencies(circuit: Circuit) -> Circuit:
             msg = "source operations do not match the parsed circuit"
             raise ValueError(msg)
         node_to_gate[node.node_id] = gate.gate_id
+    left_out = _barrier_orders_left_out(dependency_graph)
 
     @cache
     def gate_predecessors(node_id: int) -> frozenset[int]:
         predecessors: set[int] = set()
-        for predecessor_id in dependency_graph.direct_predecessors(node_id):
+        for predecessor_id in (*dependency_graph.direct_predecessors(node_id), *left_out.get(node_id, ())):
             if predecessor_id in node_to_gate:
                 predecessors.add(node_to_gate[predecessor_id])
             else:
@@ -79,6 +84,33 @@ def with_commutation_aware_dependencies(circuit: Circuit) -> Circuit:
         predecessors=tuple(predecessors),
         barriers=circuit.barriers,
     )
+
+
+def _barrier_orders_left_out(dependency_graph: DAGDependency) -> dict[int, set[int]]:
+    """Return the orders that a barrier requires and that the commutation analysis leaves out.
+
+    Qiskit lets an operation that equals the identity, such as ``rz(2*pi)``,
+    commute with a barrier. A barrier orders every operation on its qubits.
+
+    Returns:
+        Additional direct predecessors by node ID.
+    """
+    nodes = tuple(dependency_graph.get_nodes())
+    left_out: dict[int, set[int]] = {}
+    for barrier in nodes:
+        if barrier.op.name != "barrier":
+            continue
+        qubits = set(barrier.qargs)
+        before = set(dependency_graph.predecessors(barrier.node_id))
+        after = set(dependency_graph.successors(barrier.node_id))
+        for node in nodes:
+            if node.node_id == barrier.node_id or qubits.isdisjoint(node.qargs):
+                continue
+            if node.node_id < barrier.node_id and node.node_id not in before:
+                left_out.setdefault(barrier.node_id, set()).add(node.node_id)
+            elif node.node_id > barrier.node_id and node.node_id not in after:
+                left_out.setdefault(node.node_id, set()).add(barrier.node_id)
+    return left_out
 
 
 def _as_quantum_circuit(circuit: Circuit) -> QuantumCircuit:

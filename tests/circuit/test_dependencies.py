@@ -45,6 +45,15 @@ def test_commutation_aware_dependencies_retain_barrier_order() -> None:
     assert circuit.predecessors == (frozenset(), frozenset({0}))
 
 
+def test_commutation_aware_dependencies_keep_identity_rotations_on_their_side_of_a_barrier() -> None:
+    """Order rotations that equal the identity at a barrier, like every other gate."""
+    source = _qasm("rz(6.283185307179586) q[0];", "barrier q;", "rx(0.25) q[1];", "rz(-6.283185307179586) q[1];")
+
+    circuit = with_commutation_aware_dependencies(parse_circuit(source))
+
+    assert circuit.predecessors == (frozenset(), frozenset({0}), frozenset({0}))
+
+
 def test_commutation_aware_dependencies_preserve_gate_ids_across_independent_operations() -> None:
     """Map dependency nodes to stable IDs in source order."""
     source = _qasm("rx(0.5) q[1];", "rx(0.25) q[0];", "rz(0.125) q[1];")
