@@ -12,13 +12,23 @@ from __future__ import annotations
 import pytest
 
 from mqt.ionshuttler.core.gates import Rx
-from mqt.ionshuttler.grid import Cycle, GridArchitecture, Junction, JunctionMove, Segment, rectangular_grid
+from mqt.ionshuttler.core.schedule import ScheduledAction
+from mqt.ionshuttler.grid import (
+    Cycle,
+    GridArchitecture,
+    Junction,
+    JunctionMove,
+    Segment,
+    rectangular_grid,
+    square_grid,
+)
 from mqt.ionshuttler.grid.routing import (
     clear_blocked_path,
     junction_moves,
     movement_candidates,
     next_segments_toward,
     route_gate_bfs,
+    route_to_placement,
 )
 
 
@@ -197,3 +207,52 @@ def test_next_segments_toward_returns_all_equal_shortest_choices() -> None:
     candidates = next_segments_toward(architecture, "v:2:1", "v:2:0")
 
     assert candidates == ("h:2:0", "h:3:0")
+
+
+def test_route_to_placement_reaches_an_exact_placement_of_eighteen_ions() -> None:
+    """Find a route on a 4x4 Grid for a placement that a single cycle search within the bound missed."""
+    architecture = square_grid(4, processing_zone_segments=("h:1:0", "h:1:2", "h:2:0", "h:2:2"), segment_capacity=2)
+    start = architecture.initial_state({
+        "v:2:0": [0],
+        "h:0:2": [1],
+        "h:1:2": [2, 9],
+        "h:3:1": [3, 15],
+        "v:2:3": [4, 12],
+        "v:1:3": [5],
+        "v:1:2": [6],
+        "h:3:2": [7],
+        "h:2:2": [8],
+        "h:1:1": [10],
+        "v:0:2": [11],
+        "h:3:0": [13],
+        "v:1:1": [14],
+        "h:0:1": [16],
+        "v:0:1": [17],
+    })
+    target = architecture.initial_state({
+        "h:1:0": [0],
+        "h:2:0": [1],
+        "h:0:2": [2],
+        "v:1:1": [3],
+        "h:0:0": [4, 10],
+        "h:3:1": [5],
+        "v:2:1": [6],
+        "v:1:2": [7],
+        "v:1:0": [8, 14],
+        "v:2:0": [9],
+        "v:0:0": [11],
+        "h:2:1": [12],
+        "v:0:3": [13],
+        "h:3:2": [15],
+        "v:2:2": [16],
+        "v:1:3": [17],
+    })
+
+    route, _explored = route_to_placement(architecture, start, max_states=10_000, target_state=target)
+
+    assert route is not None
+    state = start
+    for action in route:
+        timed = ScheduledAction(0, action, state.time, architecture.action_duration(action))
+        state = architecture.apply_layer(state, (timed,)).at_time(timed.end_time)
+    assert state.occupancy == target.occupancy
