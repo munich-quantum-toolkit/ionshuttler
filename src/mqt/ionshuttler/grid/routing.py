@@ -31,7 +31,10 @@ if TYPE_CHECKING:
 OccupancyKey = tuple[tuple[str, tuple[int, ...]], ...]
 JunctionCrossings = frozenset[tuple[str, str]] | None
 # Favor states close to the target over short paths: the placement search needs a legal sequence, not the shortest.
-_PLACEMENT_SEARCH_WEIGHT = 3
+# The first search uses junction moves only and favors closeness strongly, which is fast while segments have free
+# capacity; the second search adds cycles, which move ions through full segments, and keeps routes shorter.
+_PLACEMENT_SEARCH_WEIGHT = 6
+_PLACEMENT_CYCLE_SEARCH_WEIGHT = 3
 # Cycle-search steps per expanded placement state; on full grids, only cycles through several segments can move.
 _PLACEMENT_CYCLE_WORK = 1024
 
@@ -107,7 +110,10 @@ def route_to_placement(
     sum of each targeted ion's routing distance to its target segment, plus,
     for an exact target, two moves for each ion that sits in its target
     segment in the wrong order. The sequence is legal but not necessarily the
-    shortest one. ``max_states`` bounds the number of expanded states.
+    shortest one. The search first uses junction moves only; if that finds no
+    sequence, it searches again with cycles, which move ions through full
+    segments. ``max_states`` bounds the number of expanded states of each
+    search.
 
     Returns:
         The movement sequence, or ``None`` if the target is unreachable or the
@@ -164,44 +170,52 @@ def route_to_placement(
     start_estimate = remaining(state)
     if start_estimate is None:
         return None, 0
-    order = count()
-    frontier = [(_PLACEMENT_SEARCH_WEIGHT * start_estimate, next(order), 0, state)]
-    # Parents use the full occupancy, because a recorded move names the ions it moves.
-    parents: dict[OccupancyKey, tuple[OccupancyKey, Action] | None] = {state.occupancy: None}
-    best_cost = {search_key(state): 0}
-    expanded = 0
-    explored = 0
-    while frontier and expanded < max_states:
-        _priority, _tie, cost, current = heappop(frontier)
-        if cost > best_cost[search_key(current)]:
-            continue
-        expanded += 1
-        explored += 1
-        if reached(current):
-            return _movement_path(parents, current.occupancy), explored
-        candidates, cycle_work = movement_candidates(
-            architecture,
-            current,
-            max_cycle_work=_PLACEMENT_CYCLE_WORK,
-            allowed_crossings=allowed_crossings,
-        )
-        explored += cycle_work
-        for action in candidates:
-            timed_action = ScheduledAction(0, action, current.time, architecture.action_duration(action))
-            try:
-                following = architecture.apply_layer(current, (timed_action,)).at_time(timed_action.end_time)
-            except ValueError:
+
+    def search(weight: int, max_cycle_work: int) -> tuple[tuple[Action, ...] | None, int]:
+        order = count()
+        frontier = [(weight * start_estimate, next(order), 0, state)]
+        # Parents use the full occupancy, because a recorded move names the ions it moves.
+        parents: dict[OccupancyKey, tuple[OccupancyKey, Action] | None] = {state.occupancy: None}
+        best_cost = {search_key(state): 0}
+        expanded = 0
+        explored = 0
+        while frontier and expanded < max_states:
+            _priority, _tie, cost, current = heappop(frontier)
+            if cost > best_cost[search_key(current)]:
                 continue
-            following_key = search_key(following)
-            if cost + 1 >= best_cost.get(following_key, cost + 2):
-                continue
-            estimate = remaining(following)
-            if estimate is None:
-                continue
-            best_cost[following_key] = cost + 1
-            parents[following.occupancy] = (current.occupancy, action)
-            heappush(frontier, (cost + 1 + _PLACEMENT_SEARCH_WEIGHT * estimate, next(order), cost + 1, following))
-    return None, explored
+            expanded += 1
+            explored += 1
+            if reached(current):
+                return _movement_path(parents, current.occupancy), explored
+            candidates, cycle_work = movement_candidates(
+                architecture,
+                current,
+                max_cycle_work=max_cycle_work,
+                allowed_crossings=allowed_crossings,
+            )
+            explored += cycle_work
+            for action in candidates:
+                timed_action = ScheduledAction(0, action, current.time, architecture.action_duration(action))
+                try:
+                    following = architecture.apply_layer(current, (timed_action,)).at_time(timed_action.end_time)
+                except ValueError:
+                    continue
+                following_key = search_key(following)
+                if cost + 1 >= best_cost.get(following_key, cost + 2):
+                    continue
+                estimate = remaining(following)
+                if estimate is None:
+                    continue
+                best_cost[following_key] = cost + 1
+                parents[following.occupancy] = (current.occupancy, action)
+                heappush(frontier, (cost + 1 + weight * estimate, next(order), cost + 1, following))
+        return None, explored
+
+    route, explored = search(_PLACEMENT_SEARCH_WEIGHT, 0)
+    if route is not None:
+        return route, explored
+    route, cycle_explored = search(_PLACEMENT_CYCLE_SEARCH_WEIGHT, _PLACEMENT_CYCLE_WORK)
+    return route, explored + cycle_explored
 
 
 def _longest_increasing_length(values: Sequence[int]) -> int:
