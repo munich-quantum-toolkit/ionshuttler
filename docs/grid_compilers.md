@@ -72,6 +72,31 @@ individual gate IDs to processing-zone IDs explicitly. An explicit mapping
 replaces pre-partitioning, even when `pre_partition=True`. Unassigned gates
 select a processing zone while scheduling.
 
+Use `target_placement` to request a final placement after all gates. The mapping
+uses the same format as `initial_placement`. A target that contains every ion is
+exact, and omitted segments are empty; in ordered segments, the ion order is
+part of the target. A target that contains a subset constrains only those ions;
+all other ions and segments remain unconstrained. Both strategies reach the
+target with the same search after the last gate, and independent moves run at
+the same time. A circuit without gates therefore only moves ions into the
+target.
+
+```{code-cell} ipython3
+result = GridCompiler(architecture).compile(
+    circuit,
+    initial_placement={"memory": (0, 1)},
+    target_placement={"memory": (0, 1)},
+)
+```
+
+```{code-cell} ipython3
+result = GridCompiler(architecture).compile(
+    circuit,
+    initial_placement={"memory": (0, 1)},
+    target_placement={"processing": (0,)},
+)
+```
+
 ### Configuration
 
 {py:class}`~mqt.ionshuttler.grid.config.GridCompilerConfig` provides the main
@@ -81,9 +106,10 @@ compiler settings:
   default and suits larger inputs.
 - {py:attr}`~mqt.ionshuttler.grid.config.GridCompilerStrategy.BREADTH_FIRST`
   performs bounded routing search and is intended for small architectures.
-- {py:attr}`~mqt.ionshuttler.grid.config.GridDependencyMode.CONSERVATIVE`
+- `dependency_mode` set to
+  {py:attr}`~mqt.ionshuttler.core.dependencies.DependencyMode.CONSERVATIVE`
   preserves the dependencies produced by the shared circuit parser instead of
-  reordering commuting gates.
+  reordering commuting gates. The Linear compiler has the same setting.
 - {py:attr}`~mqt.ionshuttler.grid.config.GridCompilerConfig.allowed_junction_crossings`
   can restrict routing to selected directed segment pairs without changing the
   hardware topology.

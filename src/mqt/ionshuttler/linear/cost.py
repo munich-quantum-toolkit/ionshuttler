@@ -18,7 +18,7 @@ from math import ceil
 from sys import maxsize
 from typing import TYPE_CHECKING, Protocol
 
-from mqt.ionshuttler.core.gates import SingleQubitGate, TwoQubitGate
+from mqt.ionshuttler.core.gates import GlobalGate
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -120,26 +120,21 @@ def min_distance_to_valid_pair(
     pos_a: int,
     pos_b: int,
     valid_pairs: tuple[tuple[int, int], ...],
-    ring_size: int | None = None,
+    architecture: LinearArchitecture,
 ) -> int:
     """Return the fewest simultaneous site moves needed to reach a valid pair.
 
-    The result depends only on the two sites, the architecture's fixed pair
-    list, and the optional ring size, so repeated lookups during search reuse
-    a cached value. Omit ``ring_size`` for chain distance.
+    The result depends only on the two sites, the fixed pair list, and the
+    architecture, so repeated lookups during search reuse a cached value.
     """
     if not valid_pairs:
         return 0
+    distance = architecture.distance
     best = maxsize
     for left, right in valid_pairs:
-        forward = _site_distance(pos_a, left, ring_size)
-        other = _site_distance(pos_b, right, ring_size)
-        forward = max(forward, other)
-        reverse = _site_distance(pos_a, right, ring_size)
-        other = _site_distance(pos_b, left, ring_size)
-        reverse = max(reverse, other)
-        forward = min(forward, reverse)
-        best = min(best, forward)
+        forward = max(distance(pos_a, left), distance(pos_b, right))
+        reverse = max(distance(pos_a, right), distance(pos_b, left))
+        best = min(best, forward, reverse)
     return best
 
 
@@ -178,27 +173,18 @@ def heuristic(
     routing_estimate = 0
     for gate_id in remaining:
         gate = circuit.gates[gate_id]
-        if isinstance(gate, SingleQubitGate):
-            continue
-        if isinstance(gate, TwoQubitGate):
+        if isinstance(gate, GlobalGate):
+            routing_estimate += 1
+        elif len(gate.ions) == 2:
             valid_pairs = architecture.valid_two_qubit_site_pairs
             if gate_zone is not None and zone_site_pairs is not None and gate_id in gate_zone:
                 valid_pairs = zone_site_pairs.get(gate_zone[gate_id], valid_pairs)
-            if architecture.topology == "ring":
-                routing_estimate += min_distance_to_valid_pair(
-                    positions[gate.ion_a],
-                    positions[gate.ion_b],
-                    valid_pairs,
-                    architecture.num_sites,
-                )
-            else:
-                routing_estimate += min_distance_to_valid_pair(
-                    positions[gate.ion_a],
-                    positions[gate.ion_b],
-                    valid_pairs,
-                )
-        else:
-            routing_estimate += 1
+            routing_estimate += min_distance_to_valid_pair(
+                positions[gate.ions[0]],
+                positions[gate.ions[1]],
+                valid_pairs,
+                architecture,
+            )
 
     if not use_dependencies:
         return routing_estimate + ceil(len(remaining) / len(architecture.processing_zones or {}))
@@ -210,13 +196,6 @@ def heuristic(
         gate_estimate = _critical_path_length(remaining, predecessors)
         critical_path_cache[cache_key] = gate_estimate
     return routing_estimate + gate_estimate
-
-
-def _site_distance(first_site: int, second_site: int, ring_size: int | None) -> int:
-    separation = abs(first_site - second_site)
-    if ring_size is None:
-        return separation
-    return min(separation, ring_size - separation)
 
 
 def makespan_lower_bound(circuit: Circuit, architecture: LinearArchitecture) -> int:
@@ -249,11 +228,11 @@ def makespan_lower_bound(circuit: Circuit, architecture: LinearArchitecture) -> 
             default=0,
         )
         gate_end_times.append(earliest_start + duration)
-        if isinstance(gate, TwoQubitGate):
-            processing_zone_work += duration
+        if isinstance(gate, GlobalGate) or architecture.is_virtual_gate(gate):
+            continue
+        processing_zone_work += duration
+        if len(gate.ions) == 2:
             two_ion_work += duration
-        elif isinstance(gate, SingleQubitGate) and not architecture.is_virtual_gate(gate):
-            processing_zone_work += duration
     two_ion_zone_count = sum(1 for size in zone_sizes if size >= 2)
     return max(
         max(gate_end_times, default=0),

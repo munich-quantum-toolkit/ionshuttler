@@ -63,9 +63,8 @@ def plot_trajectories(result: CompilationResult) -> Figure:
     import matplotlib.pyplot as plt  # ruff: ignore[import-outside-top-level]
 
     from mqt.ionshuttler.core.gates import (  # ruff: ignore[import-outside-top-level]
+        GateAction,
         GlobalGate,
-        SingleQubitGate,
-        TwoQubitGate,
     )
     from mqt.ionshuttler.linear.actions import (  # ruff: ignore[import-outside-top-level]
         PhysicalSwap,
@@ -195,9 +194,9 @@ def plot_trajectories(result: CompilationResult) -> Figure:
                 row == len(time_windows) - 1 and item.start_time == window_end
             )
             overlaps_window = item.end_time > window_start and item.start_time < window_end
-            if isinstance(action, SingleQubitGate):
-                site = timeline.ion_position(action.ion, item.start_time)
-                color = ion_colors[action.ion]
+            if isinstance(action, GateAction) and not isinstance(action, GlobalGate) and len(action.ions) == 1:
+                site = timeline.ion_position(action.ions[0], item.start_time)
+                color = ion_colors[action.ions[0]]
                 if overlaps_window:
                     _draw_gate_interval(axis, item.start_time, item.end_time, site, color)
                 if starts_in_window:
@@ -212,7 +211,7 @@ def plot_trajectories(result: CompilationResult) -> Figure:
                         zorder=4,
                     )
                     _label_gate(axis, item.start_time, site, type(action).__name__)
-            elif isinstance(action, TwoQubitGate):
+            elif isinstance(action, GateAction) and not isinstance(action, GlobalGate) and len(action.ions) == 2:
                 sites = tuple(timeline.ion_position(ion, item.start_time) for ion in action.ions)
                 if overlaps_window:
                     for ion, site in zip(action.ions, sites, strict=True):

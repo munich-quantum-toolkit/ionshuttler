@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.core.gates import GateAction, SingleQubitGate, TwoQubitGate
+from mqt.ionshuttler.core.gates import GateAction, GlobalGate, SingleQubitGate
 from mqt.ionshuttler.linear.actions import (
     DEFAULT_ACTION_TYPES,
     PhysicalSwap,
@@ -418,7 +418,7 @@ def _good_moves(
     zone_sites = tuple(site for sites in (architecture.processing_zones or {}).values() for site in sites)
     moves: list[TransitionCandidate] = []
     for ion, position in state.positions:
-        if ion in busy_ions or ion not in considered_ions or architecture.get_processing_zone(position) is not None:
+        if ion in busy_ions or ion not in considered_ions or architecture.processing_zone_at(position) is not None:
             continue
         distance = _distance_to_processing_zone(position, zone_sites, architecture)
         if distance is None:
@@ -463,10 +463,8 @@ def _considered_ions(
         if len(remaining_predecessors) > gate_horizon:
             continue
         gate = circuit.gates[gate_id]
-        if isinstance(gate, SingleQubitGate):
-            ions.add(gate.ion)
-        elif isinstance(gate, TwoQubitGate):
-            ions.update({gate.ion_a, gate.ion_b})
+        if not isinstance(gate, GlobalGate):
+            ions.update(gate.ions)
     return ions
 
 
@@ -496,7 +494,7 @@ def _is_good_swap(
     ):
         if ion not in considered_ions:
             continue
-        if architecture.get_processing_zone(current_position) is not None:
+        if architecture.processing_zone_at(current_position) is not None:
             continue
         current_distance = _distance_to_processing_zone(current_position, zone_sites, architecture)
         next_distance = _distance_to_processing_zone(next_position, zone_sites, architecture)
@@ -511,11 +509,9 @@ def _is_good_swap(
 
 def _gate_ions_are_free(gate: GateAction, busy_ions: set[int], architecture: LinearArchitecture) -> bool:
     """Return whether every physical participant of a gate is available."""
-    if isinstance(gate, SingleQubitGate):
-        return architecture.is_virtual_gate(gate) or gate.ion not in busy_ions
-    if isinstance(gate, TwoQubitGate):
-        return gate.ion_a not in busy_ions and gate.ion_b not in busy_ions
-    return True
+    if isinstance(gate, GlobalGate) or architecture.is_virtual_gate(gate):
+        return True
+    return busy_ions.isdisjoint(gate.ions)
 
 
 def _circuit_view(

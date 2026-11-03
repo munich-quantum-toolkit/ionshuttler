@@ -20,12 +20,11 @@ from typing import TYPE_CHECKING, Literal, cast
 from mqt.ionshuttler.core.actions import Action
 from mqt.ionshuttler.core.gates import (
     GATE_NAMES,
+    NON_UNITARY_OPERATION_NAMES,
     SINGLE_QUBIT_GATE_NAMES,
     GateAction,
     GateTiming,
     GlobalGate,
-    SingleQubitGate,
-    TwoQubitGate,
 )
 from mqt.ionshuttler.linear.actions import (
     DEFAULT_ACTION_TYPES,
@@ -146,6 +145,17 @@ class LinearArchitecture:
             _valid_two_qubit_site_pairs(processing_zones),
         )
 
+    def __hash__(self) -> int:
+        """Hash the site layout so that cached lookups can take the architecture as a key.
+
+        Equal architectures have equal site layouts, so the hash agrees with
+        equality, which still compares every field.
+
+        Returns:
+            The hash value.
+        """
+        return hash((self.num_sites, self.topology))
+
     def __reduce__(self) -> tuple[type[LinearArchitecture], tuple[object, ...]]:
         """Rebuild the architecture from its constructor arguments when pickled.
 
@@ -179,9 +189,7 @@ class LinearArchitecture:
 
     def are_adjacent(self, first_site: int, second_site: int) -> bool:
         """Return whether two valid sites share a transport edge."""
-        _validate_site(first_site, self.num_sites)
-        _validate_site(second_site, self.num_sites)
-        return self._are_adjacent(first_site, second_site)
+        return self.distance(first_site, second_site) == 1
 
     def distance(self, first_site: int, second_site: int) -> int:
         """Return the shortest number of transport edges between two sites."""
@@ -192,7 +200,7 @@ class LinearArchitecture:
             return min(separation, self.num_sites - separation)
         return separation
 
-    def get_processing_zone(self, site: int) -> str | None:
+    def processing_zone_at(self, site: int) -> str | None:
         """Return the processing zone containing a site, if any."""
         for zone_name, zone_sites in self._processing_zones().items():
             if site in zone_sites:
@@ -210,15 +218,9 @@ class LinearArchitecture:
             The zone name, or ``None`` if the action occupies no zone. Global
             gates, virtual single-ion gates, and transport occupy none.
         """
-        if isinstance(action, GlobalGate):
+        if not isinstance(action, GateAction) or isinstance(action, GlobalGate) or self.is_virtual_gate(action):
             return None
-        if isinstance(action, SingleQubitGate):
-            if self.is_virtual_gate(action):
-                return None
-            return self.get_processing_zone(dict(state.positions)[action.ion])
-        if isinstance(action, TwoQubitGate):
-            return self.get_processing_zone(dict(state.positions)[action.ion_a])
-        return None
+        return self.processing_zone_at(dict(state.positions)[action.ions[0]])
 
     def field_at(self, site: int) -> float:
         """Return the configured field value at one site."""
@@ -236,8 +238,9 @@ class LinearArchitecture:
     def action_duration(self, action: Action) -> int:
         """Return the architecture's duration for one action.
 
-        Gates use :attr:`gate_timing`, and a global gate takes the duration of
-        its rotation. Transport uses :attr:`transport_timing`.
+        Gates, measurements, and resets use :attr:`gate_timing`, and a global
+        gate takes the duration of its rotation. Transport uses
+        :attr:`transport_timing`.
 
         Returns:
             The duration in timesteps.
@@ -252,12 +255,12 @@ class LinearArchitecture:
         if isinstance(action, GlobalGate):
             return self.gate_timing.duration_for(action.gate_name)
         gate_name = action.circuit_name if isinstance(action, GateAction) else None
-        if gate_name is not None and gate_name in GATE_NAMES:
+        if gate_name is not None and gate_name in GATE_NAMES | NON_UNITARY_OPERATION_NAMES:
             return self.gate_timing.duration_for(gate_name)
         msg = f"LinearArchitecture defines no duration for {type(action).__name__}"
         raise TypeError(msg)
 
-    def is_virtual_gate(self, gate: SingleQubitGate) -> bool:
+    def is_virtual_gate(self, gate: GateAction) -> bool:
         """Return whether this architecture implements a single-ion gate virtually."""
         gate_name = gate.circuit_name
         if gate_name is None or gate_name not in SINGLE_QUBIT_GATE_NAMES:
@@ -327,10 +330,10 @@ class LinearArchitecture:
         """Return whether all supplied sites belong to one processing zone."""
         if not sites:
             return False
-        first_zone = self.get_processing_zone(sites[0])
+        first_zone = self.processing_zone_at(sites[0])
         if first_zone is None:
             return False
-        return all(self.get_processing_zone(site) == first_zone for site in sites[1:])
+        return all(self.processing_zone_at(site) == first_zone for site in sites[1:])
 
     def initial_pzs_busy_until(self) -> tuple[tuple[str, int], ...]:
         """Return every processing zone as available at the start of a schedule."""
@@ -340,6 +343,7 @@ class LinearArchitecture:
         """Return JSON-compatible architecture metadata."""
         result: dict[str, object] = {
             "num_sites": self.num_sites,
+            "topology": self.topology,
             "processing_zones": {
                 zone_name: list(zone_sites) for zone_name, zone_sites in self._processing_zones().items()
             },
@@ -353,8 +357,6 @@ class LinearArchitecture:
             result["supported_action_types"] = [
                 action_type.serialized_type for action_type in self.supported_action_types
             ]
-        if self.topology == "ring":
-            result["topology"] = self.topology
         return result
 
     def to_json(self) -> str:
@@ -463,7 +465,7 @@ class LinearArchitecture:
         return (
             positions.get(action.ion) == action.src
             and 0 <= action.dst < self.num_sites
-            and self._are_adjacent(action.src, action.dst)
+            and self.are_adjacent(action.src, action.dst)
             and action.dst not in positions.values()
             and dict(state.ions_busy_until).get(action.ion, state.time + 1) <= state.time
         )
@@ -477,65 +479,34 @@ class LinearArchitecture:
             and positions.get(action.ion_b) == action.pos_b
             and ions_busy.get(action.ion_a, state.time + 1) <= state.time
             and ions_busy.get(action.ion_b, state.time + 1) <= state.time
-            and self._are_adjacent(action.pos_a, action.pos_b)
+            and self.are_adjacent(action.pos_a, action.pos_b)
         )
-
-    def _are_adjacent(self, first_site: int, second_site: int) -> bool:
-        separation = abs(first_site - second_site)
-        return separation == 1 or (self.topology == "ring" and separation == self.num_sites - 1)
 
     def _is_gate_valid(self, state: State, gate: GateAction) -> bool:
         positions = dict(state.positions)
-        if isinstance(gate, GlobalGate):
+        if isinstance(gate, GlobalGate) or self.is_virtual_gate(gate):
             return all(ion in positions for ion in gate.ions)
+        _require_one_or_two_ions(gate)
         ions_busy = dict(state.ions_busy_until)
-        if isinstance(gate, SingleQubitGate):
-            if self.is_virtual_gate(gate):
-                return gate.ion in positions
-            position = positions.get(gate.ion)
-            if position is None or ions_busy.get(gate.ion, state.time + 1) > state.time:
-                return False
-            zone = self.get_processing_zone(position)
-            return zone is not None and dict(state.pzs_busy_until).get(zone, state.time + 1) <= state.time
-        if isinstance(gate, TwoQubitGate):
-            pos_a = positions.get(gate.ion_a)
-            pos_b = positions.get(gate.ion_b)
-            if (
-                pos_a is None
-                or pos_b is None
-                or ions_busy.get(gate.ion_a, state.time + 1) > state.time
-                or ions_busy.get(gate.ion_b, state.time + 1) > state.time
-            ):
-                return False
-            zone_a = self.get_processing_zone(pos_a)
-            zone_b = self.get_processing_zone(pos_b)
-            return (
-                zone_a is not None
-                and zone_a == zone_b
-                and dict(state.pzs_busy_until).get(zone_a, state.time + 1) <= state.time
-            )
-        msg = f"LinearArchitecture defines no rules for {type(gate).__name__}"
-        raise TypeError(msg)
+        if any(ion not in positions or ions_busy.get(ion, state.time + 1) > state.time for ion in gate.ions):
+            return False
+        zones = {self.processing_zone_at(positions[ion]) for ion in gate.ions}
+        zone = zones.pop()
+        return not zones and zone is not None and dict(state.pzs_busy_until).get(zone, state.time + 1) <= state.time
 
     def _apply_gate(self, state: State, gate: GateAction) -> State:
         # Global gates act through a schedule-wide control field and reserve no
         # ions or processing zones in the Linear model.
-        if isinstance(gate, GlobalGate) or (isinstance(gate, SingleQubitGate) and self.is_virtual_gate(gate)):
+        if isinstance(gate, GlobalGate) or self.is_virtual_gate(gate):
             return state
+        _require_one_or_two_ions(gate)
         positions = dict(state.positions)
         ions_busy = dict(state.ions_busy_until)
         pzs_busy = dict(state.pzs_busy_until)
         free_time = state.time + self.action_duration(gate)
-        if isinstance(gate, SingleQubitGate):
-            ions_busy[gate.ion] = free_time
-            zone = self.get_processing_zone(positions[gate.ion])
-        elif isinstance(gate, TwoQubitGate):
-            ions_busy[gate.ion_a] = free_time
-            ions_busy[gate.ion_b] = free_time
-            zone = self.get_processing_zone(positions[gate.ion_a])
-        else:
-            msg = f"LinearArchitecture defines no rules for {type(gate).__name__}"
-            raise TypeError(msg)
+        for ion in gate.ions:
+            ions_busy[ion] = free_time
+        zone = self.processing_zone_at(positions[gate.ions[0]])
         if zone is not None:
             pzs_busy[zone] = free_time
         return replace(state, ions_busy_until=tuple(ions_busy.items()), pzs_busy_until=tuple(pzs_busy.items()))
@@ -601,13 +572,7 @@ def _normalize_processing_zones(
                 msg = f"processing zone '{zone_name}' overlaps with another zone at site {site}"
                 raise ValueError(msg)
             seen_sites.add(site)
-        normalized_sites = _normalize_ring_sites(sorted_sites, num_sites) if topology == "ring" else sorted_sites
-        if normalized_sites is None or (
-            topology == "chain" and any(right - left != 1 for left, right in pairwise(sorted_sites))
-        ):
-            msg = f"processing zone '{zone_name}' must contain contiguous sites"
-            raise ValueError(msg)
-        normalized[zone_name] = normalized_sites
+        normalized[zone_name] = _normalize_zone_sites(zone_name, sorted_sites, num_sites, topology)
     return MappingProxyType(normalized)
 
 
@@ -622,7 +587,22 @@ def _site_neighbors(
     )
 
 
-def _normalize_ring_sites(sorted_sites: tuple[int, ...], num_sites: int) -> tuple[int, ...] | None:
+def _normalize_zone_sites(
+    zone_name: str,
+    sorted_sites: tuple[int, ...],
+    num_sites: int,
+    topology: Literal["chain", "ring"],
+) -> tuple[int, ...]:
+    """Return the sites of one zone in transport order.
+
+    Raises:
+        ValueError: If the sites do not form one connected run.
+    """
+    msg = f"processing zone '{zone_name}' must contain contiguous sites"
+    if topology == "chain":
+        if any(right - left != 1 for left, right in pairwise(sorted_sites)):
+            raise ValueError(msg)
+        return sorted_sites
     if len(sorted_sites) == num_sites:
         return sorted_sites
     # A connected proper ring run has one missing edge, which becomes the tuple boundary.
@@ -632,7 +612,7 @@ def _normalize_ring_sites(sorted_sites: tuple[int, ...], num_sites: int) -> tupl
         if (sorted_sites[(index + 1) % len(sorted_sites)] - site) % num_sites != 1
     ]
     if len(breaks) != 1:
-        return None
+        raise ValueError(msg)
     start = (breaks[0] + 1) % len(sorted_sites)
     return sorted_sites[start:] + sorted_sites[:start]
 
@@ -650,6 +630,12 @@ def _has_nontrivial_field_profile(field_profile: FieldProfile) -> bool:
         value != 1.0  # ruff: ignore[float-equality-comparison] - One is the exact default field value.
         for _, value in field_profile.site_field
     )
+
+
+def _require_one_or_two_ions(gate: GateAction) -> None:
+    if len(gate.ions) not in {1, 2}:
+        msg = f"LinearArchitecture defines no rules for {type(gate).__name__}"
+        raise TypeError(msg)
 
 
 def _validate_site(site: int, num_sites: int) -> None:

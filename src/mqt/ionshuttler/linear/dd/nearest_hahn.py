@@ -356,7 +356,7 @@ def _place_opportunity(
     saw_free_zone = False
     for timestep in candidates:
         site = timeline.ion_position(opportunity.ion, timestep)
-        zone = architecture.get_processing_zone(site)
+        zone = architecture.processing_zone_at(site)
         if zone is None:
             continue
         saw_zone = True

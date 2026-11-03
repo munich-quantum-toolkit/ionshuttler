@@ -162,6 +162,8 @@ DEFAULT_ACTION_TYPES: tuple[type[Action], ...] = (
     core_gates.Rxx,
     core_gates.Ryy,
     core_gates.Rzz,
+    core_gates.Measure,
+    core_gates.Reset,
 )
 GRID_ACTION_TYPES: Mapping[str, type[Action]] = index_action_types(DEFAULT_ACTION_TYPES)
 

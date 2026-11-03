@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from mqt.ionshuttler.core.actions import Action, index_action_types
 
-from .._json_utils import require_int, require_list, require_number, require_str
+from .._json_utils import require_int, require_list, require_number, require_optional_int, require_str
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -23,15 +23,16 @@ if TYPE_CHECKING:
 SINGLE_QUBIT_GATE_NAMES = frozenset({"rx", "ry", "rz"})
 TWO_QUBIT_GATE_NAMES = frozenset({"rxx", "ryy", "rzz"})
 GATE_NAMES = SINGLE_QUBIT_GATE_NAMES | TWO_QUBIT_GATE_NAMES
+NON_UNITARY_OPERATION_NAMES = frozenset({"measure", "reset"})
 
 
 @dataclass(frozen=True)
 class GateTiming:
     """Configure integer gate durations and virtual single-ion rotations.
 
-    Every architecture level uses the same gate durations. Durations of
-    transport and other non-gate operations belong to the architecture that
-    defines those operations. By default, Rz gates are virtual and
+    Every architecture level uses the same gate durations. The same timing also
+    sets the durations of measurement and reset. Each architecture defines its
+    transport durations. By default, Rz gates are virtual and
     instantaneous and two-qubit gates have a longer duration than
     single-qubit gates.
     """
@@ -42,6 +43,8 @@ class GateTiming:
     rxx: int = 2
     ryy: int = 2
     rzz: int = 2
+    measure: int = 1
+    reset: int = 1
     virtual_single_qubit_gates: frozenset[str] = field(default_factory=lambda: frozenset({"rz"}))
 
     def __post_init__(self) -> None:
@@ -58,11 +61,11 @@ class GateTiming:
             if gate_name in virtual_gates and duration != 0:
                 msg = f"duration for virtual gate {gate_name!r} must be 0"
                 raise ValueError(msg)
-        for gate_name in TWO_QUBIT_GATE_NAMES:
+        for gate_name in TWO_QUBIT_GATE_NAMES | NON_UNITARY_OPERATION_NAMES:
             _require_integer_at_least(self.duration_for(gate_name), f"{gate_name} duration", minimum=1)
 
     def duration_for(self, gate_name: str) -> int:
-        """Return the duration of one supported gate.
+        """Return the duration of one supported gate, measurement, or reset.
 
         Returns:
             The integer duration.
@@ -72,7 +75,7 @@ class GateTiming:
             ValueError: If the gate name is unsupported.
         """
         normalized_name = gate_name.lower()
-        if normalized_name not in GATE_NAMES:
+        if normalized_name not in GATE_NAMES | NON_UNITARY_OPERATION_NAMES:
             msg = f"unsupported gate name {gate_name!r}"
             raise ValueError(msg)
         value = getattr(self, normalized_name)
@@ -98,8 +101,10 @@ class GateTiming:
 
     @property
     def gate_durations(self) -> dict[str, int]:
-        """Duration of each supported gate, keyed by lowercase name."""
-        return {gate_name: self.duration_for(gate_name) for gate_name in sorted(GATE_NAMES)}
+        """Duration of each supported gate, measurement, and reset, keyed by lowercase name."""
+        return {
+            gate_name: self.duration_for(gate_name) for gate_name in sorted(GATE_NAMES | NON_UNITARY_OPERATION_NAMES)
+        }
 
     def to_dict(self) -> dict[str, object]:
         """Return JSON-compatible gate timing."""
@@ -125,7 +130,9 @@ class GateTiming:
             msg = "gate_timing must be a JSON object"
             raise TypeError(msg)
         mapping = cast("dict[str, object]", data)
-        unknown_fields = sorted(set(mapping).difference({*GATE_NAMES, "virtual_single_qubit_gates"}))
+        unknown_fields = sorted(
+            set(mapping).difference({*GATE_NAMES, *NON_UNITARY_OPERATION_NAMES, "virtual_single_qubit_gates"})
+        )
         if unknown_fields:
             msg = f"unknown gate_timing fields: {', '.join(unknown_fields)}"
             raise ValueError(msg)
@@ -137,6 +144,8 @@ class GateTiming:
             rxx=_mapping_duration(mapping, "rxx", defaults.rxx),
             ryy=_mapping_duration(mapping, "ryy", defaults.ryy),
             rzz=_mapping_duration(mapping, "rzz", defaults.rzz),
+            measure=_mapping_duration(mapping, "measure", defaults.measure),
+            reset=_mapping_duration(mapping, "reset", defaults.reset),
             virtual_single_qubit_gates=_normalize_virtual_gates(
                 mapping.get("virtual_single_qubit_gates", sorted(defaults.virtual_single_qubit_gates))
             ),
@@ -153,10 +162,10 @@ class GateAction(Action):
     resources, and state effects. Every parameter is a finite real number and
     is stored as a ``float``.
 
-    Equality and hashing compare the gate type, ions, and parameters. They
-    ignore ``gate_id``, so use ``gate_id`` to identify a circuit gate. A gate
-    that the compiler inserts, such as a dynamical-decoupling pulse, has no
-    ``gate_id``.
+    Equality and hashing compare the gate type and its intrinsic data, such as
+    ions, parameters, and measurement outcome numbers. They ignore ``gate_id``,
+    so use ``gate_id`` to identify a circuit gate. A gate that the compiler
+    inserts, such as a dynamical-decoupling pulse, has no ``gate_id``.
     """
 
     gate_id: int | None = field(default=None, kw_only=True, compare=False)
@@ -441,8 +450,100 @@ class GlobalGate(GateAction):
         return {**super().to_dict(), "ions": list(self.ions)}
 
 
+@dataclass(frozen=True)
+class _SingleIonOperation(GateAction):
+    """A non-unitary operation on one ion that takes no parameters."""
+
+    ion: int
+
+    def __post_init__(self) -> None:
+        """Validate the target ion and the optional circuit gate identifier."""
+        super().__post_init__()
+        _validate_ion(self.ion, "ion")
+
+    @property
+    def ions(self) -> tuple[int, ...]:
+        """The operation's sole ion."""
+        return (self.ion,)
+
+    @classmethod
+    def from_instruction(
+        cls,
+        ions: tuple[int, ...],
+        parameters: tuple[float, ...],
+        *,
+        gate_id: int | None = None,
+    ) -> GateAction:
+        """Create a single-ion operation occurrence.
+
+        Returns:
+            The operation occurrence.
+        """
+        _require_instruction_shape(cls, ions, parameters, num_ions=1)
+        return _construct_gate_action(cls, {"gate_id": gate_id, "ion": ions[0]})
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, object]) -> Action:
+        """Restore a single-ion operation occurrence.
+
+        Returns:
+            The restored operation occurrence.
+        """
+        return _construct_gate_action(cls, {"gate_id": _optional_gate_id(data), "ion": require_int(data, "ion")})
+
+
+@dataclass(frozen=True)
+class Measure(_SingleIonOperation):
+    """Measure one ion in the computational basis.
+
+    A measurement occupies a processing zone like a gate. The ion stays in the
+    machine afterwards and can take part in later operations. ``outcome``
+    numbers the measurement outcome within a program, so that later decisions
+    can refer to it; it is ``None`` when nothing reads the outcome.
+    """
+
+    outcome: int | None = None
+    circuit_name: ClassVar[str] = "measure"
+    serialized_type: ClassVar[str] = "gate.measure"
+
+    def __post_init__(self) -> None:
+        """Validate the target ion and the optional outcome number.
+
+        Raises:
+            ValueError: If the outcome number is not a non-negative integer.
+        """
+        super().__post_init__()
+        if self.outcome is not None and (
+            isinstance(self.outcome, bool) or not isinstance(self.outcome, int) or self.outcome < 0
+        ):
+            msg = "outcome must be a non-negative integer or None"
+            raise ValueError(msg)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, object]) -> Action:
+        """Restore a measurement occurrence.
+
+        Returns:
+            The restored measurement.
+        """
+        return cls(
+            ion=require_int(data, "ion"),
+            outcome=require_optional_int(data, "outcome"),
+            gate_id=_optional_gate_id(data),
+        )
+
+
+@dataclass(frozen=True)
+class Reset(_SingleIonOperation):
+    """Prepare one ion in the computational ground state."""
+
+    circuit_name: ClassVar[str] = "reset"
+    serialized_type: ClassVar[str] = "gate.reset"
+
+
 BUILTIN_GATE_TYPES: tuple[type[GateAction], ...] = (Rx, Ry, Rz, Rxx, Ryy, Rzz, GlobalGate)
-GATE_TYPES: Mapping[str, type[Action]] = index_action_types(BUILTIN_GATE_TYPES)
+NON_UNITARY_OPERATION_TYPES: tuple[type[GateAction], ...] = (Measure, Reset)
+GATE_TYPES: Mapping[str, type[Action]] = index_action_types((*BUILTIN_GATE_TYPES, *NON_UNITARY_OPERATION_TYPES))
 
 
 def _construct_gate_action(action_type: type[GateAction], values: Mapping[str, object]) -> GateAction:
@@ -536,11 +637,15 @@ __all__ = [
     "BUILTIN_GATE_TYPES",
     "GATE_NAMES",
     "GATE_TYPES",
+    "NON_UNITARY_OPERATION_NAMES",
+    "NON_UNITARY_OPERATION_TYPES",
     "SINGLE_QUBIT_GATE_NAMES",
     "TWO_QUBIT_GATE_NAMES",
     "GateAction",
     "GateTiming",
     "GlobalGate",
+    "Measure",
+    "Reset",
     "Rx",
     "Rxx",
     "Ry",

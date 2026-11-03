@@ -21,7 +21,8 @@ from qiskit import QuantumCircuit
 
 import mqt.ionshuttler.linear.compiler as compiler_module
 import mqt.ionshuttler.linear.permutation as permutation_module
-from mqt.ionshuttler.circuit import Circuit, parse_circuit
+from mqt.ionshuttler.circuit import Circuit, parse_circuit, with_commutation_aware_dependencies
+from mqt.ionshuttler.core.dependencies import DependencyMode
 from mqt.ionshuttler.core.gates import GateAction, Rx, Rz, Rzz
 from mqt.ionshuttler.core.result import CompilationStatus
 from mqt.ionshuttler.linear import (
@@ -30,7 +31,11 @@ from mqt.ionshuttler.linear import (
     PermutationConfig,
 )
 from mqt.ionshuttler.linear.actions import PhysicalSwap, Shuttle
-from mqt.ionshuttler.linear.permutation import compile_with_permutations, route_to_placement
+from mqt.ionshuttler.linear.permutation import (
+    append_route_to_placement,
+    compile_with_permutations,
+    route_to_placement,
+)
 from mqt.ionshuttler.linear.result import PermutationDiagnostics
 from mqt.ionshuttler.linear.state import State, create_initial_state
 
@@ -53,9 +58,11 @@ def _compile(
     action_types: tuple[type[Action], ...] | None = None,
     max_compile_time: float | None = None,
     record_planning_trace: bool = False,
+    dependency_mode: DependencyMode = DependencyMode.COMMUTATION_AWARE,
 ) -> LinearCompilationResult:
     config = PermutationConfig(
         action_types=action_types,
+        dependency_mode=dependency_mode,
         record_planning_trace=record_planning_trace,
         max_compile_time=max_compile_time,
     )
@@ -92,8 +99,7 @@ def _gate_time_windows(result: LinearCompilationResult) -> dict[int, tuple[int, 
     return windows
 
 
-def _assert_dependencies_hold(result: LinearCompilationResult, circuit: QuantumCircuit) -> None:
-    predecessors = parse_circuit(circuit).predecessors
+def _assert_dependencies_hold(result: LinearCompilationResult, predecessors: Sequence[frozenset[int]]) -> None:
     windows = _gate_time_windows(result)
     for gate_id, (start, _end) in windows.items():
         for predecessor in predecessors[gate_id]:
@@ -265,16 +271,20 @@ def test_permutation_routes_into_a_wrapping_ring_zone() -> None:
     result.validate()
 
 
+@pytest.mark.parametrize("dependency_mode", list(DependencyMode))
 @pytest.mark.parametrize("seed", range(5))
-def test_permutation_completes_random_circuits_on_two_zones(seed: int) -> None:
-    """Complete random circuits, keep dependency order, and respect the lower bound."""
+def test_permutation_completes_random_circuits_on_two_zones(seed: int, dependency_mode: DependencyMode) -> None:
+    """Complete random circuits, keep the dependencies of the mode, and respect the lower bound."""
     circuit = _random_circuit(num_ions=7, num_gates=300, seed=seed)
+    parsed = parse_circuit(circuit)
+    if dependency_mode is DependencyMode.COMMUTATION_AWARE:
+        parsed = with_commutation_aware_dependencies(parsed)
 
-    result = _compile(circuit, TWO_ZONE_ARCHITECTURE)
+    result = _compile(circuit, TWO_ZONE_ARCHITECTURE, dependency_mode=dependency_mode)
 
     assert result.status is CompilationStatus.SUCCESS
     assert len(_gate_time_windows(result)) == 300
-    _assert_dependencies_hold(result, circuit)
+    _assert_dependencies_hold(result, parsed.predecessors)
     assert result.diagnostics is not None
     assert result.duration >= result.diagnostics.makespan_lower_bound > 0
     result.validate()
@@ -367,6 +377,24 @@ def test_permutation_prefers_the_pre_partitioned_zone(monkeypatch: pytest.Monkey
     gate = next(item for item in result.schedule.scheduled_actions if isinstance(item.action, Rzz))
     assert gate.processing_zone_id == "right"
     assert _permutation_diagnostics(result).gates_in_preferred_zone == 1
+
+
+def test_ring_permutation_picks_the_nearest_zone_across_the_wrap_edge(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Measure zone distance along the ring when no zone is preferred."""
+    monkeypatch.setattr(compiler_module, "compute_gate_zone_assignment", lambda *_args, **_kwargs: {})
+    architecture = LinearArchitecture(
+        num_sites=10,
+        processing_zones={"middle": [3, 4], "end": [8, 9]},
+        topology="ring",
+    )
+    circuit = QuantumCircuit(2)
+    circuit.rzz(0.1, 0, 1)
+
+    result = LinearCompiler(architecture, PermutationConfig()).compile(circuit, initial_placement=[0, 1])
+
+    gate = next(item for item in result.schedule.scheduled_actions if isinstance(item.action, Rzz))
+    assert gate.processing_zone_id == "end"
+    result.validate()
 
 
 def test_permutation_with_one_implicit_zone_needs_no_transport() -> None:
@@ -539,3 +567,19 @@ def test_interruption_keeps_the_completed_groups(monkeypatch: pytest.MonkeyPatch
     assert 0 < len(_gate_time_windows(result)) < 60
     assert _permutation_diagnostics(result).groups == 1
     result.validate()
+
+
+def test_appended_route_starts_after_the_schedule_and_moves_independent_ions_together() -> None:
+    """Start each transport of the route as soon as its ions and target site are free."""
+    architecture = LinearArchitecture(num_sites=6, processing_zones={"pz": [2, 3]})
+    qasm = 'OPENQASM 2.0;\ninclude "qelib1.inc";\nqreg q[2];\nrx(0.5) q[0];\n'
+    schedule = LinearCompiler(architecture).compile(qasm, initial_placement=[2, 3]).schedule
+
+    extended = append_route_to_placement(schedule, (1, 4), architecture, (Shuttle, PhysicalSwap))
+
+    assert extended is not None
+    route = extended.scheduled_actions[len(schedule.scheduled_actions) :]
+    assert {type(item.action) for item in route} == {Shuttle}
+    assert [item.start_time for item in route] == [schedule.end_time, schedule.end_time]
+    assert architecture.replay_schedule(extended).placement == (1, 4)
+    assert append_route_to_placement(schedule, (3, 2), architecture, (Shuttle,)) is None

@@ -1,0 +1,1107 @@
+module attributes {mqt.layout = {initial = array<i64: 6, 7, 8, 2, 3, 4, 5, 0, 1>, input_count = 9 : i64, sites = array<i64: 0, 1, 2, 3, 4, 5, 6, 7, 8>}, mqt.target_env = #mqt.target_env<compilation_target = <sites = [<id = 0>, <id = 1>, <id = 2>, <id = 3>, <id = 4>, <id = 5>, <id = 6>, <id = 7>, <id = 8>], connectivity = all_to_all, couplings = [], native_operations = explicit, operations = [<name = "rx", arity = <kind = fixed, value = 1>, num_parameters = 1, site_tuples = []>, <name = "ry", arity = <kind = fixed, value = 1>, num_parameters = 1, site_tuples = []>, <name = "rz", arity = <kind = fixed, value = 1>, num_parameters = 1, site_tuples = []>, <name = "rxx", arity = <kind = fixed, value = 2>, num_parameters = 1, site_tuples = []>, <name = "measure", arity = <kind = fixed, value = 1>, num_parameters = 0, site_tuples = []>, <name = "reset", arity = <kind = fixed, value = 1>, num_parameters = 0, site_tuples = []>]>, payload_specification = <format = <id = "qco", version = "1.0.0", profile = "", encoding = text>, capabilities = [<id = "forward-branching", value = 0, constraints = []>, <id = "counted-iteration", value = 0, constraints = []>, <id = "conditional-loop", value = 0, constraints = []>], optional_capabilities_known = false>>} {
+  func.func @main() -> (!cbit.reg<6>, !cbit.reg<6>, !cbit.reg<6>) attributes {mqt.entry_point} {
+    %cst = arith.constant -1.5707963267948961 : f64
+    %cst_0 = arith.constant 1.5707963267948966 : f64
+    %cst_1 = arith.constant -1.5707963267948966 : f64
+    %cst_2 = arith.constant -3.1415926535897931 : f64
+    %c0_i6 = arith.constant 0 : i6
+    %c3 = arith.constant 3 : index
+    %c4 = arith.constant 4 : index
+    %c5 = arith.constant 5 : index
+    %c0 = arith.constant 0 : index
+    %true = arith.constant true
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %q = qco.static 0 : !qco.qubit
+    %q_3 = qco.static 1 : !qco.qubit
+    %q_4 = qco.static 2 : !qco.qubit
+    %q_5 = qco.static 3 : !qco.qubit
+    %q_6 = qco.static 4 : !qco.qubit
+    %q_7 = qco.static 5 : !qco.qubit
+    %q_8 = qco.static 6 : !qco.qubit
+    %q_9 = qco.static 7 : !qco.qubit
+    %q_10 = qco.static 8 : !qco.qubit
+    %syn = cbit.alloc(#cbit.init<undefined>) {mqt.register_name = "syn"} : !cbit.reg<6>
+    cbit.write %c0_i6, %syn : i6, !cbit.reg<6>
+    %flg = cbit.alloc(#cbit.init<undefined>) {mqt.register_name = "flg"} : !cbit.reg<6>
+    cbit.write %c0_i6, %flg : i6, !cbit.reg<6>
+    %full = cbit.alloc(#cbit.init<undefined>) {mqt.register_name = "full"} : !cbit.reg<6>
+    cbit.write %c0_i6, %full : i6, !cbit.reg<6>
+    %q_11 = qco.rz(%cst_0) %q : !qco.qubit
+    %q_12 = qco.rx(%cst_2) %q_11 : !qco.qubit
+    %q_13 = qco.rz(%cst_0) %q_12 : !qco.qubit
+    %q_14 = qco.rz(%cst_2) %q_4 : !qco.qubit
+    %qubit0_out, %qubit1_out = qco.rxx(%cst_1) %q_13, %q_14 : !qco.qubit, !qco.qubit
+    %q_15 = qco.rx(%cst_0) %qubit1_out : !qco.qubit
+    %q_16 = qco.rz(%cst_2) %q_15 : !qco.qubit
+    %q_17 = qco.rx(%cst_1) %qubit0_out : !qco.qubit
+    %q_18 = qco.rz(%cst_2) %q_3 : !qco.qubit
+    %qubit0_out_19, %qubit1_out_20 = qco.rxx(%cst_1) %q_17, %q_18 : !qco.qubit, !qco.qubit
+    %q_21 = qco.rx(%cst_0) %qubit1_out_20 : !qco.qubit
+    %q_22 = qco.rx(%cst_1) %qubit0_out_19 : !qco.qubit
+    %q_23 = qco.rz(%cst_2) %q_5 : !qco.qubit
+    %qubit0_out_24, %qubit1_out_25 = qco.rxx(%cst_1) %q_22, %q_23 : !qco.qubit, !qco.qubit
+    %q_26 = qco.rx(%cst_0) %qubit1_out_25 : !qco.qubit
+    %q_27 = qco.rz(%cst_2) %q_26 : !qco.qubit
+    %q_28 = qco.rx(%cst_1) %qubit0_out_24 : !qco.qubit
+    %q_29 = qco.rz(%cst_2) %q_6 : !qco.qubit
+    %qubit0_out_30, %qubit1_out_31 = qco.rxx(%cst_1) %q_28, %q_29 : !qco.qubit, !qco.qubit
+    %q_32 = qco.rx(%cst_0) %qubit1_out_31 : !qco.qubit
+    %q_33 = qco.rz(%cst_2) %q_32 : !qco.qubit
+    %q_34 = qco.rx(%cst_1) %qubit0_out_30 : !qco.qubit
+    %qubit0_out_35, %qubit1_out_36 = qco.rxx(%cst_1) %q_34, %q_21 : !qco.qubit, !qco.qubit
+    %q_37 = qco.rx(%cst_0) %qubit1_out_36 : !qco.qubit
+    %q_38 = qco.rz(%cst_2) %q_37 : !qco.qubit
+    %q_39 = qco.rx(%cst_1) %qubit0_out_35 : !qco.qubit
+    %q_40 = qco.rz(%cst_2) %q_7 : !qco.qubit
+    %qubit0_out_41, %qubit1_out_42 = qco.rxx(%cst_1) %q_39, %q_40 : !qco.qubit, !qco.qubit
+    %q_43 = qco.rx(%cst_0) %qubit1_out_42 : !qco.qubit
+    %q_44 = qco.rz(%cst_2) %q_43 : !qco.qubit
+    %q_45 = qco.rx(%cst_0) %qubit0_out_41 : !qco.qubit
+    %q_46, %b = qco.measure %q_45 : !qco.qubit
+    cbit.store %b, %syn[%c0] : !cbit.reg<6>
+    %q_47, %b_48 = qco.measure %q_38 : !qco.qubit
+    cbit.store %b_48, %flg[%c0] : !cbit.reg<6>
+    %0 = scf.if %b -> (i1) {
+      scf.yield %true : i1
+    } else {
+      %b_49 = cbit.load %flg[%c0] : !cbit.reg<6>
+      scf.yield %b_49 : i1
+    }
+    %linearResults:9 = qco.if %0 args(%q_49 = %q_8, %q_50 = %q_9, %q_51 = %q_10, %q_52 = %q_16, %q_53 = %q_27, %q_54 = %q_33, %q_55 = %q_44, %q_56 = %q_46, %q_57 = %q_47) -> (!qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit) {
+      %q_58 = qco.reset %q_56 : !qco.qubit
+      %q_59 = qco.rz(%cst_0) %q_58 : !qco.qubit
+      %q_60 = qco.rx(%cst_2) %q_59 : !qco.qubit
+      %q_61 = qco.rz(%cst_0) %q_60 : !qco.qubit
+      %q_62 = qco.rz(%cst_2) %q_52 : !qco.qubit
+      %qubit0_out_63, %qubit1_out_64 = qco.rxx(%cst_1) %q_61, %q_62 : !qco.qubit, !qco.qubit
+      %q_65 = qco.rz(%cst_1) %qubit1_out_64 : !qco.qubit
+      %q_66 = qco.rx(%cst) %q_65 : !qco.qubit
+      %q_67 = qco.rx(%cst_1) %qubit0_out_63 : !qco.qubit
+      %q_68 = qco.rz(%cst_2) %q_53 : !qco.qubit
+      %qubit0_out_69, %qubit1_out_70 = qco.rxx(%cst_1) %q_67, %q_68 : !qco.qubit, !qco.qubit
+      %q_71 = qco.rx(%cst_0) %qubit1_out_70 : !qco.qubit
+      %q_72 = qco.rx(%cst_1) %qubit0_out_69 : !qco.qubit
+      %q_73 = qco.rz(%cst_2) %q_54 : !qco.qubit
+      %qubit0_out_74, %qubit1_out_75 = qco.rxx(%cst_1) %q_72, %q_73 : !qco.qubit, !qco.qubit
+      %q_76 = qco.rx(%cst_0) %qubit1_out_75 : !qco.qubit
+      %q_77 = qco.rx(%cst_1) %qubit0_out_74 : !qco.qubit
+      %q_78 = qco.rz(%cst_2) %q_55 : !qco.qubit
+      %qubit0_out_79, %qubit1_out_80 = qco.rxx(%cst_1) %q_77, %q_78 : !qco.qubit, !qco.qubit
+      %q_81 = qco.rx(%cst_0) %qubit1_out_80 : !qco.qubit
+      %q_82 = qco.rx(%cst_0) %qubit0_out_79 : !qco.qubit
+      %q_83, %b_84 = qco.measure %q_82 : !qco.qubit
+      cbit.store %b_84, %full[%c0] : !cbit.reg<6>
+      %q_85 = qco.reset %q_83 : !qco.qubit
+      %q_86 = qco.rz(%cst_0) %q_85 : !qco.qubit
+      %q_87 = qco.rx(%cst_2) %q_86 : !qco.qubit
+      %q_88 = qco.rz(%cst_0) %q_87 : !qco.qubit
+      %q_89 = qco.rz(%cst_2) %q_50 : !qco.qubit
+      %qubit0_out_90, %qubit1_out_91 = qco.rxx(%cst_1) %q_88, %q_89 : !qco.qubit, !qco.qubit
+      %q_92 = qco.rz(%cst_1) %qubit1_out_91 : !qco.qubit
+      %q_93 = qco.rx(%cst) %q_92 : !qco.qubit
+      %q_94 = qco.rx(%cst_1) %qubit0_out_90 : !qco.qubit
+      %q_95 = qco.rz(%cst_2) %q_51 : !qco.qubit
+      %qubit0_out_96, %qubit1_out_97 = qco.rxx(%cst_1) %q_94, %q_95 : !qco.qubit, !qco.qubit
+      %q_98 = qco.rx(%cst_0) %qubit1_out_97 : !qco.qubit
+      %q_99 = qco.rx(%cst_1) %qubit0_out_96 : !qco.qubit
+      %qubit0_out_100, %qubit1_out_101 = qco.rxx(%cst_1) %q_99, %q_76 : !qco.qubit, !qco.qubit
+      %q_102 = qco.rz(%cst_1) %qubit1_out_101 : !qco.qubit
+      %q_103 = qco.rx(%cst) %q_102 : !qco.qubit
+      %q_104 = qco.rx(%cst_1) %qubit0_out_100 : !qco.qubit
+      %qubit0_out_105, %qubit1_out_106 = qco.rxx(%cst_1) %q_104, %q_81 : !qco.qubit, !qco.qubit
+      %q_107 = qco.rx(%cst_0) %qubit1_out_106 : !qco.qubit
+      %q_108 = qco.rx(%cst_0) %qubit0_out_105 : !qco.qubit
+      %q_109, %b_110 = qco.measure %q_108 : !qco.qubit
+      cbit.store %b_110, %full[%c1] : !cbit.reg<6>
+      %q_111 = qco.reset %q_109 : !qco.qubit
+      %q_112 = qco.rz(%cst_0) %q_111 : !qco.qubit
+      %q_113 = qco.rx(%cst_2) %q_112 : !qco.qubit
+      %q_114 = qco.rz(%cst_0) %q_113 : !qco.qubit
+      %q_115 = qco.rz(%cst_2) %q_49 : !qco.qubit
+      %qubit0_out_116, %qubit1_out_117 = qco.rxx(%cst_1) %q_114, %q_115 : !qco.qubit, !qco.qubit
+      %q_118 = qco.rz(%cst_1) %qubit1_out_117 : !qco.qubit
+      %q_119 = qco.rx(%cst) %q_118 : !qco.qubit
+      %q_120 = qco.rx(%cst_1) %qubit0_out_116 : !qco.qubit
+      %qubit0_out_121, %qubit1_out_122 = qco.rxx(%cst_1) %q_120, %q_98 : !qco.qubit, !qco.qubit
+      %q_123 = qco.rz(%cst_1) %qubit1_out_122 : !qco.qubit
+      %q_124 = qco.rx(%cst) %q_123 : !qco.qubit
+      %q_125 = qco.rx(%cst_1) %qubit0_out_121 : !qco.qubit
+      %qubit0_out_126, %qubit1_out_127 = qco.rxx(%cst_1) %q_125, %q_71 : !qco.qubit, !qco.qubit
+      %q_128 = qco.rz(%cst_1) %qubit1_out_127 : !qco.qubit
+      %q_129 = qco.rx(%cst) %q_128 : !qco.qubit
+      %q_130 = qco.rx(%cst_1) %qubit0_out_126 : !qco.qubit
+      %qubit0_out_131, %qubit1_out_132 = qco.rxx(%cst_1) %q_130, %q_107 : !qco.qubit, !qco.qubit
+      %q_133 = qco.rz(%cst_1) %qubit1_out_132 : !qco.qubit
+      %q_134 = qco.rx(%cst) %q_133 : !qco.qubit
+      %q_135 = qco.rx(%cst_0) %qubit0_out_131 : !qco.qubit
+      %q_136, %b_137 = qco.measure %q_135 : !qco.qubit
+      cbit.store %b_137, %full[%c2] : !cbit.reg<6>
+      %q_138 = qco.reset %q_136 : !qco.qubit
+      %q_139 = qco.rz(%cst_2) %q_138 : !qco.qubit
+      %qubit0_out_140, %qubit1_out_141 = qco.rxx(%cst_1) %q_66, %q_139 : !qco.qubit, !qco.qubit
+      %q_142 = qco.rx(%cst_0) %qubit1_out_141 : !qco.qubit
+      %q_143 = qco.rz(%cst_1) %qubit0_out_140 : !qco.qubit
+      %q_144 = qco.rx(%cst_1) %q_143 : !qco.qubit
+      %qubit0_out_145, %qubit1_out_146 = qco.rxx(%cst_1) %q_129, %q_142 : !qco.qubit, !qco.qubit
+      %q_147 = qco.rx(%cst_0) %qubit1_out_146 : !qco.qubit
+      %q_148 = qco.rx(%cst_1) %qubit0_out_145 : !qco.qubit
+      %qubit0_out_149, %qubit1_out_150 = qco.rxx(%cst_1) %q_103, %q_147 : !qco.qubit, !qco.qubit
+      %q_151 = qco.rx(%cst_0) %qubit1_out_150 : !qco.qubit
+      %q_152 = qco.rx(%cst_1) %qubit0_out_149 : !qco.qubit
+      %qubit0_out_153, %qubit1_out_154 = qco.rxx(%cst_1) %q_134, %q_151 : !qco.qubit, !qco.qubit
+      %q_155 = qco.rx(%cst_0) %qubit1_out_154 : !qco.qubit
+      %q_156 = qco.rz(%cst_2) %q_155 : !qco.qubit
+      %q_157 = qco.rx(%cst_1) %qubit0_out_153 : !qco.qubit
+      %q_158, %b_159 = qco.measure %q_156 : !qco.qubit
+      cbit.store %b_159, %full[%c3] : !cbit.reg<6>
+      %q_160 = qco.reset %q_158 : !qco.qubit
+      %q_161 = qco.rz(%cst_2) %q_160 : !qco.qubit
+      %qubit0_out_162, %qubit1_out_163 = qco.rxx(%cst_1) %q_93, %q_161 : !qco.qubit, !qco.qubit
+      %q_164 = qco.rx(%cst_0) %qubit1_out_163 : !qco.qubit
+      %q_165 = qco.rz(%cst_1) %qubit0_out_162 : !qco.qubit
+      %q_166 = qco.rx(%cst_1) %q_165 : !qco.qubit
+      %qubit0_out_167, %qubit1_out_168 = qco.rxx(%cst_1) %q_124, %q_164 : !qco.qubit, !qco.qubit
+      %q_169 = qco.rx(%cst_0) %qubit1_out_168 : !qco.qubit
+      %q_170 = qco.rx(%cst_1) %qubit0_out_167 : !qco.qubit
+      %qubit0_out_171, %qubit1_out_172 = qco.rxx(%cst_1) %q_152, %q_169 : !qco.qubit, !qco.qubit
+      %q_173 = qco.rx(%cst_0) %qubit1_out_172 : !qco.qubit
+      %q_174 = qco.rz(%cst_1) %qubit0_out_171 : !qco.qubit
+      %q_175 = qco.rx(%cst_1) %q_174 : !qco.qubit
+      %qubit0_out_176, %qubit1_out_177 = qco.rxx(%cst_1) %q_157, %q_173 : !qco.qubit, !qco.qubit
+      %q_178 = qco.rx(%cst_0) %qubit1_out_177 : !qco.qubit
+      %q_179 = qco.rz(%cst_2) %q_178 : !qco.qubit
+      %q_180 = qco.rx(%cst_1) %qubit0_out_176 : !qco.qubit
+      %q_181, %b_182 = qco.measure %q_179 : !qco.qubit
+      cbit.store %b_182, %full[%c4] : !cbit.reg<6>
+      %q_183 = qco.reset %q_181 : !qco.qubit
+      %q_184 = qco.rz(%cst_2) %q_183 : !qco.qubit
+      %qubit0_out_185, %qubit1_out_186 = qco.rxx(%cst_1) %q_119, %q_184 : !qco.qubit, !qco.qubit
+      %q_187 = qco.rx(%cst_0) %qubit1_out_186 : !qco.qubit
+      %q_188 = qco.rz(%cst_1) %qubit0_out_185 : !qco.qubit
+      %q_189 = qco.rx(%cst_1) %q_188 : !qco.qubit
+      %qubit0_out_190, %qubit1_out_191 = qco.rxx(%cst_1) %q_170, %q_187 : !qco.qubit, !qco.qubit
+      %q_192 = qco.rx(%cst_0) %qubit1_out_191 : !qco.qubit
+      %q_193 = qco.rz(%cst_1) %qubit0_out_190 : !qco.qubit
+      %q_194 = qco.rx(%cst_1) %q_193 : !qco.qubit
+      %qubit0_out_195, %qubit1_out_196 = qco.rxx(%cst_1) %q_148, %q_192 : !qco.qubit, !qco.qubit
+      %q_197 = qco.rx(%cst_0) %qubit1_out_196 : !qco.qubit
+      %q_198 = qco.rz(%cst_1) %qubit0_out_195 : !qco.qubit
+      %q_199 = qco.rx(%cst_1) %q_198 : !qco.qubit
+      %qubit0_out_200, %qubit1_out_201 = qco.rxx(%cst_1) %q_180, %q_197 : !qco.qubit, !qco.qubit
+      %q_202 = qco.rx(%cst_0) %qubit1_out_201 : !qco.qubit
+      %q_203 = qco.rz(%cst_2) %q_202 : !qco.qubit
+      %q_204 = qco.rz(%cst_1) %qubit0_out_200 : !qco.qubit
+      %q_205 = qco.rx(%cst_1) %q_204 : !qco.qubit
+      %q_206, %b_207 = qco.measure %q_203 : !qco.qubit
+      cbit.store %b_207, %full[%c5] : !cbit.reg<6>
+      qco.yield %q_189, %q_166, %q_194, %q_144, %q_199, %q_175, %q_205, %q_206, %q_57 : !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit
+    } else args(%q_49 = %q_8, %q_50 = %q_9, %q_51 = %q_10, %q_52 = %q_16, %q_53 = %q_27, %q_54 = %q_33, %q_55 = %q_44, %q_56 = %q_46, %q_57 = %q_47) {
+      %q_58 = qco.reset %q_56 : !qco.qubit
+      %q_59 = qco.rz(%cst_0) %q_58 : !qco.qubit
+      %q_60 = qco.rx(%cst_2) %q_59 : !qco.qubit
+      %q_61 = qco.rz(%cst_0) %q_60 : !qco.qubit
+      %q_62 = qco.reset %q_57 : !qco.qubit
+      %q_63 = qco.rz(%cst_2) %q_50 : !qco.qubit
+      %qubit0_out_64, %qubit1_out_65 = qco.rxx(%cst_1) %q_61, %q_63 : !qco.qubit, !qco.qubit
+      %q_66 = qco.rx(%cst_0) %qubit1_out_65 : !qco.qubit
+      %q_67 = qco.rz(%cst_2) %q_66 : !qco.qubit
+      %q_68 = qco.rx(%cst_1) %qubit0_out_64 : !qco.qubit
+      %q_69 = qco.rz(%cst_2) %q_62 : !qco.qubit
+      %qubit0_out_70, %qubit1_out_71 = qco.rxx(%cst_1) %q_68, %q_69 : !qco.qubit, !qco.qubit
+      %q_72 = qco.rx(%cst_0) %qubit1_out_71 : !qco.qubit
+      %q_73 = qco.rx(%cst_1) %qubit0_out_70 : !qco.qubit
+      %q_74 = qco.rz(%cst_2) %q_51 : !qco.qubit
+      %qubit0_out_75, %qubit1_out_76 = qco.rxx(%cst_1) %q_73, %q_74 : !qco.qubit, !qco.qubit
+      %q_77 = qco.rx(%cst_0) %qubit1_out_76 : !qco.qubit
+      %q_78 = qco.rz(%cst_2) %q_77 : !qco.qubit
+      %q_79 = qco.rx(%cst_1) %qubit0_out_75 : !qco.qubit
+      %q_80 = qco.rz(%cst_2) %q_54 : !qco.qubit
+      %qubit0_out_81, %qubit1_out_82 = qco.rxx(%cst_1) %q_79, %q_80 : !qco.qubit, !qco.qubit
+      %q_83 = qco.rx(%cst_0) %qubit1_out_82 : !qco.qubit
+      %q_84 = qco.rz(%cst_2) %q_83 : !qco.qubit
+      %q_85 = qco.rx(%cst_1) %qubit0_out_81 : !qco.qubit
+      %qubit0_out_86, %qubit1_out_87 = qco.rxx(%cst_1) %q_85, %q_72 : !qco.qubit, !qco.qubit
+      %q_88 = qco.rx(%cst_0) %qubit1_out_87 : !qco.qubit
+      %q_89 = qco.rz(%cst_2) %q_88 : !qco.qubit
+      %q_90 = qco.rx(%cst_1) %qubit0_out_86 : !qco.qubit
+      %q_91 = qco.rz(%cst_2) %q_55 : !qco.qubit
+      %qubit0_out_92, %qubit1_out_93 = qco.rxx(%cst_1) %q_90, %q_91 : !qco.qubit, !qco.qubit
+      %q_94 = qco.rx(%cst_0) %qubit1_out_93 : !qco.qubit
+      %q_95 = qco.rz(%cst_2) %q_94 : !qco.qubit
+      %q_96 = qco.rx(%cst_0) %qubit0_out_92 : !qco.qubit
+      %q_97, %b_98 = qco.measure %q_96 : !qco.qubit
+      cbit.store %b_98, %syn[%c1] : !cbit.reg<6>
+      %q_99, %b_100 = qco.measure %q_89 : !qco.qubit
+      cbit.store %b_100, %flg[%c1] : !cbit.reg<6>
+      %1 = scf.if %b_98 -> (i1) {
+        scf.yield %true : i1
+      } else {
+        %b_102 = cbit.load %flg[%c1] : !cbit.reg<6>
+        scf.yield %b_102 : i1
+      }
+      %linearResults_101:9 = qco.if %1 args(%q_102 = %q_49, %q_103 = %q_67, %q_104 = %q_78, %q_105 = %q_52, %q_106 = %q_53, %q_107 = %q_84, %q_108 = %q_95, %q_109 = %q_97, %q_110 = %q_99) -> (!qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit) {
+        %q_111 = qco.reset %q_109 : !qco.qubit
+        %q_112 = qco.rz(%cst_0) %q_111 : !qco.qubit
+        %q_113 = qco.rx(%cst_2) %q_112 : !qco.qubit
+        %q_114 = qco.rz(%cst_0) %q_113 : !qco.qubit
+        %q_115 = qco.rz(%cst_2) %q_105 : !qco.qubit
+        %qubit0_out_116, %qubit1_out_117 = qco.rxx(%cst_1) %q_114, %q_115 : !qco.qubit, !qco.qubit
+        %q_118 = qco.rz(%cst_1) %qubit1_out_117 : !qco.qubit
+        %q_119 = qco.rx(%cst) %q_118 : !qco.qubit
+        %q_120 = qco.rx(%cst_1) %qubit0_out_116 : !qco.qubit
+        %q_121 = qco.rz(%cst_2) %q_106 : !qco.qubit
+        %qubit0_out_122, %qubit1_out_123 = qco.rxx(%cst_1) %q_120, %q_121 : !qco.qubit, !qco.qubit
+        %q_124 = qco.rx(%cst_0) %qubit1_out_123 : !qco.qubit
+        %q_125 = qco.rx(%cst_1) %qubit0_out_122 : !qco.qubit
+        %q_126 = qco.rz(%cst_2) %q_107 : !qco.qubit
+        %qubit0_out_127, %qubit1_out_128 = qco.rxx(%cst_1) %q_125, %q_126 : !qco.qubit, !qco.qubit
+        %q_129 = qco.rx(%cst_0) %qubit1_out_128 : !qco.qubit
+        %q_130 = qco.rx(%cst_1) %qubit0_out_127 : !qco.qubit
+        %q_131 = qco.rz(%cst_2) %q_108 : !qco.qubit
+        %qubit0_out_132, %qubit1_out_133 = qco.rxx(%cst_1) %q_130, %q_131 : !qco.qubit, !qco.qubit
+        %q_134 = qco.rx(%cst_0) %qubit1_out_133 : !qco.qubit
+        %q_135 = qco.rx(%cst_0) %qubit0_out_132 : !qco.qubit
+        %q_136, %b_137 = qco.measure %q_135 : !qco.qubit
+        cbit.store %b_137, %full[%c0] : !cbit.reg<6>
+        %q_138 = qco.reset %q_136 : !qco.qubit
+        %q_139 = qco.rz(%cst_0) %q_138 : !qco.qubit
+        %q_140 = qco.rx(%cst_2) %q_139 : !qco.qubit
+        %q_141 = qco.rz(%cst_0) %q_140 : !qco.qubit
+        %q_142 = qco.rz(%cst_2) %q_103 : !qco.qubit
+        %qubit0_out_143, %qubit1_out_144 = qco.rxx(%cst_1) %q_141, %q_142 : !qco.qubit, !qco.qubit
+        %q_145 = qco.rz(%cst_1) %qubit1_out_144 : !qco.qubit
+        %q_146 = qco.rx(%cst) %q_145 : !qco.qubit
+        %q_147 = qco.rx(%cst_1) %qubit0_out_143 : !qco.qubit
+        %q_148 = qco.rz(%cst_2) %q_104 : !qco.qubit
+        %qubit0_out_149, %qubit1_out_150 = qco.rxx(%cst_1) %q_147, %q_148 : !qco.qubit, !qco.qubit
+        %q_151 = qco.rx(%cst_0) %qubit1_out_150 : !qco.qubit
+        %q_152 = qco.rx(%cst_1) %qubit0_out_149 : !qco.qubit
+        %qubit0_out_153, %qubit1_out_154 = qco.rxx(%cst_1) %q_152, %q_129 : !qco.qubit, !qco.qubit
+        %q_155 = qco.rz(%cst_1) %qubit1_out_154 : !qco.qubit
+        %q_156 = qco.rx(%cst) %q_155 : !qco.qubit
+        %q_157 = qco.rx(%cst_1) %qubit0_out_153 : !qco.qubit
+        %qubit0_out_158, %qubit1_out_159 = qco.rxx(%cst_1) %q_157, %q_134 : !qco.qubit, !qco.qubit
+        %q_160 = qco.rx(%cst_0) %qubit1_out_159 : !qco.qubit
+        %q_161 = qco.rx(%cst_0) %qubit0_out_158 : !qco.qubit
+        %q_162, %b_163 = qco.measure %q_161 : !qco.qubit
+        cbit.store %b_163, %full[%c1] : !cbit.reg<6>
+        %q_164 = qco.reset %q_162 : !qco.qubit
+        %q_165 = qco.rz(%cst_0) %q_164 : !qco.qubit
+        %q_166 = qco.rx(%cst_2) %q_165 : !qco.qubit
+        %q_167 = qco.rz(%cst_0) %q_166 : !qco.qubit
+        %q_168 = qco.rz(%cst_2) %q_102 : !qco.qubit
+        %qubit0_out_169, %qubit1_out_170 = qco.rxx(%cst_1) %q_167, %q_168 : !qco.qubit, !qco.qubit
+        %q_171 = qco.rz(%cst_1) %qubit1_out_170 : !qco.qubit
+        %q_172 = qco.rx(%cst) %q_171 : !qco.qubit
+        %q_173 = qco.rx(%cst_1) %qubit0_out_169 : !qco.qubit
+        %qubit0_out_174, %qubit1_out_175 = qco.rxx(%cst_1) %q_173, %q_151 : !qco.qubit, !qco.qubit
+        %q_176 = qco.rz(%cst_1) %qubit1_out_175 : !qco.qubit
+        %q_177 = qco.rx(%cst) %q_176 : !qco.qubit
+        %q_178 = qco.rx(%cst_1) %qubit0_out_174 : !qco.qubit
+        %qubit0_out_179, %qubit1_out_180 = qco.rxx(%cst_1) %q_178, %q_124 : !qco.qubit, !qco.qubit
+        %q_181 = qco.rz(%cst_1) %qubit1_out_180 : !qco.qubit
+        %q_182 = qco.rx(%cst) %q_181 : !qco.qubit
+        %q_183 = qco.rx(%cst_1) %qubit0_out_179 : !qco.qubit
+        %qubit0_out_184, %qubit1_out_185 = qco.rxx(%cst_1) %q_183, %q_160 : !qco.qubit, !qco.qubit
+        %q_186 = qco.rz(%cst_1) %qubit1_out_185 : !qco.qubit
+        %q_187 = qco.rx(%cst) %q_186 : !qco.qubit
+        %q_188 = qco.rx(%cst_0) %qubit0_out_184 : !qco.qubit
+        %q_189, %b_190 = qco.measure %q_188 : !qco.qubit
+        cbit.store %b_190, %full[%c2] : !cbit.reg<6>
+        %q_191 = qco.reset %q_189 : !qco.qubit
+        %q_192 = qco.rz(%cst_2) %q_191 : !qco.qubit
+        %qubit0_out_193, %qubit1_out_194 = qco.rxx(%cst_1) %q_119, %q_192 : !qco.qubit, !qco.qubit
+        %q_195 = qco.rx(%cst_0) %qubit1_out_194 : !qco.qubit
+        %q_196 = qco.rz(%cst_1) %qubit0_out_193 : !qco.qubit
+        %q_197 = qco.rx(%cst_1) %q_196 : !qco.qubit
+        %qubit0_out_198, %qubit1_out_199 = qco.rxx(%cst_1) %q_182, %q_195 : !qco.qubit, !qco.qubit
+        %q_200 = qco.rx(%cst_0) %qubit1_out_199 : !qco.qubit
+        %q_201 = qco.rx(%cst_1) %qubit0_out_198 : !qco.qubit
+        %qubit0_out_202, %qubit1_out_203 = qco.rxx(%cst_1) %q_156, %q_200 : !qco.qubit, !qco.qubit
+        %q_204 = qco.rx(%cst_0) %qubit1_out_203 : !qco.qubit
+        %q_205 = qco.rx(%cst_1) %qubit0_out_202 : !qco.qubit
+        %qubit0_out_206, %qubit1_out_207 = qco.rxx(%cst_1) %q_187, %q_204 : !qco.qubit, !qco.qubit
+        %q_208 = qco.rx(%cst_0) %qubit1_out_207 : !qco.qubit
+        %q_209 = qco.rz(%cst_2) %q_208 : !qco.qubit
+        %q_210 = qco.rx(%cst_1) %qubit0_out_206 : !qco.qubit
+        %q_211, %b_212 = qco.measure %q_209 : !qco.qubit
+        cbit.store %b_212, %full[%c3] : !cbit.reg<6>
+        %q_213 = qco.reset %q_211 : !qco.qubit
+        %q_214 = qco.rz(%cst_2) %q_213 : !qco.qubit
+        %qubit0_out_215, %qubit1_out_216 = qco.rxx(%cst_1) %q_146, %q_214 : !qco.qubit, !qco.qubit
+        %q_217 = qco.rx(%cst_0) %qubit1_out_216 : !qco.qubit
+        %q_218 = qco.rz(%cst_1) %qubit0_out_215 : !qco.qubit
+        %q_219 = qco.rx(%cst_1) %q_218 : !qco.qubit
+        %qubit0_out_220, %qubit1_out_221 = qco.rxx(%cst_1) %q_177, %q_217 : !qco.qubit, !qco.qubit
+        %q_222 = qco.rx(%cst_0) %qubit1_out_221 : !qco.qubit
+        %q_223 = qco.rx(%cst_1) %qubit0_out_220 : !qco.qubit
+        %qubit0_out_224, %qubit1_out_225 = qco.rxx(%cst_1) %q_205, %q_222 : !qco.qubit, !qco.qubit
+        %q_226 = qco.rx(%cst_0) %qubit1_out_225 : !qco.qubit
+        %q_227 = qco.rz(%cst_1) %qubit0_out_224 : !qco.qubit
+        %q_228 = qco.rx(%cst_1) %q_227 : !qco.qubit
+        %qubit0_out_229, %qubit1_out_230 = qco.rxx(%cst_1) %q_210, %q_226 : !qco.qubit, !qco.qubit
+        %q_231 = qco.rx(%cst_0) %qubit1_out_230 : !qco.qubit
+        %q_232 = qco.rz(%cst_2) %q_231 : !qco.qubit
+        %q_233 = qco.rx(%cst_1) %qubit0_out_229 : !qco.qubit
+        %q_234, %b_235 = qco.measure %q_232 : !qco.qubit
+        cbit.store %b_235, %full[%c4] : !cbit.reg<6>
+        %q_236 = qco.reset %q_234 : !qco.qubit
+        %q_237 = qco.rz(%cst_2) %q_236 : !qco.qubit
+        %qubit0_out_238, %qubit1_out_239 = qco.rxx(%cst_1) %q_172, %q_237 : !qco.qubit, !qco.qubit
+        %q_240 = qco.rx(%cst_0) %qubit1_out_239 : !qco.qubit
+        %q_241 = qco.rz(%cst_1) %qubit0_out_238 : !qco.qubit
+        %q_242 = qco.rx(%cst_1) %q_241 : !qco.qubit
+        %qubit0_out_243, %qubit1_out_244 = qco.rxx(%cst_1) %q_223, %q_240 : !qco.qubit, !qco.qubit
+        %q_245 = qco.rx(%cst_0) %qubit1_out_244 : !qco.qubit
+        %q_246 = qco.rz(%cst_1) %qubit0_out_243 : !qco.qubit
+        %q_247 = qco.rx(%cst_1) %q_246 : !qco.qubit
+        %qubit0_out_248, %qubit1_out_249 = qco.rxx(%cst_1) %q_201, %q_245 : !qco.qubit, !qco.qubit
+        %q_250 = qco.rx(%cst_0) %qubit1_out_249 : !qco.qubit
+        %q_251 = qco.rz(%cst_1) %qubit0_out_248 : !qco.qubit
+        %q_252 = qco.rx(%cst_1) %q_251 : !qco.qubit
+        %qubit0_out_253, %qubit1_out_254 = qco.rxx(%cst_1) %q_233, %q_250 : !qco.qubit, !qco.qubit
+        %q_255 = qco.rx(%cst_0) %qubit1_out_254 : !qco.qubit
+        %q_256 = qco.rz(%cst_2) %q_255 : !qco.qubit
+        %q_257 = qco.rz(%cst_1) %qubit0_out_253 : !qco.qubit
+        %q_258 = qco.rx(%cst_1) %q_257 : !qco.qubit
+        %q_259, %b_260 = qco.measure %q_256 : !qco.qubit
+        cbit.store %b_260, %full[%c5] : !cbit.reg<6>
+        qco.yield %q_242, %q_219, %q_247, %q_197, %q_252, %q_228, %q_258, %q_259, %q_110 : !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit
+      } else args(%q_102 = %q_49, %q_103 = %q_67, %q_104 = %q_78, %q_105 = %q_52, %q_106 = %q_53, %q_107 = %q_84, %q_108 = %q_95, %q_109 = %q_97, %q_110 = %q_99) {
+        %q_111 = qco.reset %q_109 : !qco.qubit
+        %q_112 = qco.rz(%cst_0) %q_111 : !qco.qubit
+        %q_113 = qco.rx(%cst_2) %q_112 : !qco.qubit
+        %q_114 = qco.rz(%cst_0) %q_113 : !qco.qubit
+        %q_115 = qco.reset %q_110 : !qco.qubit
+        %q_116 = qco.rz(%cst_2) %q_102 : !qco.qubit
+        %qubit0_out_117, %qubit1_out_118 = qco.rxx(%cst_1) %q_114, %q_116 : !qco.qubit, !qco.qubit
+        %q_119 = qco.rx(%cst_0) %qubit1_out_118 : !qco.qubit
+        %q_120 = qco.rz(%cst_2) %q_119 : !qco.qubit
+        %q_121 = qco.rx(%cst_1) %qubit0_out_117 : !qco.qubit
+        %q_122 = qco.rz(%cst_2) %q_115 : !qco.qubit
+        %qubit0_out_123, %qubit1_out_124 = qco.rxx(%cst_1) %q_121, %q_122 : !qco.qubit, !qco.qubit
+        %q_125 = qco.rx(%cst_0) %qubit1_out_124 : !qco.qubit
+        %q_126 = qco.rx(%cst_1) %qubit0_out_123 : !qco.qubit
+        %q_127 = qco.rz(%cst_2) %q_104 : !qco.qubit
+        %qubit0_out_128, %qubit1_out_129 = qco.rxx(%cst_1) %q_126, %q_127 : !qco.qubit, !qco.qubit
+        %q_130 = qco.rx(%cst_0) %qubit1_out_129 : !qco.qubit
+        %q_131 = qco.rz(%cst_2) %q_130 : !qco.qubit
+        %q_132 = qco.rx(%cst_1) %qubit0_out_128 : !qco.qubit
+        %q_133 = qco.rz(%cst_2) %q_106 : !qco.qubit
+        %qubit0_out_134, %qubit1_out_135 = qco.rxx(%cst_1) %q_132, %q_133 : !qco.qubit, !qco.qubit
+        %q_136 = qco.rx(%cst_0) %qubit1_out_135 : !qco.qubit
+        %q_137 = qco.rz(%cst_2) %q_136 : !qco.qubit
+        %q_138 = qco.rx(%cst_1) %qubit0_out_134 : !qco.qubit
+        %qubit0_out_139, %qubit1_out_140 = qco.rxx(%cst_1) %q_138, %q_125 : !qco.qubit, !qco.qubit
+        %q_141 = qco.rx(%cst_0) %qubit1_out_140 : !qco.qubit
+        %q_142 = qco.rz(%cst_2) %q_141 : !qco.qubit
+        %q_143 = qco.rx(%cst_1) %qubit0_out_139 : !qco.qubit
+        %q_144 = qco.rz(%cst_2) %q_108 : !qco.qubit
+        %qubit0_out_145, %qubit1_out_146 = qco.rxx(%cst_1) %q_143, %q_144 : !qco.qubit, !qco.qubit
+        %q_147 = qco.rx(%cst_0) %qubit1_out_146 : !qco.qubit
+        %q_148 = qco.rz(%cst_2) %q_147 : !qco.qubit
+        %q_149 = qco.rx(%cst_0) %qubit0_out_145 : !qco.qubit
+        %q_150, %b_151 = qco.measure %q_149 : !qco.qubit
+        cbit.store %b_151, %syn[%c2] : !cbit.reg<6>
+        %q_152, %b_153 = qco.measure %q_142 : !qco.qubit
+        cbit.store %b_153, %flg[%c2] : !cbit.reg<6>
+        %2 = scf.if %b_151 -> (i1) {
+          scf.yield %true : i1
+        } else {
+          %b_155 = cbit.load %flg[%c2] : !cbit.reg<6>
+          scf.yield %b_155 : i1
+        }
+        %linearResults_154:9 = qco.if %2 args(%q_155 = %q_120, %q_156 = %q_103, %q_157 = %q_131, %q_158 = %q_105, %q_159 = %q_137, %q_160 = %q_107, %q_161 = %q_148, %q_162 = %q_150, %q_163 = %q_152) -> (!qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit) {
+          %q_164 = qco.reset %q_162 : !qco.qubit
+          %q_165 = qco.rz(%cst_0) %q_164 : !qco.qubit
+          %q_166 = qco.rx(%cst_2) %q_165 : !qco.qubit
+          %q_167 = qco.rz(%cst_0) %q_166 : !qco.qubit
+          %q_168 = qco.rz(%cst_2) %q_158 : !qco.qubit
+          %qubit0_out_169, %qubit1_out_170 = qco.rxx(%cst_1) %q_167, %q_168 : !qco.qubit, !qco.qubit
+          %q_171 = qco.rz(%cst_1) %qubit1_out_170 : !qco.qubit
+          %q_172 = qco.rx(%cst) %q_171 : !qco.qubit
+          %q_173 = qco.rx(%cst_1) %qubit0_out_169 : !qco.qubit
+          %q_174 = qco.rz(%cst_2) %q_159 : !qco.qubit
+          %qubit0_out_175, %qubit1_out_176 = qco.rxx(%cst_1) %q_173, %q_174 : !qco.qubit, !qco.qubit
+          %q_177 = qco.rx(%cst_0) %qubit1_out_176 : !qco.qubit
+          %q_178 = qco.rx(%cst_1) %qubit0_out_175 : !qco.qubit
+          %q_179 = qco.rz(%cst_2) %q_160 : !qco.qubit
+          %qubit0_out_180, %qubit1_out_181 = qco.rxx(%cst_1) %q_178, %q_179 : !qco.qubit, !qco.qubit
+          %q_182 = qco.rx(%cst_0) %qubit1_out_181 : !qco.qubit
+          %q_183 = qco.rx(%cst_1) %qubit0_out_180 : !qco.qubit
+          %q_184 = qco.rz(%cst_2) %q_161 : !qco.qubit
+          %qubit0_out_185, %qubit1_out_186 = qco.rxx(%cst_1) %q_183, %q_184 : !qco.qubit, !qco.qubit
+          %q_187 = qco.rx(%cst_0) %qubit1_out_186 : !qco.qubit
+          %q_188 = qco.rx(%cst_0) %qubit0_out_185 : !qco.qubit
+          %q_189, %b_190 = qco.measure %q_188 : !qco.qubit
+          cbit.store %b_190, %full[%c0] : !cbit.reg<6>
+          %q_191 = qco.reset %q_189 : !qco.qubit
+          %q_192 = qco.rz(%cst_0) %q_191 : !qco.qubit
+          %q_193 = qco.rx(%cst_2) %q_192 : !qco.qubit
+          %q_194 = qco.rz(%cst_0) %q_193 : !qco.qubit
+          %q_195 = qco.rz(%cst_2) %q_156 : !qco.qubit
+          %qubit0_out_196, %qubit1_out_197 = qco.rxx(%cst_1) %q_194, %q_195 : !qco.qubit, !qco.qubit
+          %q_198 = qco.rz(%cst_1) %qubit1_out_197 : !qco.qubit
+          %q_199 = qco.rx(%cst) %q_198 : !qco.qubit
+          %q_200 = qco.rx(%cst_1) %qubit0_out_196 : !qco.qubit
+          %q_201 = qco.rz(%cst_2) %q_157 : !qco.qubit
+          %qubit0_out_202, %qubit1_out_203 = qco.rxx(%cst_1) %q_200, %q_201 : !qco.qubit, !qco.qubit
+          %q_204 = qco.rx(%cst_0) %qubit1_out_203 : !qco.qubit
+          %q_205 = qco.rx(%cst_1) %qubit0_out_202 : !qco.qubit
+          %qubit0_out_206, %qubit1_out_207 = qco.rxx(%cst_1) %q_205, %q_182 : !qco.qubit, !qco.qubit
+          %q_208 = qco.rz(%cst_1) %qubit1_out_207 : !qco.qubit
+          %q_209 = qco.rx(%cst) %q_208 : !qco.qubit
+          %q_210 = qco.rx(%cst_1) %qubit0_out_206 : !qco.qubit
+          %qubit0_out_211, %qubit1_out_212 = qco.rxx(%cst_1) %q_210, %q_187 : !qco.qubit, !qco.qubit
+          %q_213 = qco.rx(%cst_0) %qubit1_out_212 : !qco.qubit
+          %q_214 = qco.rx(%cst_0) %qubit0_out_211 : !qco.qubit
+          %q_215, %b_216 = qco.measure %q_214 : !qco.qubit
+          cbit.store %b_216, %full[%c1] : !cbit.reg<6>
+          %q_217 = qco.reset %q_215 : !qco.qubit
+          %q_218 = qco.rz(%cst_0) %q_217 : !qco.qubit
+          %q_219 = qco.rx(%cst_2) %q_218 : !qco.qubit
+          %q_220 = qco.rz(%cst_0) %q_219 : !qco.qubit
+          %q_221 = qco.rz(%cst_2) %q_155 : !qco.qubit
+          %qubit0_out_222, %qubit1_out_223 = qco.rxx(%cst_1) %q_220, %q_221 : !qco.qubit, !qco.qubit
+          %q_224 = qco.rz(%cst_1) %qubit1_out_223 : !qco.qubit
+          %q_225 = qco.rx(%cst) %q_224 : !qco.qubit
+          %q_226 = qco.rx(%cst_1) %qubit0_out_222 : !qco.qubit
+          %qubit0_out_227, %qubit1_out_228 = qco.rxx(%cst_1) %q_226, %q_204 : !qco.qubit, !qco.qubit
+          %q_229 = qco.rz(%cst_1) %qubit1_out_228 : !qco.qubit
+          %q_230 = qco.rx(%cst) %q_229 : !qco.qubit
+          %q_231 = qco.rx(%cst_1) %qubit0_out_227 : !qco.qubit
+          %qubit0_out_232, %qubit1_out_233 = qco.rxx(%cst_1) %q_231, %q_177 : !qco.qubit, !qco.qubit
+          %q_234 = qco.rz(%cst_1) %qubit1_out_233 : !qco.qubit
+          %q_235 = qco.rx(%cst) %q_234 : !qco.qubit
+          %q_236 = qco.rx(%cst_1) %qubit0_out_232 : !qco.qubit
+          %qubit0_out_237, %qubit1_out_238 = qco.rxx(%cst_1) %q_236, %q_213 : !qco.qubit, !qco.qubit
+          %q_239 = qco.rz(%cst_1) %qubit1_out_238 : !qco.qubit
+          %q_240 = qco.rx(%cst) %q_239 : !qco.qubit
+          %q_241 = qco.rx(%cst_0) %qubit0_out_237 : !qco.qubit
+          %q_242, %b_243 = qco.measure %q_241 : !qco.qubit
+          cbit.store %b_243, %full[%c2] : !cbit.reg<6>
+          %q_244 = qco.reset %q_242 : !qco.qubit
+          %q_245 = qco.rz(%cst_2) %q_244 : !qco.qubit
+          %qubit0_out_246, %qubit1_out_247 = qco.rxx(%cst_1) %q_172, %q_245 : !qco.qubit, !qco.qubit
+          %q_248 = qco.rx(%cst_0) %qubit1_out_247 : !qco.qubit
+          %q_249 = qco.rz(%cst_1) %qubit0_out_246 : !qco.qubit
+          %q_250 = qco.rx(%cst_1) %q_249 : !qco.qubit
+          %qubit0_out_251, %qubit1_out_252 = qco.rxx(%cst_1) %q_235, %q_248 : !qco.qubit, !qco.qubit
+          %q_253 = qco.rx(%cst_0) %qubit1_out_252 : !qco.qubit
+          %q_254 = qco.rx(%cst_1) %qubit0_out_251 : !qco.qubit
+          %qubit0_out_255, %qubit1_out_256 = qco.rxx(%cst_1) %q_209, %q_253 : !qco.qubit, !qco.qubit
+          %q_257 = qco.rx(%cst_0) %qubit1_out_256 : !qco.qubit
+          %q_258 = qco.rx(%cst_1) %qubit0_out_255 : !qco.qubit
+          %qubit0_out_259, %qubit1_out_260 = qco.rxx(%cst_1) %q_240, %q_257 : !qco.qubit, !qco.qubit
+          %q_261 = qco.rx(%cst_0) %qubit1_out_260 : !qco.qubit
+          %q_262 = qco.rz(%cst_2) %q_261 : !qco.qubit
+          %q_263 = qco.rx(%cst_1) %qubit0_out_259 : !qco.qubit
+          %q_264, %b_265 = qco.measure %q_262 : !qco.qubit
+          cbit.store %b_265, %full[%c3] : !cbit.reg<6>
+          %q_266 = qco.reset %q_264 : !qco.qubit
+          %q_267 = qco.rz(%cst_2) %q_266 : !qco.qubit
+          %qubit0_out_268, %qubit1_out_269 = qco.rxx(%cst_1) %q_199, %q_267 : !qco.qubit, !qco.qubit
+          %q_270 = qco.rx(%cst_0) %qubit1_out_269 : !qco.qubit
+          %q_271 = qco.rz(%cst_1) %qubit0_out_268 : !qco.qubit
+          %q_272 = qco.rx(%cst_1) %q_271 : !qco.qubit
+          %qubit0_out_273, %qubit1_out_274 = qco.rxx(%cst_1) %q_230, %q_270 : !qco.qubit, !qco.qubit
+          %q_275 = qco.rx(%cst_0) %qubit1_out_274 : !qco.qubit
+          %q_276 = qco.rx(%cst_1) %qubit0_out_273 : !qco.qubit
+          %qubit0_out_277, %qubit1_out_278 = qco.rxx(%cst_1) %q_258, %q_275 : !qco.qubit, !qco.qubit
+          %q_279 = qco.rx(%cst_0) %qubit1_out_278 : !qco.qubit
+          %q_280 = qco.rz(%cst_1) %qubit0_out_277 : !qco.qubit
+          %q_281 = qco.rx(%cst_1) %q_280 : !qco.qubit
+          %qubit0_out_282, %qubit1_out_283 = qco.rxx(%cst_1) %q_263, %q_279 : !qco.qubit, !qco.qubit
+          %q_284 = qco.rx(%cst_0) %qubit1_out_283 : !qco.qubit
+          %q_285 = qco.rz(%cst_2) %q_284 : !qco.qubit
+          %q_286 = qco.rx(%cst_1) %qubit0_out_282 : !qco.qubit
+          %q_287, %b_288 = qco.measure %q_285 : !qco.qubit
+          cbit.store %b_288, %full[%c4] : !cbit.reg<6>
+          %q_289 = qco.reset %q_287 : !qco.qubit
+          %q_290 = qco.rz(%cst_2) %q_289 : !qco.qubit
+          %qubit0_out_291, %qubit1_out_292 = qco.rxx(%cst_1) %q_225, %q_290 : !qco.qubit, !qco.qubit
+          %q_293 = qco.rx(%cst_0) %qubit1_out_292 : !qco.qubit
+          %q_294 = qco.rz(%cst_1) %qubit0_out_291 : !qco.qubit
+          %q_295 = qco.rx(%cst_1) %q_294 : !qco.qubit
+          %qubit0_out_296, %qubit1_out_297 = qco.rxx(%cst_1) %q_276, %q_293 : !qco.qubit, !qco.qubit
+          %q_298 = qco.rx(%cst_0) %qubit1_out_297 : !qco.qubit
+          %q_299 = qco.rz(%cst_1) %qubit0_out_296 : !qco.qubit
+          %q_300 = qco.rx(%cst_1) %q_299 : !qco.qubit
+          %qubit0_out_301, %qubit1_out_302 = qco.rxx(%cst_1) %q_254, %q_298 : !qco.qubit, !qco.qubit
+          %q_303 = qco.rx(%cst_0) %qubit1_out_302 : !qco.qubit
+          %q_304 = qco.rz(%cst_1) %qubit0_out_301 : !qco.qubit
+          %q_305 = qco.rx(%cst_1) %q_304 : !qco.qubit
+          %qubit0_out_306, %qubit1_out_307 = qco.rxx(%cst_1) %q_286, %q_303 : !qco.qubit, !qco.qubit
+          %q_308 = qco.rx(%cst_0) %qubit1_out_307 : !qco.qubit
+          %q_309 = qco.rz(%cst_2) %q_308 : !qco.qubit
+          %q_310 = qco.rz(%cst_1) %qubit0_out_306 : !qco.qubit
+          %q_311 = qco.rx(%cst_1) %q_310 : !qco.qubit
+          %q_312, %b_313 = qco.measure %q_309 : !qco.qubit
+          cbit.store %b_313, %full[%c5] : !cbit.reg<6>
+          qco.yield %q_295, %q_272, %q_300, %q_250, %q_305, %q_281, %q_311, %q_312, %q_163 : !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit
+        } else args(%q_155 = %q_120, %q_156 = %q_103, %q_157 = %q_131, %q_158 = %q_105, %q_159 = %q_137, %q_160 = %q_107, %q_161 = %q_148, %q_162 = %q_150, %q_163 = %q_152) {
+          %q_164 = qco.reset %q_162 : !qco.qubit
+          %q_165 = qco.reset %q_163 : !qco.qubit
+          %q_166 = qco.rz(%cst_0) %q_165 : !qco.qubit
+          %q_167 = qco.rx(%cst_2) %q_166 : !qco.qubit
+          %q_168 = qco.rz(%cst_0) %q_167 : !qco.qubit
+          %q_169 = qco.rz(%cst_2) %q_164 : !qco.qubit
+          %q_170 = qco.rz(%cst_1) %q_158 : !qco.qubit
+          %q_171 = qco.rx(%cst_0) %q_170 : !qco.qubit
+          %q_172 = qco.rz(%cst_0) %q_171 : !qco.qubit
+          %qubit0_out_173, %qubit1_out_174 = qco.rxx(%cst_1) %q_172, %q_169 : !qco.qubit, !qco.qubit
+          %q_175 = qco.rx(%cst_0) %qubit1_out_174 : !qco.qubit
+          %q_176 = qco.rz(%cst_1) %qubit0_out_173 : !qco.qubit
+          %q_177 = qco.rx(%cst_1) %q_176 : !qco.qubit
+          %qubit0_out_178, %qubit1_out_179 = qco.rxx(%cst_1) %q_168, %q_175 : !qco.qubit, !qco.qubit
+          %q_180 = qco.rx(%cst_0) %qubit1_out_179 : !qco.qubit
+          %q_181 = qco.rx(%cst_1) %qubit0_out_178 : !qco.qubit
+          %q_182 = qco.rz(%cst_1) %q_159 : !qco.qubit
+          %q_183 = qco.rx(%cst_0) %q_182 : !qco.qubit
+          %q_184 = qco.rz(%cst_0) %q_183 : !qco.qubit
+          %qubit0_out_185, %qubit1_out_186 = qco.rxx(%cst_1) %q_184, %q_180 : !qco.qubit, !qco.qubit
+          %q_187 = qco.rx(%cst_0) %qubit1_out_186 : !qco.qubit
+          %q_188 = qco.rz(%cst_1) %qubit0_out_185 : !qco.qubit
+          %q_189 = qco.rx(%cst_1) %q_188 : !qco.qubit
+          %q_190 = qco.rz(%cst_1) %q_160 : !qco.qubit
+          %q_191 = qco.rx(%cst_0) %q_190 : !qco.qubit
+          %q_192 = qco.rz(%cst_0) %q_191 : !qco.qubit
+          %qubit0_out_193, %qubit1_out_194 = qco.rxx(%cst_1) %q_192, %q_187 : !qco.qubit, !qco.qubit
+          %q_195 = qco.rx(%cst_0) %qubit1_out_194 : !qco.qubit
+          %q_196 = qco.rz(%cst_1) %qubit0_out_193 : !qco.qubit
+          %q_197 = qco.rx(%cst_1) %q_196 : !qco.qubit
+          %qubit0_out_198, %qubit1_out_199 = qco.rxx(%cst_1) %q_181, %q_195 : !qco.qubit, !qco.qubit
+          %q_200 = qco.rx(%cst_0) %qubit1_out_199 : !qco.qubit
+          %q_201 = qco.rx(%cst_0) %qubit0_out_198 : !qco.qubit
+          %q_202 = qco.rz(%cst_1) %q_161 : !qco.qubit
+          %q_203 = qco.rx(%cst_0) %q_202 : !qco.qubit
+          %q_204 = qco.rz(%cst_0) %q_203 : !qco.qubit
+          %qubit0_out_205, %qubit1_out_206 = qco.rxx(%cst_1) %q_204, %q_200 : !qco.qubit, !qco.qubit
+          %q_207 = qco.rx(%cst_0) %qubit1_out_206 : !qco.qubit
+          %q_208 = qco.rz(%cst_2) %q_207 : !qco.qubit
+          %q_209 = qco.rz(%cst_1) %qubit0_out_205 : !qco.qubit
+          %q_210 = qco.rx(%cst_1) %q_209 : !qco.qubit
+          %q_211, %b_212 = qco.measure %q_208 : !qco.qubit
+          cbit.store %b_212, %syn[%c3] : !cbit.reg<6>
+          %q_213, %b_214 = qco.measure %q_201 : !qco.qubit
+          cbit.store %b_214, %flg[%c3] : !cbit.reg<6>
+          %3 = scf.if %b_212 -> (i1) {
+            scf.yield %true : i1
+          } else {
+            %b_216 = cbit.load %flg[%c3] : !cbit.reg<6>
+            scf.yield %b_216 : i1
+          }
+          %linearResults_215:9 = qco.if %3 args(%q_216 = %q_155, %q_217 = %q_156, %q_218 = %q_157, %q_219 = %q_177, %q_220 = %q_189, %q_221 = %q_197, %q_222 = %q_210, %q_223 = %q_211, %q_224 = %q_213) -> (!qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit) {
+            %q_225 = qco.reset %q_223 : !qco.qubit
+            %q_226 = qco.rz(%cst_0) %q_225 : !qco.qubit
+            %q_227 = qco.rx(%cst_2) %q_226 : !qco.qubit
+            %q_228 = qco.rz(%cst_0) %q_227 : !qco.qubit
+            %q_229 = qco.rz(%cst_2) %q_219 : !qco.qubit
+            %qubit0_out_230, %qubit1_out_231 = qco.rxx(%cst_1) %q_228, %q_229 : !qco.qubit, !qco.qubit
+            %q_232 = qco.rz(%cst_1) %qubit1_out_231 : !qco.qubit
+            %q_233 = qco.rx(%cst) %q_232 : !qco.qubit
+            %q_234 = qco.rx(%cst_1) %qubit0_out_230 : !qco.qubit
+            %q_235 = qco.rz(%cst_2) %q_220 : !qco.qubit
+            %qubit0_out_236, %qubit1_out_237 = qco.rxx(%cst_1) %q_234, %q_235 : !qco.qubit, !qco.qubit
+            %q_238 = qco.rx(%cst_0) %qubit1_out_237 : !qco.qubit
+            %q_239 = qco.rx(%cst_1) %qubit0_out_236 : !qco.qubit
+            %q_240 = qco.rz(%cst_2) %q_221 : !qco.qubit
+            %qubit0_out_241, %qubit1_out_242 = qco.rxx(%cst_1) %q_239, %q_240 : !qco.qubit, !qco.qubit
+            %q_243 = qco.rx(%cst_0) %qubit1_out_242 : !qco.qubit
+            %q_244 = qco.rx(%cst_1) %qubit0_out_241 : !qco.qubit
+            %q_245 = qco.rz(%cst_2) %q_222 : !qco.qubit
+            %qubit0_out_246, %qubit1_out_247 = qco.rxx(%cst_1) %q_244, %q_245 : !qco.qubit, !qco.qubit
+            %q_248 = qco.rx(%cst_0) %qubit1_out_247 : !qco.qubit
+            %q_249 = qco.rx(%cst_0) %qubit0_out_246 : !qco.qubit
+            %q_250, %b_251 = qco.measure %q_249 : !qco.qubit
+            cbit.store %b_251, %full[%c0] : !cbit.reg<6>
+            %q_252 = qco.reset %q_250 : !qco.qubit
+            %q_253 = qco.rz(%cst_0) %q_252 : !qco.qubit
+            %q_254 = qco.rx(%cst_2) %q_253 : !qco.qubit
+            %q_255 = qco.rz(%cst_0) %q_254 : !qco.qubit
+            %q_256 = qco.rz(%cst_2) %q_217 : !qco.qubit
+            %qubit0_out_257, %qubit1_out_258 = qco.rxx(%cst_1) %q_255, %q_256 : !qco.qubit, !qco.qubit
+            %q_259 = qco.rz(%cst_1) %qubit1_out_258 : !qco.qubit
+            %q_260 = qco.rx(%cst) %q_259 : !qco.qubit
+            %q_261 = qco.rx(%cst_1) %qubit0_out_257 : !qco.qubit
+            %q_262 = qco.rz(%cst_2) %q_218 : !qco.qubit
+            %qubit0_out_263, %qubit1_out_264 = qco.rxx(%cst_1) %q_261, %q_262 : !qco.qubit, !qco.qubit
+            %q_265 = qco.rx(%cst_0) %qubit1_out_264 : !qco.qubit
+            %q_266 = qco.rx(%cst_1) %qubit0_out_263 : !qco.qubit
+            %qubit0_out_267, %qubit1_out_268 = qco.rxx(%cst_1) %q_266, %q_243 : !qco.qubit, !qco.qubit
+            %q_269 = qco.rz(%cst_1) %qubit1_out_268 : !qco.qubit
+            %q_270 = qco.rx(%cst) %q_269 : !qco.qubit
+            %q_271 = qco.rx(%cst_1) %qubit0_out_267 : !qco.qubit
+            %qubit0_out_272, %qubit1_out_273 = qco.rxx(%cst_1) %q_271, %q_248 : !qco.qubit, !qco.qubit
+            %q_274 = qco.rx(%cst_0) %qubit1_out_273 : !qco.qubit
+            %q_275 = qco.rx(%cst_0) %qubit0_out_272 : !qco.qubit
+            %q_276, %b_277 = qco.measure %q_275 : !qco.qubit
+            cbit.store %b_277, %full[%c1] : !cbit.reg<6>
+            %q_278 = qco.reset %q_276 : !qco.qubit
+            %q_279 = qco.rz(%cst_0) %q_278 : !qco.qubit
+            %q_280 = qco.rx(%cst_2) %q_279 : !qco.qubit
+            %q_281 = qco.rz(%cst_0) %q_280 : !qco.qubit
+            %q_282 = qco.rz(%cst_2) %q_216 : !qco.qubit
+            %qubit0_out_283, %qubit1_out_284 = qco.rxx(%cst_1) %q_281, %q_282 : !qco.qubit, !qco.qubit
+            %q_285 = qco.rz(%cst_1) %qubit1_out_284 : !qco.qubit
+            %q_286 = qco.rx(%cst) %q_285 : !qco.qubit
+            %q_287 = qco.rx(%cst_1) %qubit0_out_283 : !qco.qubit
+            %qubit0_out_288, %qubit1_out_289 = qco.rxx(%cst_1) %q_287, %q_265 : !qco.qubit, !qco.qubit
+            %q_290 = qco.rz(%cst_1) %qubit1_out_289 : !qco.qubit
+            %q_291 = qco.rx(%cst) %q_290 : !qco.qubit
+            %q_292 = qco.rx(%cst_1) %qubit0_out_288 : !qco.qubit
+            %qubit0_out_293, %qubit1_out_294 = qco.rxx(%cst_1) %q_292, %q_238 : !qco.qubit, !qco.qubit
+            %q_295 = qco.rz(%cst_1) %qubit1_out_294 : !qco.qubit
+            %q_296 = qco.rx(%cst) %q_295 : !qco.qubit
+            %q_297 = qco.rx(%cst_1) %qubit0_out_293 : !qco.qubit
+            %qubit0_out_298, %qubit1_out_299 = qco.rxx(%cst_1) %q_297, %q_274 : !qco.qubit, !qco.qubit
+            %q_300 = qco.rz(%cst_1) %qubit1_out_299 : !qco.qubit
+            %q_301 = qco.rx(%cst) %q_300 : !qco.qubit
+            %q_302 = qco.rx(%cst_0) %qubit0_out_298 : !qco.qubit
+            %q_303, %b_304 = qco.measure %q_302 : !qco.qubit
+            cbit.store %b_304, %full[%c2] : !cbit.reg<6>
+            %q_305 = qco.reset %q_303 : !qco.qubit
+            %q_306 = qco.rz(%cst_2) %q_305 : !qco.qubit
+            %qubit0_out_307, %qubit1_out_308 = qco.rxx(%cst_1) %q_233, %q_306 : !qco.qubit, !qco.qubit
+            %q_309 = qco.rx(%cst_0) %qubit1_out_308 : !qco.qubit
+            %q_310 = qco.rz(%cst_1) %qubit0_out_307 : !qco.qubit
+            %q_311 = qco.rx(%cst_1) %q_310 : !qco.qubit
+            %qubit0_out_312, %qubit1_out_313 = qco.rxx(%cst_1) %q_296, %q_309 : !qco.qubit, !qco.qubit
+            %q_314 = qco.rx(%cst_0) %qubit1_out_313 : !qco.qubit
+            %q_315 = qco.rx(%cst_1) %qubit0_out_312 : !qco.qubit
+            %qubit0_out_316, %qubit1_out_317 = qco.rxx(%cst_1) %q_270, %q_314 : !qco.qubit, !qco.qubit
+            %q_318 = qco.rx(%cst_0) %qubit1_out_317 : !qco.qubit
+            %q_319 = qco.rx(%cst_1) %qubit0_out_316 : !qco.qubit
+            %qubit0_out_320, %qubit1_out_321 = qco.rxx(%cst_1) %q_301, %q_318 : !qco.qubit, !qco.qubit
+            %q_322 = qco.rx(%cst_0) %qubit1_out_321 : !qco.qubit
+            %q_323 = qco.rz(%cst_2) %q_322 : !qco.qubit
+            %q_324 = qco.rx(%cst_1) %qubit0_out_320 : !qco.qubit
+            %q_325, %b_326 = qco.measure %q_323 : !qco.qubit
+            cbit.store %b_326, %full[%c3] : !cbit.reg<6>
+            %q_327 = qco.reset %q_325 : !qco.qubit
+            %q_328 = qco.rz(%cst_2) %q_327 : !qco.qubit
+            %qubit0_out_329, %qubit1_out_330 = qco.rxx(%cst_1) %q_260, %q_328 : !qco.qubit, !qco.qubit
+            %q_331 = qco.rx(%cst_0) %qubit1_out_330 : !qco.qubit
+            %q_332 = qco.rz(%cst_1) %qubit0_out_329 : !qco.qubit
+            %q_333 = qco.rx(%cst_1) %q_332 : !qco.qubit
+            %qubit0_out_334, %qubit1_out_335 = qco.rxx(%cst_1) %q_291, %q_331 : !qco.qubit, !qco.qubit
+            %q_336 = qco.rx(%cst_0) %qubit1_out_335 : !qco.qubit
+            %q_337 = qco.rx(%cst_1) %qubit0_out_334 : !qco.qubit
+            %qubit0_out_338, %qubit1_out_339 = qco.rxx(%cst_1) %q_319, %q_336 : !qco.qubit, !qco.qubit
+            %q_340 = qco.rx(%cst_0) %qubit1_out_339 : !qco.qubit
+            %q_341 = qco.rz(%cst_1) %qubit0_out_338 : !qco.qubit
+            %q_342 = qco.rx(%cst_1) %q_341 : !qco.qubit
+            %qubit0_out_343, %qubit1_out_344 = qco.rxx(%cst_1) %q_324, %q_340 : !qco.qubit, !qco.qubit
+            %q_345 = qco.rx(%cst_0) %qubit1_out_344 : !qco.qubit
+            %q_346 = qco.rz(%cst_2) %q_345 : !qco.qubit
+            %q_347 = qco.rx(%cst_1) %qubit0_out_343 : !qco.qubit
+            %q_348, %b_349 = qco.measure %q_346 : !qco.qubit
+            cbit.store %b_349, %full[%c4] : !cbit.reg<6>
+            %q_350 = qco.reset %q_348 : !qco.qubit
+            %q_351 = qco.rz(%cst_2) %q_350 : !qco.qubit
+            %qubit0_out_352, %qubit1_out_353 = qco.rxx(%cst_1) %q_286, %q_351 : !qco.qubit, !qco.qubit
+            %q_354 = qco.rx(%cst_0) %qubit1_out_353 : !qco.qubit
+            %q_355 = qco.rz(%cst_1) %qubit0_out_352 : !qco.qubit
+            %q_356 = qco.rx(%cst_1) %q_355 : !qco.qubit
+            %qubit0_out_357, %qubit1_out_358 = qco.rxx(%cst_1) %q_337, %q_354 : !qco.qubit, !qco.qubit
+            %q_359 = qco.rx(%cst_0) %qubit1_out_358 : !qco.qubit
+            %q_360 = qco.rz(%cst_1) %qubit0_out_357 : !qco.qubit
+            %q_361 = qco.rx(%cst_1) %q_360 : !qco.qubit
+            %qubit0_out_362, %qubit1_out_363 = qco.rxx(%cst_1) %q_315, %q_359 : !qco.qubit, !qco.qubit
+            %q_364 = qco.rx(%cst_0) %qubit1_out_363 : !qco.qubit
+            %q_365 = qco.rz(%cst_1) %qubit0_out_362 : !qco.qubit
+            %q_366 = qco.rx(%cst_1) %q_365 : !qco.qubit
+            %qubit0_out_367, %qubit1_out_368 = qco.rxx(%cst_1) %q_347, %q_364 : !qco.qubit, !qco.qubit
+            %q_369 = qco.rx(%cst_0) %qubit1_out_368 : !qco.qubit
+            %q_370 = qco.rz(%cst_2) %q_369 : !qco.qubit
+            %q_371 = qco.rz(%cst_1) %qubit0_out_367 : !qco.qubit
+            %q_372 = qco.rx(%cst_1) %q_371 : !qco.qubit
+            %q_373, %b_374 = qco.measure %q_370 : !qco.qubit
+            cbit.store %b_374, %full[%c5] : !cbit.reg<6>
+            qco.yield %q_356, %q_333, %q_361, %q_311, %q_366, %q_342, %q_372, %q_373, %q_224 : !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit
+          } else args(%q_216 = %q_155, %q_217 = %q_156, %q_218 = %q_157, %q_219 = %q_177, %q_220 = %q_189, %q_221 = %q_197, %q_222 = %q_210, %q_223 = %q_211, %q_224 = %q_213) {
+            %q_225 = qco.reset %q_223 : !qco.qubit
+            %q_226 = qco.reset %q_224 : !qco.qubit
+            %q_227 = qco.rz(%cst_0) %q_226 : !qco.qubit
+            %q_228 = qco.rx(%cst_2) %q_227 : !qco.qubit
+            %q_229 = qco.rz(%cst_0) %q_228 : !qco.qubit
+            %q_230 = qco.rz(%cst_2) %q_225 : !qco.qubit
+            %q_231 = qco.rz(%cst_1) %q_217 : !qco.qubit
+            %q_232 = qco.rx(%cst_0) %q_231 : !qco.qubit
+            %q_233 = qco.rz(%cst_0) %q_232 : !qco.qubit
+            %qubit0_out_234, %qubit1_out_235 = qco.rxx(%cst_1) %q_233, %q_230 : !qco.qubit, !qco.qubit
+            %q_236 = qco.rx(%cst_0) %qubit1_out_235 : !qco.qubit
+            %q_237 = qco.rz(%cst_1) %qubit0_out_234 : !qco.qubit
+            %q_238 = qco.rx(%cst_1) %q_237 : !qco.qubit
+            %qubit0_out_239, %qubit1_out_240 = qco.rxx(%cst_1) %q_229, %q_236 : !qco.qubit, !qco.qubit
+            %q_241 = qco.rx(%cst_0) %qubit1_out_240 : !qco.qubit
+            %q_242 = qco.rx(%cst_1) %qubit0_out_239 : !qco.qubit
+            %q_243 = qco.rz(%cst_1) %q_218 : !qco.qubit
+            %q_244 = qco.rx(%cst_0) %q_243 : !qco.qubit
+            %q_245 = qco.rz(%cst_0) %q_244 : !qco.qubit
+            %qubit0_out_246, %qubit1_out_247 = qco.rxx(%cst_1) %q_245, %q_241 : !qco.qubit, !qco.qubit
+            %q_248 = qco.rx(%cst_0) %qubit1_out_247 : !qco.qubit
+            %q_249 = qco.rz(%cst_1) %qubit0_out_246 : !qco.qubit
+            %q_250 = qco.rx(%cst_1) %q_249 : !qco.qubit
+            %q_251 = qco.rz(%cst_1) %q_221 : !qco.qubit
+            %q_252 = qco.rx(%cst_0) %q_251 : !qco.qubit
+            %q_253 = qco.rz(%cst_0) %q_252 : !qco.qubit
+            %qubit0_out_254, %qubit1_out_255 = qco.rxx(%cst_1) %q_253, %q_248 : !qco.qubit, !qco.qubit
+            %q_256 = qco.rx(%cst_0) %qubit1_out_255 : !qco.qubit
+            %q_257 = qco.rz(%cst_1) %qubit0_out_254 : !qco.qubit
+            %q_258 = qco.rx(%cst_1) %q_257 : !qco.qubit
+            %qubit0_out_259, %qubit1_out_260 = qco.rxx(%cst_1) %q_242, %q_256 : !qco.qubit, !qco.qubit
+            %q_261 = qco.rx(%cst_0) %qubit1_out_260 : !qco.qubit
+            %q_262 = qco.rx(%cst_0) %qubit0_out_259 : !qco.qubit
+            %q_263 = qco.rz(%cst_1) %q_222 : !qco.qubit
+            %q_264 = qco.rx(%cst_0) %q_263 : !qco.qubit
+            %q_265 = qco.rz(%cst_0) %q_264 : !qco.qubit
+            %qubit0_out_266, %qubit1_out_267 = qco.rxx(%cst_1) %q_265, %q_261 : !qco.qubit, !qco.qubit
+            %q_268 = qco.rx(%cst_0) %qubit1_out_267 : !qco.qubit
+            %q_269 = qco.rz(%cst_2) %q_268 : !qco.qubit
+            %q_270 = qco.rz(%cst_1) %qubit0_out_266 : !qco.qubit
+            %q_271 = qco.rx(%cst_1) %q_270 : !qco.qubit
+            %q_272, %b_273 = qco.measure %q_269 : !qco.qubit
+            cbit.store %b_273, %syn[%c4] : !cbit.reg<6>
+            %q_274, %b_275 = qco.measure %q_262 : !qco.qubit
+            cbit.store %b_275, %flg[%c4] : !cbit.reg<6>
+            %4 = scf.if %b_273 -> (i1) {
+              scf.yield %true : i1
+            } else {
+              %b_277 = cbit.load %flg[%c4] : !cbit.reg<6>
+              scf.yield %b_277 : i1
+            }
+            %linearResults_276:9 = qco.if %4 args(%q_277 = %q_216, %q_278 = %q_238, %q_279 = %q_250, %q_280 = %q_219, %q_281 = %q_220, %q_282 = %q_258, %q_283 = %q_271, %q_284 = %q_272, %q_285 = %q_274) -> (!qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit) {
+              %q_286 = qco.reset %q_284 : !qco.qubit
+              %q_287 = qco.rz(%cst_0) %q_286 : !qco.qubit
+              %q_288 = qco.rx(%cst_2) %q_287 : !qco.qubit
+              %q_289 = qco.rz(%cst_0) %q_288 : !qco.qubit
+              %q_290 = qco.rz(%cst_2) %q_280 : !qco.qubit
+              %qubit0_out_291, %qubit1_out_292 = qco.rxx(%cst_1) %q_289, %q_290 : !qco.qubit, !qco.qubit
+              %q_293 = qco.rz(%cst_1) %qubit1_out_292 : !qco.qubit
+              %q_294 = qco.rx(%cst) %q_293 : !qco.qubit
+              %q_295 = qco.rx(%cst_1) %qubit0_out_291 : !qco.qubit
+              %q_296 = qco.rz(%cst_2) %q_281 : !qco.qubit
+              %qubit0_out_297, %qubit1_out_298 = qco.rxx(%cst_1) %q_295, %q_296 : !qco.qubit, !qco.qubit
+              %q_299 = qco.rx(%cst_0) %qubit1_out_298 : !qco.qubit
+              %q_300 = qco.rx(%cst_1) %qubit0_out_297 : !qco.qubit
+              %q_301 = qco.rz(%cst_2) %q_282 : !qco.qubit
+              %qubit0_out_302, %qubit1_out_303 = qco.rxx(%cst_1) %q_300, %q_301 : !qco.qubit, !qco.qubit
+              %q_304 = qco.rx(%cst_0) %qubit1_out_303 : !qco.qubit
+              %q_305 = qco.rx(%cst_1) %qubit0_out_302 : !qco.qubit
+              %q_306 = qco.rz(%cst_2) %q_283 : !qco.qubit
+              %qubit0_out_307, %qubit1_out_308 = qco.rxx(%cst_1) %q_305, %q_306 : !qco.qubit, !qco.qubit
+              %q_309 = qco.rx(%cst_0) %qubit1_out_308 : !qco.qubit
+              %q_310 = qco.rx(%cst_0) %qubit0_out_307 : !qco.qubit
+              %q_311, %b_312 = qco.measure %q_310 : !qco.qubit
+              cbit.store %b_312, %full[%c0] : !cbit.reg<6>
+              %q_313 = qco.reset %q_311 : !qco.qubit
+              %q_314 = qco.rz(%cst_0) %q_313 : !qco.qubit
+              %q_315 = qco.rx(%cst_2) %q_314 : !qco.qubit
+              %q_316 = qco.rz(%cst_0) %q_315 : !qco.qubit
+              %q_317 = qco.rz(%cst_2) %q_278 : !qco.qubit
+              %qubit0_out_318, %qubit1_out_319 = qco.rxx(%cst_1) %q_316, %q_317 : !qco.qubit, !qco.qubit
+              %q_320 = qco.rz(%cst_1) %qubit1_out_319 : !qco.qubit
+              %q_321 = qco.rx(%cst) %q_320 : !qco.qubit
+              %q_322 = qco.rx(%cst_1) %qubit0_out_318 : !qco.qubit
+              %q_323 = qco.rz(%cst_2) %q_279 : !qco.qubit
+              %qubit0_out_324, %qubit1_out_325 = qco.rxx(%cst_1) %q_322, %q_323 : !qco.qubit, !qco.qubit
+              %q_326 = qco.rx(%cst_0) %qubit1_out_325 : !qco.qubit
+              %q_327 = qco.rx(%cst_1) %qubit0_out_324 : !qco.qubit
+              %qubit0_out_328, %qubit1_out_329 = qco.rxx(%cst_1) %q_327, %q_304 : !qco.qubit, !qco.qubit
+              %q_330 = qco.rz(%cst_1) %qubit1_out_329 : !qco.qubit
+              %q_331 = qco.rx(%cst) %q_330 : !qco.qubit
+              %q_332 = qco.rx(%cst_1) %qubit0_out_328 : !qco.qubit
+              %qubit0_out_333, %qubit1_out_334 = qco.rxx(%cst_1) %q_332, %q_309 : !qco.qubit, !qco.qubit
+              %q_335 = qco.rx(%cst_0) %qubit1_out_334 : !qco.qubit
+              %q_336 = qco.rx(%cst_0) %qubit0_out_333 : !qco.qubit
+              %q_337, %b_338 = qco.measure %q_336 : !qco.qubit
+              cbit.store %b_338, %full[%c1] : !cbit.reg<6>
+              %q_339 = qco.reset %q_337 : !qco.qubit
+              %q_340 = qco.rz(%cst_0) %q_339 : !qco.qubit
+              %q_341 = qco.rx(%cst_2) %q_340 : !qco.qubit
+              %q_342 = qco.rz(%cst_0) %q_341 : !qco.qubit
+              %q_343 = qco.rz(%cst_2) %q_277 : !qco.qubit
+              %qubit0_out_344, %qubit1_out_345 = qco.rxx(%cst_1) %q_342, %q_343 : !qco.qubit, !qco.qubit
+              %q_346 = qco.rz(%cst_1) %qubit1_out_345 : !qco.qubit
+              %q_347 = qco.rx(%cst) %q_346 : !qco.qubit
+              %q_348 = qco.rx(%cst_1) %qubit0_out_344 : !qco.qubit
+              %qubit0_out_349, %qubit1_out_350 = qco.rxx(%cst_1) %q_348, %q_326 : !qco.qubit, !qco.qubit
+              %q_351 = qco.rz(%cst_1) %qubit1_out_350 : !qco.qubit
+              %q_352 = qco.rx(%cst) %q_351 : !qco.qubit
+              %q_353 = qco.rx(%cst_1) %qubit0_out_349 : !qco.qubit
+              %qubit0_out_354, %qubit1_out_355 = qco.rxx(%cst_1) %q_353, %q_299 : !qco.qubit, !qco.qubit
+              %q_356 = qco.rz(%cst_1) %qubit1_out_355 : !qco.qubit
+              %q_357 = qco.rx(%cst) %q_356 : !qco.qubit
+              %q_358 = qco.rx(%cst_1) %qubit0_out_354 : !qco.qubit
+              %qubit0_out_359, %qubit1_out_360 = qco.rxx(%cst_1) %q_358, %q_335 : !qco.qubit, !qco.qubit
+              %q_361 = qco.rz(%cst_1) %qubit1_out_360 : !qco.qubit
+              %q_362 = qco.rx(%cst) %q_361 : !qco.qubit
+              %q_363 = qco.rx(%cst_0) %qubit0_out_359 : !qco.qubit
+              %q_364, %b_365 = qco.measure %q_363 : !qco.qubit
+              cbit.store %b_365, %full[%c2] : !cbit.reg<6>
+              %q_366 = qco.reset %q_364 : !qco.qubit
+              %q_367 = qco.rz(%cst_2) %q_366 : !qco.qubit
+              %qubit0_out_368, %qubit1_out_369 = qco.rxx(%cst_1) %q_294, %q_367 : !qco.qubit, !qco.qubit
+              %q_370 = qco.rx(%cst_0) %qubit1_out_369 : !qco.qubit
+              %q_371 = qco.rz(%cst_1) %qubit0_out_368 : !qco.qubit
+              %q_372 = qco.rx(%cst_1) %q_371 : !qco.qubit
+              %qubit0_out_373, %qubit1_out_374 = qco.rxx(%cst_1) %q_357, %q_370 : !qco.qubit, !qco.qubit
+              %q_375 = qco.rx(%cst_0) %qubit1_out_374 : !qco.qubit
+              %q_376 = qco.rx(%cst_1) %qubit0_out_373 : !qco.qubit
+              %qubit0_out_377, %qubit1_out_378 = qco.rxx(%cst_1) %q_331, %q_375 : !qco.qubit, !qco.qubit
+              %q_379 = qco.rx(%cst_0) %qubit1_out_378 : !qco.qubit
+              %q_380 = qco.rx(%cst_1) %qubit0_out_377 : !qco.qubit
+              %qubit0_out_381, %qubit1_out_382 = qco.rxx(%cst_1) %q_362, %q_379 : !qco.qubit, !qco.qubit
+              %q_383 = qco.rx(%cst_0) %qubit1_out_382 : !qco.qubit
+              %q_384 = qco.rz(%cst_2) %q_383 : !qco.qubit
+              %q_385 = qco.rx(%cst_1) %qubit0_out_381 : !qco.qubit
+              %q_386, %b_387 = qco.measure %q_384 : !qco.qubit
+              cbit.store %b_387, %full[%c3] : !cbit.reg<6>
+              %q_388 = qco.reset %q_386 : !qco.qubit
+              %q_389 = qco.rz(%cst_2) %q_388 : !qco.qubit
+              %qubit0_out_390, %qubit1_out_391 = qco.rxx(%cst_1) %q_321, %q_389 : !qco.qubit, !qco.qubit
+              %q_392 = qco.rx(%cst_0) %qubit1_out_391 : !qco.qubit
+              %q_393 = qco.rz(%cst_1) %qubit0_out_390 : !qco.qubit
+              %q_394 = qco.rx(%cst_1) %q_393 : !qco.qubit
+              %qubit0_out_395, %qubit1_out_396 = qco.rxx(%cst_1) %q_352, %q_392 : !qco.qubit, !qco.qubit
+              %q_397 = qco.rx(%cst_0) %qubit1_out_396 : !qco.qubit
+              %q_398 = qco.rx(%cst_1) %qubit0_out_395 : !qco.qubit
+              %qubit0_out_399, %qubit1_out_400 = qco.rxx(%cst_1) %q_380, %q_397 : !qco.qubit, !qco.qubit
+              %q_401 = qco.rx(%cst_0) %qubit1_out_400 : !qco.qubit
+              %q_402 = qco.rz(%cst_1) %qubit0_out_399 : !qco.qubit
+              %q_403 = qco.rx(%cst_1) %q_402 : !qco.qubit
+              %qubit0_out_404, %qubit1_out_405 = qco.rxx(%cst_1) %q_385, %q_401 : !qco.qubit, !qco.qubit
+              %q_406 = qco.rx(%cst_0) %qubit1_out_405 : !qco.qubit
+              %q_407 = qco.rz(%cst_2) %q_406 : !qco.qubit
+              %q_408 = qco.rx(%cst_1) %qubit0_out_404 : !qco.qubit
+              %q_409, %b_410 = qco.measure %q_407 : !qco.qubit
+              cbit.store %b_410, %full[%c4] : !cbit.reg<6>
+              %q_411 = qco.reset %q_409 : !qco.qubit
+              %q_412 = qco.rz(%cst_2) %q_411 : !qco.qubit
+              %qubit0_out_413, %qubit1_out_414 = qco.rxx(%cst_1) %q_347, %q_412 : !qco.qubit, !qco.qubit
+              %q_415 = qco.rx(%cst_0) %qubit1_out_414 : !qco.qubit
+              %q_416 = qco.rz(%cst_1) %qubit0_out_413 : !qco.qubit
+              %q_417 = qco.rx(%cst_1) %q_416 : !qco.qubit
+              %qubit0_out_418, %qubit1_out_419 = qco.rxx(%cst_1) %q_398, %q_415 : !qco.qubit, !qco.qubit
+              %q_420 = qco.rx(%cst_0) %qubit1_out_419 : !qco.qubit
+              %q_421 = qco.rz(%cst_1) %qubit0_out_418 : !qco.qubit
+              %q_422 = qco.rx(%cst_1) %q_421 : !qco.qubit
+              %qubit0_out_423, %qubit1_out_424 = qco.rxx(%cst_1) %q_376, %q_420 : !qco.qubit, !qco.qubit
+              %q_425 = qco.rx(%cst_0) %qubit1_out_424 : !qco.qubit
+              %q_426 = qco.rz(%cst_1) %qubit0_out_423 : !qco.qubit
+              %q_427 = qco.rx(%cst_1) %q_426 : !qco.qubit
+              %qubit0_out_428, %qubit1_out_429 = qco.rxx(%cst_1) %q_408, %q_425 : !qco.qubit, !qco.qubit
+              %q_430 = qco.rx(%cst_0) %qubit1_out_429 : !qco.qubit
+              %q_431 = qco.rz(%cst_2) %q_430 : !qco.qubit
+              %q_432 = qco.rz(%cst_1) %qubit0_out_428 : !qco.qubit
+              %q_433 = qco.rx(%cst_1) %q_432 : !qco.qubit
+              %q_434, %b_435 = qco.measure %q_431 : !qco.qubit
+              cbit.store %b_435, %full[%c5] : !cbit.reg<6>
+              qco.yield %q_417, %q_394, %q_422, %q_372, %q_427, %q_403, %q_433, %q_434, %q_285 : !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit
+            } else args(%q_277 = %q_216, %q_278 = %q_238, %q_279 = %q_250, %q_280 = %q_219, %q_281 = %q_220, %q_282 = %q_258, %q_283 = %q_271, %q_284 = %q_272, %q_285 = %q_274) {
+              %q_286 = qco.reset %q_284 : !qco.qubit
+              %q_287 = qco.reset %q_285 : !qco.qubit
+              %q_288 = qco.rz(%cst_0) %q_287 : !qco.qubit
+              %q_289 = qco.rx(%cst_2) %q_288 : !qco.qubit
+              %q_290 = qco.rz(%cst_0) %q_289 : !qco.qubit
+              %q_291 = qco.rz(%cst_2) %q_286 : !qco.qubit
+              %q_292 = qco.rz(%cst_1) %q_277 : !qco.qubit
+              %q_293 = qco.rx(%cst_0) %q_292 : !qco.qubit
+              %q_294 = qco.rz(%cst_0) %q_293 : !qco.qubit
+              %qubit0_out_295, %qubit1_out_296 = qco.rxx(%cst_1) %q_294, %q_291 : !qco.qubit, !qco.qubit
+              %q_297 = qco.rx(%cst_0) %qubit1_out_296 : !qco.qubit
+              %q_298 = qco.rz(%cst_1) %qubit0_out_295 : !qco.qubit
+              %q_299 = qco.rx(%cst_1) %q_298 : !qco.qubit
+              %qubit0_out_300, %qubit1_out_301 = qco.rxx(%cst_1) %q_290, %q_297 : !qco.qubit, !qco.qubit
+              %q_302 = qco.rx(%cst_0) %qubit1_out_301 : !qco.qubit
+              %q_303 = qco.rx(%cst_1) %qubit0_out_300 : !qco.qubit
+              %q_304 = qco.rz(%cst_1) %q_279 : !qco.qubit
+              %q_305 = qco.rx(%cst_0) %q_304 : !qco.qubit
+              %q_306 = qco.rz(%cst_0) %q_305 : !qco.qubit
+              %qubit0_out_307, %qubit1_out_308 = qco.rxx(%cst_1) %q_306, %q_302 : !qco.qubit, !qco.qubit
+              %q_309 = qco.rx(%cst_0) %qubit1_out_308 : !qco.qubit
+              %q_310 = qco.rz(%cst_1) %qubit0_out_307 : !qco.qubit
+              %q_311 = qco.rx(%cst_1) %q_310 : !qco.qubit
+              %q_312 = qco.rz(%cst_1) %q_281 : !qco.qubit
+              %q_313 = qco.rx(%cst_0) %q_312 : !qco.qubit
+              %q_314 = qco.rz(%cst_0) %q_313 : !qco.qubit
+              %qubit0_out_315, %qubit1_out_316 = qco.rxx(%cst_1) %q_314, %q_309 : !qco.qubit, !qco.qubit
+              %q_317 = qco.rx(%cst_0) %qubit1_out_316 : !qco.qubit
+              %q_318 = qco.rz(%cst_1) %qubit0_out_315 : !qco.qubit
+              %q_319 = qco.rx(%cst_1) %q_318 : !qco.qubit
+              %qubit0_out_320, %qubit1_out_321 = qco.rxx(%cst_1) %q_303, %q_317 : !qco.qubit, !qco.qubit
+              %q_322 = qco.rx(%cst_0) %qubit1_out_321 : !qco.qubit
+              %q_323 = qco.rx(%cst_0) %qubit0_out_320 : !qco.qubit
+              %q_324 = qco.rz(%cst_1) %q_283 : !qco.qubit
+              %q_325 = qco.rx(%cst_0) %q_324 : !qco.qubit
+              %q_326 = qco.rz(%cst_0) %q_325 : !qco.qubit
+              %qubit0_out_327, %qubit1_out_328 = qco.rxx(%cst_1) %q_326, %q_322 : !qco.qubit, !qco.qubit
+              %q_329 = qco.rx(%cst_0) %qubit1_out_328 : !qco.qubit
+              %q_330 = qco.rz(%cst_2) %q_329 : !qco.qubit
+              %q_331 = qco.rz(%cst_1) %qubit0_out_327 : !qco.qubit
+              %q_332 = qco.rx(%cst_1) %q_331 : !qco.qubit
+              %q_333, %b_334 = qco.measure %q_330 : !qco.qubit
+              cbit.store %b_334, %syn[%c5] : !cbit.reg<6>
+              %q_335, %b_336 = qco.measure %q_323 : !qco.qubit
+              cbit.store %b_336, %flg[%c5] : !cbit.reg<6>
+              %5 = scf.if %b_334 -> (i1) {
+                scf.yield %true : i1
+              } else {
+                %b_338 = cbit.load %flg[%c5] : !cbit.reg<6>
+                scf.yield %b_338 : i1
+              }
+              %linearResults_337:8 = qco.if %5 args(%q_338 = %q_299, %q_339 = %q_278, %q_340 = %q_311, %q_341 = %q_280, %q_342 = %q_319, %q_343 = %q_282, %q_344 = %q_332, %q_345 = %q_333) -> (!qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit) {
+                %q_346 = qco.reset %q_345 : !qco.qubit
+                %q_347 = qco.rz(%cst_0) %q_346 : !qco.qubit
+                %q_348 = qco.rx(%cst_2) %q_347 : !qco.qubit
+                %q_349 = qco.rz(%cst_0) %q_348 : !qco.qubit
+                %q_350 = qco.rz(%cst_2) %q_341 : !qco.qubit
+                %qubit0_out_351, %qubit1_out_352 = qco.rxx(%cst_1) %q_349, %q_350 : !qco.qubit, !qco.qubit
+                %q_353 = qco.rz(%cst_1) %qubit1_out_352 : !qco.qubit
+                %q_354 = qco.rx(%cst) %q_353 : !qco.qubit
+                %q_355 = qco.rx(%cst_1) %qubit0_out_351 : !qco.qubit
+                %q_356 = qco.rz(%cst_2) %q_342 : !qco.qubit
+                %qubit0_out_357, %qubit1_out_358 = qco.rxx(%cst_1) %q_355, %q_356 : !qco.qubit, !qco.qubit
+                %q_359 = qco.rx(%cst_0) %qubit1_out_358 : !qco.qubit
+                %q_360 = qco.rx(%cst_1) %qubit0_out_357 : !qco.qubit
+                %q_361 = qco.rz(%cst_2) %q_343 : !qco.qubit
+                %qubit0_out_362, %qubit1_out_363 = qco.rxx(%cst_1) %q_360, %q_361 : !qco.qubit, !qco.qubit
+                %q_364 = qco.rx(%cst_0) %qubit1_out_363 : !qco.qubit
+                %q_365 = qco.rx(%cst_1) %qubit0_out_362 : !qco.qubit
+                %q_366 = qco.rz(%cst_2) %q_344 : !qco.qubit
+                %qubit0_out_367, %qubit1_out_368 = qco.rxx(%cst_1) %q_365, %q_366 : !qco.qubit, !qco.qubit
+                %q_369 = qco.rx(%cst_0) %qubit1_out_368 : !qco.qubit
+                %q_370 = qco.rx(%cst_0) %qubit0_out_367 : !qco.qubit
+                %q_371, %b_372 = qco.measure %q_370 : !qco.qubit
+                cbit.store %b_372, %full[%c0] : !cbit.reg<6>
+                %q_373 = qco.reset %q_371 : !qco.qubit
+                %q_374 = qco.rz(%cst_0) %q_373 : !qco.qubit
+                %q_375 = qco.rx(%cst_2) %q_374 : !qco.qubit
+                %q_376 = qco.rz(%cst_0) %q_375 : !qco.qubit
+                %q_377 = qco.rz(%cst_2) %q_339 : !qco.qubit
+                %qubit0_out_378, %qubit1_out_379 = qco.rxx(%cst_1) %q_376, %q_377 : !qco.qubit, !qco.qubit
+                %q_380 = qco.rz(%cst_1) %qubit1_out_379 : !qco.qubit
+                %q_381 = qco.rx(%cst) %q_380 : !qco.qubit
+                %q_382 = qco.rx(%cst_1) %qubit0_out_378 : !qco.qubit
+                %q_383 = qco.rz(%cst_2) %q_340 : !qco.qubit
+                %qubit0_out_384, %qubit1_out_385 = qco.rxx(%cst_1) %q_382, %q_383 : !qco.qubit, !qco.qubit
+                %q_386 = qco.rx(%cst_0) %qubit1_out_385 : !qco.qubit
+                %q_387 = qco.rx(%cst_1) %qubit0_out_384 : !qco.qubit
+                %qubit0_out_388, %qubit1_out_389 = qco.rxx(%cst_1) %q_387, %q_364 : !qco.qubit, !qco.qubit
+                %q_390 = qco.rz(%cst_1) %qubit1_out_389 : !qco.qubit
+                %q_391 = qco.rx(%cst) %q_390 : !qco.qubit
+                %q_392 = qco.rx(%cst_1) %qubit0_out_388 : !qco.qubit
+                %qubit0_out_393, %qubit1_out_394 = qco.rxx(%cst_1) %q_392, %q_369 : !qco.qubit, !qco.qubit
+                %q_395 = qco.rx(%cst_0) %qubit1_out_394 : !qco.qubit
+                %q_396 = qco.rx(%cst_0) %qubit0_out_393 : !qco.qubit
+                %q_397, %b_398 = qco.measure %q_396 : !qco.qubit
+                cbit.store %b_398, %full[%c1] : !cbit.reg<6>
+                %q_399 = qco.reset %q_397 : !qco.qubit
+                %q_400 = qco.rz(%cst_0) %q_399 : !qco.qubit
+                %q_401 = qco.rx(%cst_2) %q_400 : !qco.qubit
+                %q_402 = qco.rz(%cst_0) %q_401 : !qco.qubit
+                %q_403 = qco.rz(%cst_2) %q_338 : !qco.qubit
+                %qubit0_out_404, %qubit1_out_405 = qco.rxx(%cst_1) %q_402, %q_403 : !qco.qubit, !qco.qubit
+                %q_406 = qco.rz(%cst_1) %qubit1_out_405 : !qco.qubit
+                %q_407 = qco.rx(%cst) %q_406 : !qco.qubit
+                %q_408 = qco.rx(%cst_1) %qubit0_out_404 : !qco.qubit
+                %qubit0_out_409, %qubit1_out_410 = qco.rxx(%cst_1) %q_408, %q_386 : !qco.qubit, !qco.qubit
+                %q_411 = qco.rz(%cst_1) %qubit1_out_410 : !qco.qubit
+                %q_412 = qco.rx(%cst) %q_411 : !qco.qubit
+                %q_413 = qco.rx(%cst_1) %qubit0_out_409 : !qco.qubit
+                %qubit0_out_414, %qubit1_out_415 = qco.rxx(%cst_1) %q_413, %q_359 : !qco.qubit, !qco.qubit
+                %q_416 = qco.rz(%cst_1) %qubit1_out_415 : !qco.qubit
+                %q_417 = qco.rx(%cst) %q_416 : !qco.qubit
+                %q_418 = qco.rx(%cst_1) %qubit0_out_414 : !qco.qubit
+                %qubit0_out_419, %qubit1_out_420 = qco.rxx(%cst_1) %q_418, %q_395 : !qco.qubit, !qco.qubit
+                %q_421 = qco.rz(%cst_1) %qubit1_out_420 : !qco.qubit
+                %q_422 = qco.rx(%cst) %q_421 : !qco.qubit
+                %q_423 = qco.rx(%cst_0) %qubit0_out_419 : !qco.qubit
+                %q_424, %b_425 = qco.measure %q_423 : !qco.qubit
+                cbit.store %b_425, %full[%c2] : !cbit.reg<6>
+                %q_426 = qco.reset %q_424 : !qco.qubit
+                %q_427 = qco.rz(%cst_2) %q_426 : !qco.qubit
+                %qubit0_out_428, %qubit1_out_429 = qco.rxx(%cst_1) %q_354, %q_427 : !qco.qubit, !qco.qubit
+                %q_430 = qco.rx(%cst_0) %qubit1_out_429 : !qco.qubit
+                %q_431 = qco.rz(%cst_1) %qubit0_out_428 : !qco.qubit
+                %q_432 = qco.rx(%cst_1) %q_431 : !qco.qubit
+                %qubit0_out_433, %qubit1_out_434 = qco.rxx(%cst_1) %q_417, %q_430 : !qco.qubit, !qco.qubit
+                %q_435 = qco.rx(%cst_0) %qubit1_out_434 : !qco.qubit
+                %q_436 = qco.rx(%cst_1) %qubit0_out_433 : !qco.qubit
+                %qubit0_out_437, %qubit1_out_438 = qco.rxx(%cst_1) %q_391, %q_435 : !qco.qubit, !qco.qubit
+                %q_439 = qco.rx(%cst_0) %qubit1_out_438 : !qco.qubit
+                %q_440 = qco.rx(%cst_1) %qubit0_out_437 : !qco.qubit
+                %qubit0_out_441, %qubit1_out_442 = qco.rxx(%cst_1) %q_422, %q_439 : !qco.qubit, !qco.qubit
+                %q_443 = qco.rx(%cst_0) %qubit1_out_442 : !qco.qubit
+                %q_444 = qco.rz(%cst_2) %q_443 : !qco.qubit
+                %q_445 = qco.rx(%cst_1) %qubit0_out_441 : !qco.qubit
+                %q_446, %b_447 = qco.measure %q_444 : !qco.qubit
+                cbit.store %b_447, %full[%c3] : !cbit.reg<6>
+                %q_448 = qco.reset %q_446 : !qco.qubit
+                %q_449 = qco.rz(%cst_2) %q_448 : !qco.qubit
+                %qubit0_out_450, %qubit1_out_451 = qco.rxx(%cst_1) %q_381, %q_449 : !qco.qubit, !qco.qubit
+                %q_452 = qco.rx(%cst_0) %qubit1_out_451 : !qco.qubit
+                %q_453 = qco.rz(%cst_1) %qubit0_out_450 : !qco.qubit
+                %q_454 = qco.rx(%cst_1) %q_453 : !qco.qubit
+                %qubit0_out_455, %qubit1_out_456 = qco.rxx(%cst_1) %q_412, %q_452 : !qco.qubit, !qco.qubit
+                %q_457 = qco.rx(%cst_0) %qubit1_out_456 : !qco.qubit
+                %q_458 = qco.rx(%cst_1) %qubit0_out_455 : !qco.qubit
+                %qubit0_out_459, %qubit1_out_460 = qco.rxx(%cst_1) %q_440, %q_457 : !qco.qubit, !qco.qubit
+                %q_461 = qco.rx(%cst_0) %qubit1_out_460 : !qco.qubit
+                %q_462 = qco.rz(%cst_1) %qubit0_out_459 : !qco.qubit
+                %q_463 = qco.rx(%cst_1) %q_462 : !qco.qubit
+                %qubit0_out_464, %qubit1_out_465 = qco.rxx(%cst_1) %q_445, %q_461 : !qco.qubit, !qco.qubit
+                %q_466 = qco.rx(%cst_0) %qubit1_out_465 : !qco.qubit
+                %q_467 = qco.rz(%cst_2) %q_466 : !qco.qubit
+                %q_468 = qco.rx(%cst_1) %qubit0_out_464 : !qco.qubit
+                %q_469, %b_470 = qco.measure %q_467 : !qco.qubit
+                cbit.store %b_470, %full[%c4] : !cbit.reg<6>
+                %q_471 = qco.reset %q_469 : !qco.qubit
+                %q_472 = qco.rz(%cst_2) %q_471 : !qco.qubit
+                %qubit0_out_473, %qubit1_out_474 = qco.rxx(%cst_1) %q_407, %q_472 : !qco.qubit, !qco.qubit
+                %q_475 = qco.rx(%cst_0) %qubit1_out_474 : !qco.qubit
+                %q_476 = qco.rz(%cst_1) %qubit0_out_473 : !qco.qubit
+                %q_477 = qco.rx(%cst_1) %q_476 : !qco.qubit
+                %qubit0_out_478, %qubit1_out_479 = qco.rxx(%cst_1) %q_458, %q_475 : !qco.qubit, !qco.qubit
+                %q_480 = qco.rx(%cst_0) %qubit1_out_479 : !qco.qubit
+                %q_481 = qco.rz(%cst_1) %qubit0_out_478 : !qco.qubit
+                %q_482 = qco.rx(%cst_1) %q_481 : !qco.qubit
+                %qubit0_out_483, %qubit1_out_484 = qco.rxx(%cst_1) %q_436, %q_480 : !qco.qubit, !qco.qubit
+                %q_485 = qco.rx(%cst_0) %qubit1_out_484 : !qco.qubit
+                %q_486 = qco.rz(%cst_1) %qubit0_out_483 : !qco.qubit
+                %q_487 = qco.rx(%cst_1) %q_486 : !qco.qubit
+                %qubit0_out_488, %qubit1_out_489 = qco.rxx(%cst_1) %q_468, %q_485 : !qco.qubit, !qco.qubit
+                %q_490 = qco.rx(%cst_0) %qubit1_out_489 : !qco.qubit
+                %q_491 = qco.rz(%cst_2) %q_490 : !qco.qubit
+                %q_492 = qco.rz(%cst_1) %qubit0_out_488 : !qco.qubit
+                %q_493 = qco.rx(%cst_1) %q_492 : !qco.qubit
+                %q_494, %b_495 = qco.measure %q_491 : !qco.qubit
+                cbit.store %b_495, %full[%c5] : !cbit.reg<6>
+                qco.yield %q_477, %q_454, %q_482, %q_432, %q_487, %q_463, %q_493, %q_494 : !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit
+              } else args(%q_338 = %q_299, %q_339 = %q_278, %q_340 = %q_311, %q_341 = %q_280, %q_342 = %q_319, %q_343 = %q_282, %q_344 = %q_332, %q_345 = %q_333) {
+                qco.yield %q_338, %q_339, %q_340, %q_341, %q_342, %q_343, %q_344, %q_345 : !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit
+              }
+              qco.yield %linearResults_337#0, %linearResults_337#1, %linearResults_337#2, %linearResults_337#3, %linearResults_337#4, %linearResults_337#5, %linearResults_337#6, %linearResults_337#7, %q_335 : !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit
+            }
+            qco.yield %linearResults_276#0, %linearResults_276#1, %linearResults_276#2, %linearResults_276#3, %linearResults_276#4, %linearResults_276#5, %linearResults_276#6, %linearResults_276#7, %linearResults_276#8 : !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit
+          }
+          qco.yield %linearResults_215#0, %linearResults_215#1, %linearResults_215#2, %linearResults_215#3, %linearResults_215#4, %linearResults_215#5, %linearResults_215#6, %linearResults_215#7, %linearResults_215#8 : !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit
+        }
+        qco.yield %linearResults_154#0, %linearResults_154#1, %linearResults_154#2, %linearResults_154#3, %linearResults_154#4, %linearResults_154#5, %linearResults_154#6, %linearResults_154#7, %linearResults_154#8 : !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit
+      }
+      qco.yield %linearResults_101#0, %linearResults_101#1, %linearResults_101#2, %linearResults_101#3, %linearResults_101#4, %linearResults_101#5, %linearResults_101#6, %linearResults_101#7, %linearResults_101#8 : !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit, !qco.qubit
+    }
+    qco.sink %linearResults#0 : !qco.qubit
+    qco.sink %linearResults#1 : !qco.qubit
+    qco.sink %linearResults#2 : !qco.qubit
+    qco.sink %linearResults#3 : !qco.qubit
+    qco.sink %linearResults#4 : !qco.qubit
+    qco.sink %linearResults#5 : !qco.qubit
+    qco.sink %linearResults#6 : !qco.qubit
+    qco.sink %linearResults#7 : !qco.qubit
+    qco.sink %linearResults#8 : !qco.qubit
+    return %syn, %flg, %full : !cbit.reg<6>, !cbit.reg<6>, !cbit.reg<6>
+  }
+}

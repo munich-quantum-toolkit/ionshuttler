@@ -9,9 +9,55 @@
 
 from __future__ import annotations
 
+import pytest
+
 from mqt.ionshuttler.core.gates import Rx
-from mqt.ionshuttler.grid import GridArchitecture, Junction, JunctionMove, Segment
-from mqt.ionshuttler.grid.routing import clear_blocked_path, junction_moves, route_gate_bfs
+from mqt.ionshuttler.core.schedule import ScheduledAction
+from mqt.ionshuttler.grid import (
+    Cycle,
+    GridArchitecture,
+    Junction,
+    JunctionMove,
+    Segment,
+    rectangular_grid,
+    square_grid,
+)
+from mqt.ionshuttler.grid.routing import (
+    clear_blocked_path,
+    junction_moves,
+    movement_candidates,
+    next_segments_toward,
+    route_gate_bfs,
+    route_to_placement,
+)
+
+
+@pytest.mark.parametrize("capacity", [2, 3])
+def test_cycle_candidates_move_whole_crystals(capacity: int) -> None:
+    """Construct cycles whose junction moves contain every ion in a crystal."""
+    segments = tuple(Segment(name, capacity=capacity) for name in ("a", "b", "c"))
+    a, b, c = segments
+    architecture = GridArchitecture(
+        segments,
+        (
+            Junction("ab", (a.end, b.start)),
+            Junction("bc", (b.end, c.start)),
+            Junction("ca", (c.end, a.start)),
+        ),
+    )
+    state = architecture.initial_state({
+        segment.segment_id: tuple(range(index * capacity, (index + 1) * capacity))
+        for index, segment in enumerate(segments)
+    })
+
+    candidates, _explored = movement_candidates(architecture, state, max_cycle_work=10_000)
+
+    assert any(
+        isinstance(candidate, Cycle)
+        and {move.source.segment_id for move in candidate.moves} == {"a", "b", "c"}
+        and all(len(move.ions) == capacity for move in candidate.moves)
+        for candidate in candidates
+    )
 
 
 def _blocked_exit_architecture(*, with_side: bool = True, side_capacity: int = 1) -> GridArchitecture:
@@ -152,3 +198,61 @@ def test_route_gate_bfs_counts_bounded_cycle_search_work() -> None:
 
     assert route is None
     assert explored == 3
+
+
+def test_next_segments_toward_returns_all_equal_shortest_choices() -> None:
+    """Expose each shortest next segment so that the scheduler can prefer free capacity."""
+    architecture = rectangular_grid(4, 4)
+
+    candidates = next_segments_toward(architecture, "v:2:1", "v:2:0")
+
+    assert candidates == ("h:2:0", "h:3:0")
+
+
+def test_route_to_placement_reaches_an_exact_placement_of_eighteen_ions() -> None:
+    """Find a route on a 4x4 Grid for a placement that a single cycle search within the bound missed."""
+    architecture = square_grid(4, processing_zone_segments=("h:1:0", "h:1:2", "h:2:0", "h:2:2"), segment_capacity=2)
+    start = architecture.initial_state({
+        "v:2:0": [0],
+        "h:0:2": [1],
+        "h:1:2": [2, 9],
+        "h:3:1": [3, 15],
+        "v:2:3": [4, 12],
+        "v:1:3": [5],
+        "v:1:2": [6],
+        "h:3:2": [7],
+        "h:2:2": [8],
+        "h:1:1": [10],
+        "v:0:2": [11],
+        "h:3:0": [13],
+        "v:1:1": [14],
+        "h:0:1": [16],
+        "v:0:1": [17],
+    })
+    target = architecture.initial_state({
+        "h:1:0": [0],
+        "h:2:0": [1],
+        "h:0:2": [2],
+        "v:1:1": [3],
+        "h:0:0": [4, 10],
+        "h:3:1": [5],
+        "v:2:1": [6],
+        "v:1:2": [7],
+        "v:1:0": [8, 14],
+        "v:2:0": [9],
+        "v:0:0": [11],
+        "h:2:1": [12],
+        "v:0:3": [13],
+        "h:3:2": [15],
+        "v:2:2": [16],
+        "v:1:3": [17],
+    })
+
+    route, _explored = route_to_placement(architecture, start, max_states=10_000, target_state=target)
+
+    assert route is not None
+    state = start
+    for action in route:
+        timed = ScheduledAction(0, action, state.time, architecture.action_duration(action))
+        state = architecture.apply_layer(state, (timed,)).at_time(timed.end_time)
+    assert state.occupancy == target.occupancy

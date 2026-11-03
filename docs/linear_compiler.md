@@ -58,9 +58,21 @@ result = LinearCompiler(architecture).compile(
 ```
 
 The positions must be distinct, lie within the architecture, and match the
-number of circuit qubits. See also the
-{doc}`hardware model overview <hardware_models>` for further details on the
-hardware abstraction.
+number of circuit qubits. Pass `target_placement` in the same form to move the
+ions to given sites after the last gate. The ions take the route with the fewest
+adjacent exchanges, and each move starts as soon as its ions and its target site
+are free:
+
+```{code-cell} ipython3
+result = LinearCompiler(architecture).compile(
+    circuit,
+    initial_placement=[0, 4],
+    target_placement=[4, 0],
+)
+```
+
+See also the {doc}`hardware model overview <hardware_models>` for further
+details on the hardware abstraction.
 
 | Compile option      | User-visible effect                                                                                                               |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
@@ -99,13 +111,13 @@ an occasional small slowdown. Advanced users can tune the partitioner through
 
 Strings are always treated as QASM text. Use `Path("circuit.qasm")` for a file.
 The default gate set is `rx`, `ry`, `rz`, and `rzz`, a common trapped-ion gate
-set. The implemented `rxx` and `ryy` gates may be enabled through the
-architecture's `supported_action_types`. Rotation parameters must be numeric
-when compilation begins. Barriers and final measurements do not become scheduled
-hardware operations. A barrier orders gates: a gate after the barrier on one of
-its qubits starts only after every earlier gate on the barrier's qubits has
-finished. Unsupported or malformed circuits raise an exception before schedule
-search starts.
+set, together with measurement and reset. The implemented `rxx` and `ryy` gates
+may be enabled through the architecture's `supported_action_types`. Rotation
+parameters must be numeric when compilation begins. Barriers and final
+measurements do not become scheduled hardware operations. A barrier orders
+gates: a gate after the barrier on one of its qubits starts only after every
+earlier gate on the barrier's qubits has finished. Unsupported or malformed
+circuits raise an exception before schedule search starts.
 
 ## Describe the architecture
 
@@ -200,20 +212,21 @@ explicitly.
 
 The configuration type selects one of two scheduling strategies:
 
-| Configuration       | Method                                                                                                                           | Use it for                                              |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `SearchConfig`      | Search-based: explores schedules one gate, shuttle, or swap at a time. This is the default.                                      | Small circuits and reference schedules.                 |
-| `PermutationConfig` | Permutation-based: constructs complete target placements for groups of gates and routes directly between consecutive placements. | Large circuits where action-level search is too costly. |
+| Configuration       | Method                                                                                                                                                | Use it for                              |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `PermutationConfig` | Permutation-based: constructs complete target placements for groups of gates and routes directly between consecutive placements. This is the default. | Most circuits, including large ones.    |
+| `SearchConfig`      | Search-based: explores schedules one gate, shuttle, or swap at a time.                                                                                | Small circuits and reference schedules. |
 
 Both configuration types inherit these settings from
 {py:class}`~mqt.ionshuttler.linear.LinearCompilerConfig`:
 
-| Shared setting         | User-visible effect                                                                                                                                                                             |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `action_types`         | Operations that the compiler may use. `None` uses every operation supported by the architecture.                                                                                                |
-| `max_compile_time`     | Wall-clock budget in seconds for the complete compilation, including pre-partitioning. A finite value prevents unexpectedly long runs; `None` removes the time limit. Defaults to 1800 seconds. |
-| `pre_partition`        | Assigns gates to preferred processing zones. Search disables it by default; the permutation strategy requires it.                                                                               |
-| `pre_partition_config` | Optional fine-grained tabu settings used when pre-partitioning runs. `None` uses the partitioner's defaults.                                                                                    |
+| Shared setting         | User-visible effect                                                                                                                                                                                       |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `action_types`         | Operations that the compiler may use. `None` uses every operation supported by the architecture.                                                                                                          |
+| `dependency_mode`      | `DependencyMode.COMMUTATION_AWARE`, the default, lets commuting gates change order. `DependencyMode.CONSERVATIVE` keeps the dependencies from the circuit parser. The Grid compiler has the same setting. |
+| `max_compile_time`     | Wall-clock budget in seconds for the complete compilation, including pre-partitioning. A finite value prevents unexpectedly long runs; `None` removes the time limit. Defaults to 1800 seconds.           |
+| `pre_partition`        | Assigns gates to preferred processing zones. Search disables it by default; the permutation strategy requires it.                                                                                         |
+| `pre_partition_config` | Optional fine-grained tabu settings used when pre-partitioning runs. `None` uses the partitioner's defaults.                                                                                              |
 
 (linear-permutation-strategy)=
 

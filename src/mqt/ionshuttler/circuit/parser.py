@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 GateRecord = tuple[type[GateAction], tuple[float, ...], tuple[int, ...]]
 Barriers = dict[int, tuple[frozenset[int], ...]]
-CircuitInput = QuantumCircuit | str | Path
+CircuitInput = QuantumCircuit | str | Path | Circuit
 
 _GATE_PATTERN = re.compile(r"^([A-Za-z_]\w*)(?:\((.*)\))?\s+(.+);$")
 _QUBIT_OPERAND_PATTERN = re.compile(r"^q\[(\d+)\]$")
@@ -44,7 +44,8 @@ def parse_circuit(
     """Return the internal immutable form of a supported circuit.
 
     Strings are interpreted as QASM text, while :class:`pathlib.Path` inputs
-    are read as UTF-8 files. The parsed circuit always retains the real
+    are read as UTF-8 files. A :class:`Circuit` is returned unchanged after
+    its gate types are checked. The parsed circuit always retains the real
     dependency graph. A compiler can impose a serial scheduling policy without
     changing these circuit facts.
 
@@ -57,8 +58,16 @@ def parse_circuit(
 
     Raises:
         TypeError: If ``circuit`` has an unsupported type.
+        ValueError: If a :class:`Circuit` contains an unavailable gate type.
     """
     registry = _gate_type_registry(gate_types)
+    if isinstance(circuit, Circuit):
+        available = set(BUILTIN_GATE_TYPES if gate_types is None else gate_types)
+        for gate in circuit.gates:
+            if type(gate) not in available:
+                msg = f"circuit requires unavailable gate {type(gate).__name__!r}"
+                raise ValueError(msg)
+        return circuit
     if isinstance(circuit, Path):
         circuit = circuit.read_text(encoding="utf-8")
     if isinstance(circuit, QuantumCircuit):
@@ -66,7 +75,7 @@ def parse_circuit(
     elif isinstance(circuit, str):
         num_qubits, records, barriers = _records_from_qasm(circuit, registry)
     else:
-        msg = "circuit must be a QuantumCircuit, QASM string, or pathlib.Path"
+        msg = "circuit must be a Circuit, QuantumCircuit, QASM string, or pathlib.Path"
         raise TypeError(msg)
     return Circuit(
         num_ions=num_qubits,

@@ -40,8 +40,8 @@ def test_processing_zones_are_validated_and_normalized() -> None:
 
     assert architecture.processing_zones == {"pz_1": (2, 3, 4), "pz_2": (8, 9)}
     assert architecture.valid_two_qubit_site_pairs == ((2, 3), (2, 4), (3, 4), (8, 9))
-    assert architecture.get_processing_zone(3) == "pz_1"
-    assert architecture.get_processing_zone(7) is None
+    assert architecture.processing_zone_at(3) == "pz_1"
+    assert architecture.processing_zone_at(7) is None
 
 
 def test_ring_processing_zones_follow_one_connected_cyclic_run() -> None:
@@ -80,6 +80,8 @@ def test_architecture_owns_chain_and_ring_site_geometry() -> None:
     assert ring.distance(1, 4) == 2
     with pytest.raises(ValueError, match=r"site must be within \[0, 4\]"):
         ring.neighbors(5)
+    with pytest.raises(ValueError, match=r"site must be within \[0, 4\]"):
+        ring.are_adjacent(0, 5)
 
 
 @pytest.mark.parametrize(
@@ -113,7 +115,7 @@ def test_processing_zones_cannot_change_after_construction() -> None:
         stored_zones["other"] = (3,)
     assert architecture.processing_zones == {"pz": (0, 1)}
     assert architecture.valid_two_qubit_site_pairs == ((0, 1),)
-    assert architecture.get_processing_zone(3) is None
+    assert architecture.processing_zone_at(3) is None
 
 
 @pytest.mark.parametrize(
@@ -210,6 +212,8 @@ def test_architecture_round_trips_through_json() -> None:
         "gate.ry",
         "gate.rz",
         "gate.rzz",
+        "gate.measure",
+        "gate.reset",
         "gate.global",
     ]
     assert architecture.to_dict()["transport_timing"] == {"shuttle": 2, "swap": 4}
@@ -234,12 +238,15 @@ def test_ring_architecture_round_trips_through_json_and_pickle() -> None:
     assert restored_json.processing_zones == {"wrap": (5, 0, 1)}
 
 
-def test_default_architecture_keeps_the_chain_serialized_form() -> None:
-    """Keep the default chain metadata free of an explicit topology field."""
+def test_default_architecture_serializes_the_chain_topology() -> None:
+    """Write the default chain topology explicitly in the serialized form."""
     assert LinearArchitecture(num_sites=3).to_dict() == {
         "num_sites": 3,
+        "topology": "chain",
         "processing_zones": {"all_sites": [0, 1, 2]},
         "gate_timing": {
+            "measure": 1,
+            "reset": 1,
             "rx": 1,
             "rxx": 2,
             "ry": 1,
@@ -269,6 +276,16 @@ def test_architecture_round_trips_through_pickle() -> None:
     assert restored == architecture
     with pytest.raises(TypeError):
         restored_zones["C"] = (2,)
+
+
+def test_architectures_work_as_dictionary_keys() -> None:
+    """Find an equal architecture by key and keep different zones apart."""
+    architecture = LinearArchitecture(num_sites=5, processing_zones={"A": [0, 1]}, topology="ring")
+    other_zones = LinearArchitecture(num_sites=5, processing_zones={"A": [2, 3]}, topology="ring")
+    by_architecture = {architecture: "first", other_zones: "second"}
+
+    assert by_architecture[LinearArchitecture(num_sites=5, processing_zones={"A": [0, 1]}, topology="ring")] == "first"
+    assert by_architecture[other_zones] == "second"
 
 
 def test_architecture_rejects_unknown_serialized_fields() -> None:

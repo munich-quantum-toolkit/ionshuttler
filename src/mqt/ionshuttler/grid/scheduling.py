@@ -9,8 +9,10 @@
 
 from __future__ import annotations
 
+import operator
 from collections import defaultdict
 from dataclasses import dataclass
+from itertools import groupby
 from typing import TYPE_CHECKING
 
 from mqt.ionshuttler.core.actions import Action
@@ -22,9 +24,10 @@ from mqt.ionshuttler.grid.result import GridDiagnostics, GridStopReason
 from mqt.ionshuttler.grid.routing import (
     clear_blocked_path,
     junction_moves,
-    next_segment_toward,
+    next_segments_toward,
     route_gate_bfs,
     route_junction_crossing_greedy_cycle,
+    route_to_placement,
     routing_distance,
     select_greedy_target,
 )
@@ -53,6 +56,8 @@ def schedule_breadth_first(
     initial_state: GridMachineState,
     config: GridCompilerConfig,
     gate_to_segment_assignment: Mapping[int, str],
+    target_state: GridMachineState | None = None,
+    partial_target_by_ion: Mapping[int, str] | None = None,
 ) -> tuple[Schedule[Action, GridMachineState], GridDiagnostics]:
     """Schedule gates with a bounded shortest-route search.
 
@@ -162,6 +167,44 @@ def schedule_breadth_first(
             stalled = True
             break
 
+    gates_complete = len(completed) == len(circuit.gates)
+    if (
+        (target_state is not None or partial_target_by_ion is not None)
+        and gates_complete
+        and not _placement_reached(state, target_state, partial_target_by_ion)
+        and iterations < config.max_iterations
+    ):
+        iterations += 1
+        decision_time = state.time
+        state, target_layer, explored = _route_to_target(
+            architecture,
+            state,
+            config,
+            target_state,
+            partial_target_by_ion,
+            len(scheduled_actions),
+        )
+        explored_states += explored
+        scheduled_actions.extend(target_layer)
+        for item in target_layer:
+            movement_count, cycle_count = _count_transport(item.action, movement_count, cycle_count)
+        if planning_trace is not None:
+            planning_trace.append(
+                _planning_snapshot(
+                    iterations,
+                    decision_time,
+                    (),
+                    (),
+                    gate_to_target_segment={},
+                    moves=tuple(item.action for item in target_layer),
+                    idle_reason=None if target_layer else IdleReason.NO_ROUTE,
+                )
+            )
+        if not target_layer:
+            stalled = True
+
+    completed_objective = gates_complete and _placement_reached(state, target_state, partial_target_by_ion)
+
     return (
         Schedule(tuple(scheduled_actions), state.time, initial_state),
         GridDiagnostics(
@@ -170,7 +213,7 @@ def schedule_breadth_first(
             junction_moves=movement_count,
             cycles=cycle_count,
             gates=len(completed),
-            stop_reason=_stop_reason(completed=len(completed) == len(circuit.gates), stalled=stalled),
+            stop_reason=_stop_reason(completed=completed_objective, stalled=stalled),
             planning_trace=None if planning_trace is None else tuple(planning_trace),
         ),
     )
@@ -182,6 +225,8 @@ def schedule_greedy(
     initial_state: GridMachineState,
     config: GridCompilerConfig,
     gate_to_segment_assignment: Mapping[int, str],
+    target_state: GridMachineState | None = None,
+    partial_target_by_ion: Mapping[int, str] | None = None,
 ) -> tuple[Schedule[Action, GridMachineState], GridDiagnostics]:
     """Schedule gates with distance-ranked lookahead and prioritized transport.
 
@@ -197,6 +242,8 @@ def schedule_greedy(
     planning_trace: list[PlanningSnapshot] | None = [] if config.record_planning_trace else None
     stalled = False
     stall_clear_attempted_since_gate_completion = False
+    # Transport decisions since the last gate start, keyed by placement and gate progress.
+    placements_without_gate: set[object] = set()
 
     while len(completed) < len(circuit.gates) and iterations < config.max_iterations:
         iterations += 1
@@ -217,10 +264,15 @@ def schedule_greedy(
             gate_to_segment_assignment,
             lookahead_rounds=config.greedy_lookahead_rounds,
         )
+        # A selected gate may follow a running gate on other ions, for example across a barrier.
         gate_layer = _startable_gate_layer(
             architecture,
             state,
-            plan.selected_ready_gates,
+            tuple(
+                gate
+                for gate in plan.selected_ready_gates
+                if gate.gate_id is not None and circuit.predecessors[gate.gate_id] <= completed
+            ),
             len(scheduled_actions),
             gate_to_segment_lock=gate_to_segment_lock,
         )
@@ -281,6 +333,24 @@ def schedule_greedy(
             movement_layer = (*movement_layer, *path_clearing_layer)
         action_layer = (*gate_layer, *movement_layer)
         next_time = None if action_layer else _next_resource_release(state)
+        if not action_layer and next_time is None:
+            # Let a blocked incoming operand temporarily displace an operand already in its zone.
+            incoming_ions_first = tuple(
+                sorted(priority, key=lambda request: state.ion_segment(request[0]) == request[1])
+            )
+            movement_layer, additional_moves_explored, _blocked_targets = _priority_movement_layer(
+                architecture,
+                state,
+                len(scheduled_actions),
+                incoming_ions_first,
+                (),
+                frozenset(),
+                max_states=config.max_routing_states,
+                allowed_crossings=config.allowed_junction_crossings,
+                selected_gate_requests=selected_gate_requests,
+            )
+            explored_states += additional_moves_explored
+            action_layer = movement_layer
         if not action_layer and next_time is None and not stall_clear_attempted_since_gate_completion:
             stall_clear_attempted_since_gate_completion = True
             path_clearing_layer, clearing_paths_explored = _build_clearing_layer_for_gate(
@@ -298,6 +368,48 @@ def schedule_greedy(
             explored_states += clearing_paths_explored
             movement_layer = path_clearing_layer
             action_layer = path_clearing_layer
+        progress_key = (state.occupancy, frozenset(started), len(completed))
+        if gate_layer:
+            placements_without_gate.clear()
+        elif movement_layer and progress_key in placements_without_gate:
+            # The movement layers returned to an earlier placement without starting a gate.
+            # Route the ions of one selected gate into its segment and start it.
+            decision_time = state.time
+            routed = _route_and_start_gate(
+                architecture,
+                state,
+                config,
+                plan.selected_ready_gates,
+                scheduled_actions,
+                started,
+                completed,
+                gate_to_segment_lock,
+            )
+            if routed is None:
+                stalled = True
+                break
+            state, routed_layer, explored = routed
+            explored_states += explored
+            if planning_trace is not None:
+                planning_trace.append(
+                    _planning_snapshot(
+                        iterations,
+                        decision_time,
+                        plan.ready_gates,
+                        plan.selected_ready_gates,
+                        gate_to_target_segment=gate_to_segment_lock,
+                        lookahead_gates=plan.lookahead_gates,
+                        started_gates=_layer_gates(routed_layer),
+                        moves=tuple(item.action for item in routed_layer if not isinstance(item.action, GateAction)),
+                    )
+                )
+            scheduled_actions.extend(routed_layer)
+            for routed_item in routed_layer:
+                movement_count, cycle_count = _count_transport(routed_item.action, movement_count, cycle_count)
+            placements_without_gate.clear()
+            continue
+        elif movement_layer:
+            placements_without_gate.add(progress_key)
         if planning_trace is not None:
             planning_trace.append(
                 _planning_snapshot(
@@ -335,6 +447,44 @@ def schedule_greedy(
         state = state.at_time(max(state.time, *(action.end_time for action in scheduled_actions)))
         _complete_started_gates(state.time, started, completed, gate_to_segment_lock)
 
+    gates_complete = len(completed) == len(circuit.gates)
+    if (
+        (target_state is not None or partial_target_by_ion is not None)
+        and gates_complete
+        and not _placement_reached(state, target_state, partial_target_by_ion)
+        and iterations < config.max_iterations
+    ):
+        iterations += 1
+        decision_time = state.time
+        state, target_layer, explored = _route_to_target(
+            architecture,
+            state,
+            config,
+            target_state,
+            partial_target_by_ion,
+            len(scheduled_actions),
+        )
+        explored_states += explored
+        scheduled_actions.extend(target_layer)
+        for item in target_layer:
+            movement_count, cycle_count = _count_transport(item.action, movement_count, cycle_count)
+        if planning_trace is not None:
+            planning_trace.append(
+                _planning_snapshot(
+                    iterations,
+                    decision_time,
+                    (),
+                    (),
+                    gate_to_target_segment={},
+                    moves=tuple(item.action for item in target_layer),
+                    idle_reason=None if target_layer else IdleReason.NO_ROUTE,
+                )
+            )
+        if not target_layer:
+            stalled = True
+
+    completed_objective = gates_complete and _placement_reached(state, target_state, partial_target_by_ion)
+
     return (
         Schedule(tuple(scheduled_actions), state.time, initial_state),
         GridDiagnostics(
@@ -343,10 +493,129 @@ def schedule_greedy(
             junction_moves=movement_count,
             cycles=cycle_count,
             gates=len(completed),
-            stop_reason=_stop_reason(completed=len(completed) == len(circuit.gates), stalled=stalled),
+            stop_reason=_stop_reason(completed=completed_objective, stalled=stalled),
             planning_trace=None if planning_trace is None else tuple(planning_trace),
         ),
     )
+
+
+def _placement_reached(
+    state: GridMachineState,
+    target_state: GridMachineState | None,
+    partial_target_by_ion: Mapping[int, str] | None,
+) -> bool:
+    """Return whether the optional exact or partial target is satisfied."""
+    if target_state is not None:
+        return state.occupancy == target_state.occupancy
+    if partial_target_by_ion is not None:
+        return all(state.ion_segment(ion) == segment_id for ion, segment_id in partial_target_by_ion.items())
+    return True
+
+
+def _route_to_target(
+    architecture: GridArchitecture,
+    state: GridMachineState,
+    config: GridCompilerConfig,
+    target_state: GridMachineState | None,
+    partial_target_by_ion: Mapping[int, str] | None,
+    first_action_id: int,
+) -> tuple[GridMachineState, tuple[ScheduledAction[Action], ...], int]:
+    """Move the ions of an idle state into the target placement.
+
+    The placement search finds a sequential movement order. Each movement then
+    starts as soon as its segments, junctions, and ions are free; movements on
+    disjoint segments commute, so the outcome stays the same.
+
+    Returns:
+        The state after the movement, the timed movements (empty if the search
+        finds none), and the number of explored states.
+    """
+    route, explored = route_to_placement(
+        architecture,
+        state,
+        max_states=config.max_routing_states,
+        target_state=target_state,
+        partial_target_by_ion=partial_target_by_ion,
+        allowed_crossings=config.allowed_junction_crossings,
+    )
+    free_at: dict[tuple[str, str | int], int] = {}
+    timed: list[tuple[int, Action, int]] = []
+    for action in route or ():
+        moves = action.moves if isinstance(action, Cycle) else (action,)
+        resources: set[tuple[str, str | int]] = set()
+        for move in moves:
+            assert isinstance(move, JunctionMove)
+            resources.update({("segment", move.source.segment_id), ("segment", move.destination.segment_id)})
+            resources.add(("junction", architecture.junction_for(move.source).junction_id))
+            resources.update(("ion", ion) for ion in move.ions)
+        start = max((free_at.get(resource, state.time) for resource in resources), default=state.time)
+        duration = architecture.action_duration(action)
+        timed.append((start, action, duration))
+        for resource in resources:
+            free_at[resource] = start + duration
+    timed.sort(key=operator.itemgetter(0))
+    layer = tuple(
+        ScheduledAction(first_action_id + offset, action, start, duration)
+        for offset, (start, action, duration) in enumerate(timed)
+    )
+    for _start_time, actions in groupby(layer, key=lambda item: item.start_time):
+        state = architecture.apply_layer(state, tuple(actions))
+    if layer:
+        state = state.at_time(max(item.end_time for item in layer))
+    return state, layer, explored
+
+
+def _route_and_start_gate(
+    architecture: GridArchitecture,
+    state: GridMachineState,
+    config: GridCompilerConfig,
+    candidate_gates: Sequence[GateAction],
+    scheduled_actions: Sequence[ScheduledAction[Action]],
+    started: dict[int, int],
+    completed: set[int],
+    gate_to_segment_lock: dict[int, str],
+) -> tuple[GridMachineState, tuple[ScheduledAction[Action], ...], int] | None:
+    """Wait until the machine is idle, move the ions of one candidate gate into its segment, and start the gate.
+
+    The placement search plans the movement for the gate's ions alone, so the
+    ions reach the segment even when the greedy movement layers repeat a cycle.
+
+    Returns:
+        The state after the gate starts, the movements followed by the gate,
+        and the number of explored states, or ``None`` if no candidate can
+        start.
+    """
+    idle_time = max((item.end_time for item in scheduled_actions), default=state.time)
+    state = state.at_time(max(state.time, idle_time))
+    _complete_started_gates(state.time, started, completed, gate_to_segment_lock)
+    explored_states = 0
+    for gate in candidate_gates:
+        if architecture.is_virtual_gate(gate) or gate.gate_id not in gate_to_segment_lock:
+            continue
+        segment_id = gate_to_segment_lock[gate.gate_id]
+        routed_state, movements, explored = _route_to_target(
+            architecture,
+            state,
+            config,
+            None,
+            dict.fromkeys(gate.ions, segment_id),
+            len(scheduled_actions),
+        )
+        explored_states += explored
+        gate_layer = _startable_gate_layer(
+            architecture,
+            routed_state,
+            (gate,),
+            len(scheduled_actions) + len(movements),
+            gate_to_segment_lock=gate_to_segment_lock,
+        )
+        if not gate_layer:
+            continue
+        assert gate.gate_id is not None
+        started[gate.gate_id] = gate_layer[0].end_time
+        routed_state = architecture.apply_layer(routed_state, gate_layer)
+        return routed_state.at_time(routed_state.time + 1), (*movements, *gate_layer), explored_states
+    return None
 
 
 def _stop_reason(*, completed: bool, stalled: bool) -> GridStopReason:
@@ -482,7 +751,13 @@ def _greedy_gate_plan(
         ready = tuple(gate for gate in _ready_gates(circuit, virtually_completed) if gate.gate_id not in started_ids)
         if not ready:
             break
-        virtual = tuple(gate for gate in ready if architecture.is_virtual_gate(gate))
+        # A virtual gate claims no ion, so it may start only after its predecessors finish.
+        virtual = tuple(
+            gate
+            for gate in ready
+            if architecture.is_virtual_gate(gate)
+            and (round_index > 0 or (gate.gate_id is not None and circuit.predecessors[gate.gate_id] <= completed))
+        )
         gates_by_segment: dict[str, list[GateAction]] = defaultdict(list)
         for gate in ready:
             if architecture.is_virtual_gate(gate):
@@ -726,25 +1001,46 @@ def _priority_movement_layer(
         if source_segment_id == target_segment_id:
             record_request(ion, target_segment_id, MoveStatus.AT_TARGET)
             continue
-        destination_segment_id = next_segment_toward(
+        destination_segment_ids = next_segments_toward(
             architecture,
             source_segment_id,
             target_segment_id,
             allowed_crossings,
         )
-        if destination_segment_id is None:
+        if not destination_segment_ids:
             record_request(ion, target_segment_id, MoveStatus.NO_ROUTE)
             continue
-        candidate_actions, candidates_explored = route_junction_crossing_greedy_cycle(
-            architecture,
-            state,
-            ion,
-            destination_segment_id,
-            max_states=max_states,
-            moves=available_moves,
-            allowed_crossings=allowed_crossings,
-            ion_priorities=ion_priorities,
+        destination_segment_ids = tuple(
+            sorted(
+                destination_segment_ids,
+                # Prefer free capacity when several next segments keep the route shortest.
+                key=lambda segment_id: (
+                    len(state.occupants(segment_id)) >= architecture.segment(segment_id).capacity,
+                    len(state.occupants(segment_id)),
+                    segment_id,
+                ),
+            )
         )
+        # First try routes that leave every higher-priority active ion untouched.
+        protected_ions = {other_ion for other_ion, rank in ion_priorities.items() if rank < ion_priorities[ion]}
+        candidate_moves = tuple(move for move in available_moves if protected_ions.isdisjoint(move.ions))
+        candidate_actions: tuple[Action, ...] | None = None
+        candidates_explored = 0
+        for destination_segment_id in destination_segment_ids:
+            # All equally short choices share the configured routing-work budget.
+            candidate_actions, destination_explored = route_junction_crossing_greedy_cycle(
+                architecture,
+                state,
+                ion,
+                destination_segment_id,
+                max_states=max_states - candidates_explored,
+                moves=candidate_moves,
+                allowed_crossings=allowed_crossings,
+                ion_priorities=ion_priorities,
+            )
+            candidates_explored += destination_explored
+            if candidate_actions is not None or candidates_explored >= max_states:
+                break
         explored += candidates_explored
         if not candidate_actions:
             record_request(ion, target_segment_id, MoveStatus.NO_CANDIDATE)
@@ -830,14 +1126,15 @@ def _build_clearing_layer_for_gate(
         )
         if focus_gate is None:
             continue
-        destination_segment_id = next_segment_toward(
+        destination_segment_ids = next_segments_toward(
             architecture,
             state.ion_segment(ion),
             target_segment_id,
             allowed_crossings,
         )
-        if destination_segment_id is None:
+        if not destination_segment_ids:
             return (), 0
+        destination_segment_id = destination_segment_ids[0]
         retained_ions = frozenset(
             operand for operand in focus_gate.ions if state.ion_segment(operand) == target_segment_id
         )

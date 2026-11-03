@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from mqt.ionshuttler.core.dependencies import DependencyMode
 from mqt.ionshuttler.core.gates import Rx
 from mqt.ionshuttler.linear import GateTiming, TransportTiming
 from mqt.ionshuttler.linear.architecture import LinearArchitecture
@@ -45,6 +46,7 @@ def test_architecture_and_compiler_config_use_ready_to_run_defaults() -> None:
         num_solutions=1,
         max_frontier_size=1000,
         use_dependencies=True,
+        dependency_mode=DependencyMode.COMMUTATION_AWARE,
         max_compile_time=1800.0,
         pre_partition_config=None,
         pre_partition=False,
@@ -53,6 +55,7 @@ def test_architecture_and_compiler_config_use_ready_to_run_defaults() -> None:
     assert permutation == PermutationConfig(
         lookahead_gates=32,
         record_planning_trace=False,
+        dependency_mode=DependencyMode.COMMUTATION_AWARE,
         max_compile_time=1800.0,
         pre_partition=True,
         pre_partition_config=None,
@@ -179,6 +182,15 @@ def test_compiler_and_permutation_configs_reject_invalid_settings(
     """Reject settings that cannot describe a compilation."""
     with pytest.raises(error, match=message):
         factory()
+
+
+@pytest.mark.parametrize("config_type", [SearchConfig, PermutationConfig])
+def test_compiler_configs_require_dependency_mode_enum_values(
+    config_type: type[SearchConfig | PermutationConfig],
+) -> None:
+    """Reject raw strings so dependency choices remain explicit."""
+    with pytest.raises(TypeError, match="dependency_mode must be a DependencyMode"):
+        config_type(dependency_mode=cast("DependencyMode", "commutation_aware"))
 
 
 def test_permutation_config_requires_pre_partitioning() -> None:

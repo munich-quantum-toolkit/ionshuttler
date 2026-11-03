@@ -9,13 +9,14 @@
 
 from typing import TYPE_CHECKING
 
+from mqt.ionshuttler.core.dependencies import DependencyMode
 from mqt.ionshuttler.core.gates import GateTiming
 from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 
 from .actions import Cycle, JunctionMove
 from .architecture import GridArchitecture
-from .config import GridCompilerConfig, GridCompilerStrategy, GridDependencyMode
+from .config import GridCompilerConfig, GridCompilerStrategy
 from .layouts import from_networkx, hexagonal_grid, rectangular_grid, square_grid
 from .model import (
     Junction,
@@ -61,13 +62,13 @@ __all__ = [
     "CompilationResult",
     "CompilationStatus",
     "Cycle",
+    "DependencyMode",
     "GateTiming",
     "GridArchitecture",
     "GridCompilationResult",
     "GridCompiler",
     "GridCompilerConfig",
     "GridCompilerStrategy",
-    "GridDependencyMode",
     "GridDiagnostics",
     "GridMachineState",
     "GridStopReason",

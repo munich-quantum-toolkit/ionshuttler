@@ -765,3 +765,22 @@ def test_schedule_rejects_actions_before_the_initial_state() -> None:
             end_time=5,
             initial_state=LinearMachineState.from_compiler_state(initial_state),
         )
+
+
+def test_machine_state_reports_its_placement_and_advances_its_clock() -> None:
+    """Give the site of each ion in ion order and keep availability at or after the clock."""
+    state = LinearMachineState(
+        positions=((1, 4), (0, 2)),
+        ions_busy_until=((0, 3), (1, 1)),
+        pzs_busy_until=(("pz", 2),),
+        time=1,
+    )
+
+    later = state.at_time(2)
+
+    assert state.placement == (2, 4)
+    assert later.time == 2
+    assert later.ions_busy_until == ((0, 3), (1, 2))
+    assert later.pzs_busy_until == (("pz", 2),)
+    with pytest.raises(ValueError, match="must not move backwards"):
+        state.at_time(0)

@@ -16,7 +16,7 @@ import pytest
 from qiskit import QuantumCircuit
 from qiskit.circuit import Parameter
 
-from mqt.ionshuttler.circuit import parse_circuit
+from mqt.ionshuttler.circuit import Circuit, parse_circuit
 from mqt.ionshuttler.core.gates import Rx, Rxx, Ry, Ryy, Rz, Rzz
 
 if TYPE_CHECKING:
@@ -245,6 +245,15 @@ def test_qiskit_rejects_unsupported_unbound_and_nontrailing_operations() -> None
     measured.rx(math.pi, 0)
     with pytest.raises(ValueError, match="measurements must be trailing"):
         parse_circuit(measured)
+
+
+def test_parse_circuit_returns_a_circuit_with_available_gates_unchanged() -> None:
+    """Accept an already built circuit and check its gate types."""
+    circuit = Circuit(num_ions=2, gates=(Rx(ion=0, theta=0.5, gate_id=0),), predecessors=(frozenset(),))
+
+    assert parse_circuit(circuit) is circuit
+    with pytest.raises(ValueError, match="circuit requires unavailable gate 'Rx'"):
+        parse_circuit(circuit, gate_types=(Rz,))
 
 
 def test_parse_circuit_rejects_unknown_input_types() -> None:

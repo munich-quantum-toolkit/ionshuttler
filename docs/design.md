@@ -77,6 +77,13 @@ The compiler is the user-facing coordinator. It:
 Candidate generation, heuristics, search limits, and decisions involving several
 actions belong to compiler policy.
 
+{py:class}`~mqt.ionshuttler.core.compiler.Compiler` states the interface that
+all compilers share: an `architecture` and a `compile` method that compiles one
+circuit from an initial placement to a target placement. Code that works with
+every compiler, such as
+{py:func}`~mqt.ionshuttler.dynamic.compiler.compile_program`, depends only on
+this interface.
+
 ### Architecture
 
 The architecture owns the hardware meaning of each supported action. A backend

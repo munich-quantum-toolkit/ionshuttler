@@ -518,3 +518,12 @@ def test_architecture_and_schedule_save_to_explicit_json_paths(tmp_path: Path) -
     assert restored_architecture == architecture
     assert GridArchitecture.load(architecture_path) == architecture
     assert load_schedule(schedule_path) == schedule
+
+
+def test_machine_state_reports_its_placement() -> None:
+    """Give the ions of every segment in the form that compilation accepts."""
+    architecture = _line_architecture()
+    state = architecture.initial_state({"a": (0,)})
+
+    assert state.placement == dict(state.occupancy)
+    assert architecture.initial_state(state.placement) == state

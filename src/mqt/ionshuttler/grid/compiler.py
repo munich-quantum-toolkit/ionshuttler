@@ -14,14 +14,11 @@ from time import perf_counter
 from typing import TYPE_CHECKING
 
 from mqt.ionshuttler.circuit import parse_circuit, with_commutation_aware_dependencies
+from mqt.ionshuttler.core.dependencies import DependencyMode
 from mqt.ionshuttler.core.gates import GateAction
 from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.grid.assignment import compute_gate_zone_assignment
-from mqt.ionshuttler.grid.config import (
-    GridCompilerConfig,
-    GridCompilerStrategy,
-    GridDependencyMode,
-)
+from mqt.ionshuttler.grid.config import GridCompilerConfig, GridCompilerStrategy
 from mqt.ionshuttler.grid.routing import select_greedy_target
 from mqt.ionshuttler.grid.scheduling import schedule_breadth_first, schedule_greedy
 
@@ -48,6 +45,7 @@ class GridCompiler:
         circuit: CircuitInput,
         *,
         initial_placement: Mapping[str, Sequence[int]] | None = None,
+        target_placement: Mapping[str, Sequence[int]] | None = None,
         gate_to_processing_zone: Mapping[int, str] | None = None,
         pre_partition: bool = True,
     ) -> GridCompilationResult:
@@ -56,6 +54,11 @@ class GridCompiler:
         Args:
             circuit: Circuit to compile.
             initial_placement: Optional segment-to-ion placement.
+            target_placement: Optional final segment-to-ion placement after all
+                gates finish. A placement that contains every initial ion is
+                exact; omitted segments are empty. A placement that contains a
+                subset constrains only those ions. Other ions and segments
+                remain unconstrained.
             gate_to_processing_zone: Optional physical gate-to-processing-zone assignment.
                 When set, this assignment replaces automatic pre-partitioning.
                 Gates not in the mapping select a processing zone while scheduling.
@@ -65,6 +68,10 @@ class GridCompiler:
 
         Returns:
             A validated complete or partial compilation result.
+
+        Raises:
+            ValueError: If the target contains an ion outside the initial
+                placement.
         """
         started = perf_counter()
         gate_types = tuple(
@@ -73,13 +80,25 @@ class GridCompiler:
             if issubclass(action_type, GateAction)
         )
         parsed = parse_circuit(circuit, gate_types=gate_types)
-        if self.config.dependency_mode is GridDependencyMode.COMMUTATION_AWARE:
+        if self.config.dependency_mode is DependencyMode.COMMUTATION_AWARE:
             parsed = with_commutation_aware_dependencies(parsed)
         placement = (
             _default_placement(parsed.num_ions, self.architecture) if initial_placement is None else initial_placement
         )
         initial_state = self.architecture.initial_state(placement)
         _validate_circuit_ions(parsed, initial_state)
+        requested_target = None if target_placement is None else self.architecture.initial_state(target_placement)
+        if requested_target is not None and not set(requested_target.ions) <= set(initial_state.ions):
+            msg = "target placement contains an ion outside the initial placement"
+            raise ValueError(msg)
+        target_state = (
+            requested_target if requested_target is not None and requested_target.ions == initial_state.ions else None
+        )
+        partial_target_by_ion = (
+            None
+            if requested_target is None or target_state is not None
+            else {ion: segment_id for segment_id, ions in requested_target.occupancy for ion in ions}
+        )
         _validate_gate_capabilities(parsed, self.architecture)
         gate_to_segment_assignment = self._resolve_gate_assignment(
             parsed,
@@ -95,13 +114,30 @@ class GridCompiler:
                 self.config.allowed_junction_crossings,
             )
 
-        schedule, diagnostics = self._create_schedule(parsed, initial_state, gate_to_segment_assignment)
-        status = CompilationStatus.SUCCESS if diagnostics.gates == len(parsed.gates) else CompilationStatus.FAILED
+        schedule, diagnostics = self._create_schedule(
+            parsed,
+            initial_state,
+            gate_to_segment_assignment,
+            target_state,
+            partial_target_by_ion,
+        )
+        final_state = self.architecture.replay_schedule(schedule)
+        target_reached = (
+            final_state.occupancy == target_state.occupancy
+            if target_state is not None
+            else partial_target_by_ion is None
+            or all(final_state.ion_segment(ion) == segment for ion, segment in partial_target_by_ion.items())
+        )
+        status = (
+            CompilationStatus.SUCCESS
+            if diagnostics.gates == len(parsed.gates) and target_reached
+            else CompilationStatus.FAILED
+        )
         result = CompilationResult(
             status=status,
             schedule=schedule,
             architecture=self.architecture,
-            final_state=self.architecture.replay_schedule(schedule),
+            final_state=final_state,
             wall_clock_s=perf_counter() - started,
             diagnostics=diagnostics,
         )
@@ -113,6 +149,8 @@ class GridCompiler:
         circuit: Circuit,
         initial_state: GridMachineState,
         gate_to_segment_assignment: Mapping[int, str],
+        target_state: GridMachineState | None,
+        partial_target_by_ion: Mapping[int, str] | None,
     ) -> tuple[Schedule[Action, GridMachineState], GridDiagnostics]:
         """Create a schedule with the selected strategy.
 
@@ -126,6 +164,8 @@ class GridCompiler:
                 initial_state,
                 self.config,
                 gate_to_segment_assignment,
+                target_state,
+                partial_target_by_ion,
             )
         return schedule_breadth_first(
             self.architecture,
@@ -133,6 +173,8 @@ class GridCompiler:
             initial_state,
             self.config,
             gate_to_segment_assignment,
+            target_state,
+            partial_target_by_ion,
         )
 
     def _resolve_gate_assignment(
