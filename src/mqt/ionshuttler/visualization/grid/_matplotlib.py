@@ -31,7 +31,14 @@ from .._player.style import (
     truncate,
 )
 from .._player.video import DPI, points
-from ._scene import hardware_id_font_size, header_lines, label_normal, panel_layout, zone_label_size
+from ._scene import (
+    REARRANGEMENT_GLOW_WIDTH,
+    hardware_id_font_size,
+    header_lines,
+    label_normal,
+    panel_layout,
+    zone_label_size,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -163,6 +170,17 @@ class _PanelArtists:
                 zorder=1,
             )
         )
+        # The part of a segment that a running rearrangement uses glows.
+        self.rearrangement_glow: LineCollection = LineCollection(
+            [],
+            linewidths=points(2.2 * REARRANGEMENT_GLOW_WIDTH * radius),
+            colors=colors["rearrangement"],
+            alpha=LINE_GLOW,
+            capstyle="round",
+            zorder=1.5,
+            gid="rearrangement glow",
+        )
+        axis.add_collection(self.rearrangement_glow)
         zone_points = [layout.point(shape.position(zone.place)) for zone in scene.processing_zones]
         if zone_points:
             axis.scatter(
@@ -331,6 +349,11 @@ class _PanelArtists:
             next((self.zone_color[zone] for zone in segment.processing_zones if zone in active_zones), "none")
             for segment in scene.segments
         ])
+        self.rearrangement_glow.set_segments([
+            [self.layout.point(end) for end in scene.rearrangement_span(rearrangement)]
+            for rearrangement in scene.running_rearrangements(shown_time)
+            if rearrangement.end > rearrangement.start
+        ])
         title, time_text, description = header_lines(scene, time)
         text_width = self.layout.width - 2 * self.layout.padding
         self.title.set_text(truncate(title, text_width * 0.6, self.layout.font_size))
@@ -343,6 +366,7 @@ class _PanelArtists:
             self.ambient_halo,
             *self.halos,
             self.glow,
+            self.rearrangement_glow,
             self.title,
             self.time,
             self.description,

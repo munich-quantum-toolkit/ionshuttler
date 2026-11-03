@@ -36,17 +36,21 @@ from mqt.ionshuttler.grid import (
     Junction,
     JunctionMove,
     ProcessingZone,
+    Rearrangement,
     Segment,
+    TransportTiming,
 )
 from mqt.ionshuttler.visualization import GridView, GridVisualizer, IonColor
 from mqt.ionshuttler.visualization._player.settings import video_frame_times
 from mqt.ionshuttler.visualization._player.style import (
+    COLORS,
     ION_PALETTE,
     ZONE_PALETTE,
     ion_colors,
     text_color,
 )
 from mqt.ionshuttler.visualization.grid._scene import (
+    REARRANGEMENT_LIFT,
     build_scene,
     geometry,
     hardware_id_font_size,
@@ -143,6 +147,24 @@ _BUSY_COORDINATES: dict[str, tuple[float, float]] = {
     "north": (1, 1),
     "east": (4, 0),
 }
+
+
+def _rearrangement_result() -> CompilationResult:
+    """Reverse the first three of four ions in a segment that runs from left to right.
+
+    The reversal takes three swap layers, from time 0 to time 3. Ion 1 keeps
+    its place, and ion 3 lies outside the chain.
+    """
+    chain = Segment("chain", capacity=4)
+    architecture = GridArchitecture((chain,), (Junction("west", (chain.start,)), Junction("east", (chain.end,))))
+    return _result_from_layers(
+        architecture,
+        {"chain": (0, 1, 2, 3)},
+        [(0, Rearrangement("chain", (0, 1, 2), (2, 1, 0)), None)],
+    )
+
+
+_REARRANGEMENT_COORDINATES: dict[str, tuple[float, float]] = {"west": (0, 0), "east": (1, 0)}
 
 
 def _embedded(view: GridView) -> dict[str, Any]:
@@ -293,6 +315,82 @@ def test_simultaneous_moves_and_gates_form_one_layer() -> None:
     assert "rxx q1,q2 @ pz-a" in first.description
     assert scene.current_layer(1) == first
     assert scene.current_layer(2) == scene.layers[1]
+
+
+def test_rearranged_ions_pass_each_other_beside_their_segment() -> None:
+    """Move each rearranged ion to its new place during the whole rearrangement, beside the segment."""
+    scene = build_scene(_rearrangement_result(), _REARRANGEMENT_COORDINATES)
+    before = scene.ion_positions(0)
+    halfway = scene.ion_positions(1.5)
+    after = scene.ion_positions(3)
+    lift = REARRANGEMENT_LIFT * math.dist(before[0], before[2])
+
+    assert after[0] == before[2]
+    assert after[2] == before[0]
+    assert before[1] == halfway[1] == after[1]
+    assert before[3] == halfway[3] == after[3]
+    assert scene.ion_positions(2.9)[0] != after[0]
+    # Ion 0 moves toward the segment end and passes on the left, above a segment from left to right.
+    assert math.dist(halfway[0], (before[1][0], before[1][1] + lift)) < 1e-9
+    assert math.dist(halfway[2], (before[1][0], before[1][1] - lift)) < 1e-9
+
+
+def test_ions_of_a_reversal_stay_apart() -> None:
+    """Keep the ions of a reversal one ion diameter apart, also two ions that move in the same direction."""
+    chain = Segment("chain", capacity=5)
+    architecture = GridArchitecture((chain,), (Junction("west", (chain.start,)), Junction("east", (chain.end,))))
+    ions = (0, 1, 2, 3, 4)
+    result = _result_from_layers(architecture, {"chain": ions}, [(0, Rearrangement("chain", ions, ions[::-1]), None)])
+    scene = build_scene(result, _REARRANGEMENT_COORDINATES)
+    diameter = 2 * scene.geometry.ion_radius
+
+    for step in range(20 * scene.end_time + 1):
+        positions = list(scene.ion_positions(step / 20).values())
+        gaps = [math.dist(first, second) for index, first in enumerate(positions) for second in positions[index + 1 :]]
+        assert min(gaps) >= diameter
+
+
+def test_running_rearrangement_marks_the_part_of_the_segment_that_its_chain_uses() -> None:
+    """Report the chain's part of the segment while the rearrangement runs, and describe the new order."""
+    scene = build_scene(_rearrangement_result(), _REARRANGEMENT_COORDINATES)
+    before = scene.ion_positions(0)
+    (layer,) = scene.layers
+
+    assert layer.description == "rearrange [q0,q1,q2] → [q2,q1,q0] in chain"
+    (rearrangement,) = scene.running_rearrangements(1)
+    assert rearrangement.ions == (0, 1, 2)
+    first, last = scene.rearrangement_span(rearrangement)
+    assert math.dist(first, before[0]) < 1e-9
+    assert math.dist(last, before[2]) < 1e-9
+    assert scene.running_rearrangements(3) == ()
+
+
+def test_rearranged_ions_keep_passing_when_another_ion_enters_their_segment() -> None:
+    """Extend a running rearrangement to the places that remain after another ion joins the segment."""
+    source = Segment("source", capacity=3)
+    side = Segment("side", capacity=2)
+    architecture = GridArchitecture(
+        (source, side),
+        (Junction("west", (source.start,)), Junction("j", (source.end, side.start)), Junction("east", (side.end,))),
+        transport_timing=TransportTiming(junction_move=1, swap=4),
+    )
+    result = _result_from_layers(
+        architecture,
+        {"source": (0, 1), "side": (2,)},
+        [
+            (0, Rearrangement("source", (0, 1), (1, 0)), None),
+            (1, JunctionMove(side.start, source.end, (2,)), None),
+        ],
+    )
+    scene = build_scene(result, {"west": (0, 0), "j": (1, 0), "east": (2, 0)})
+    halfway = scene.ion_positions(2)
+    final = scene.ion_positions(4)
+
+    assert [(movement.start, movement.end, movement.side) for movement in scene.ions[0].movements] == [(0, 4, 1)]
+    assert [(movement.start, movement.end, movement.side) for movement in scene.ions[1].movements] == [(0, 4, -1)]
+    assert halfway[0][1] > 0 > halfway[1][1]
+    assert final[1][0] < final[0][0] < final[2][0]
+    assert final[0][1] == final[1][1] == final[2][1] == 0
 
 
 def test_view_size_does_not_depend_on_frame_rate_or_speed() -> None:
@@ -591,6 +689,32 @@ def test_plot_draws_one_schedule_time() -> None:
     _close(figure)
 
 
+def test_plot_marks_the_part_of_the_segment_that_a_rearrangement_uses() -> None:
+    """Draw the rearrangement glow along the chain while the rearrangement runs, and remove it afterwards."""
+    from matplotlib.collections import LineCollection
+
+    result = _rearrangement_result()
+    scene = build_scene(result, _REARRANGEMENT_COORDINATES)
+    visualizer = GridVisualizer(_REARRANGEMENT_COORDINATES, theme="light", width=500, height=300)
+    layout = panel_layout(scene.geometry, 0, 0, 500, 300)
+    expected = [layout.point(end) for end in scene.rearrangement_span(scene.layers[0].rearrangements[0])]
+
+    def glow_parts(time: float) -> list[Any]:
+        figure = visualizer.plot(result, time)
+        (glow,) = [
+            collection
+            for collection in figure.axes[0].collections
+            if isinstance(collection, LineCollection) and collection.get_gid() == "rearrangement glow"
+        ]
+        parts = glow.get_segments()
+        _close(figure)
+        return parts
+
+    (running,) = glow_parts(1.5)
+    assert all(math.dist(point, end) < 1e-6 for point, end in zip(running, expected, strict=True))
+    assert glow_parts(3) == []
+
+
 def test_plot_rejects_times_outside_the_schedule() -> None:
     """Accept only times within the schedule bounds."""
     with pytest.raises(ValueError, match="time must lie within the schedule"):
@@ -762,6 +886,84 @@ def test_browser_drawing_matches_the_python_drawing_data(tmp_path: Path) -> None
     assert abs(output["shape"]["ionRadius"] - scene.geometry.ion_radius) < 1e-9
     for size, radius in zip((1, 0.4, 2), output["layoutRadii"], strict=True):
         assert abs(radius - panel_layout(scene.geometry, 0, 0, 400, 300, size).ion_radius) < 1e-9
+
+
+_NODE_REARRANGEMENT_CHECK = r"""
+const fs = require("fs");
+const [scriptPath, dataPath, timesJson] = process.argv.slice(2);
+const GridDrawing = require(scriptPath);
+const data = JSON.parse(fs.readFileSync(dataPath, "utf8"));
+const view = GridDrawing.prepare(data.drawing);
+const panel = view.panels[0];
+const shape = GridDrawing.geometry(panel);
+const times = JSON.parse(timesJson);
+
+// Record the glow colors that each frame draws. Every method returns an
+// object that serves as a gradient and as a text measurement.
+const glows = [];
+const context = new Proxy({}, {
+  get: (target, name) => {
+    if (name in target) return target[name];
+    return () => ({ width: 0, addColorStop() {} });
+  },
+  set: (target, name, value) => {
+    if (name === "shadowColor") glows.push(value);
+    target[name] = value;
+    return true;
+  },
+});
+const settings = { ...data.settings, theme: "light", editing: false, highlight: null };
+const glowColors = (time) => {
+  glows.length = 0;
+  GridDrawing.drawAtTime(context, view, time, settings, 400, 300);
+  return [...new Set(glows)];
+};
+console.log(JSON.stringify({
+  positions: times.map((time) => panel.ions.map((track) => GridDrawing.trackPosition(track, time, shape))),
+  spans: times.map((time) =>
+    GridDrawing.runningRearrangements(panel, time).map((rearrangement) =>
+      GridDrawing.rearrangementSpan(panel, shape, rearrangement),
+    ),
+  ),
+  glows: times.map(glowColors),
+}));
+"""
+
+
+def test_browser_rearrangements_match_the_python_drawing_data(tmp_path: Path) -> None:
+    """Move rearranged ions and mark their chain in the browser as in the Python scene."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is not installed")
+    result = _rearrangement_result()
+    scene = build_scene(result, _REARRANGEMENT_COORDINATES)
+    view = GridVisualizer(_REARRANGEMENT_COORDINATES).visualize(result)
+    data = tmp_path / "data.json"
+    data.write_text(json.dumps(_embedded(view)), encoding="utf-8")
+    check = tmp_path / "check.js"
+    check.write_text(_NODE_REARRANGEMENT_CHECK, encoding="utf-8")
+    script = str(files("mqt.ionshuttler.visualization.grid").joinpath("draw.js"))
+    times = [0, 0.4, 1.5, 2.6, 3]
+
+    completed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+        [node, str(check), script, str(data), json.dumps(times)],
+        capture_output=True,
+        check=True,
+        text=True,
+        timeout=60,
+    )
+
+    output = json.loads(completed.stdout)
+    for time, positions, spans, glows in zip(times, output["positions"], output["spans"], output["glows"], strict=True):
+        expected = scene.ion_positions(time)
+        for track, position in zip(scene.ions, positions, strict=True):
+            assert math.dist(expected[track.ion], position) < 1e-9
+        running = scene.running_rearrangements(time)
+        assert len(spans) == len(running)
+        for rearrangement, span in zip(running, spans, strict=True):
+            for end, point in zip(scene.rearrangement_span(rearrangement), span, strict=True):
+                assert math.dist(end, point) < 1e-9
+        assert (COLORS["light"]["rearrangement"] in glows) == bool(running)
 
 
 def test_browser_ion_colors_match_the_python_colors(tmp_path: Path) -> None:

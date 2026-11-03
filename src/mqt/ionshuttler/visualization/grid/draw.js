@@ -12,6 +12,8 @@
 // coordinates from the current junction positions, so moving a junction moves
 // every segment and ion attached to it. It never decides whether an action is
 // legal. The Matplotlib renderer in `_matplotlib.py` uses the same layout rules.
+// Ions of a rearrangement pass the other ions of their chain beside the
+// segment; the drawing does not show the swaps that the rearrangement takes.
 
 "use strict";
 
@@ -19,6 +21,10 @@ const GridDrawing = (() => {
   const ION_RADIUS_PER_SPACING = 0.38;
   const MAX_ION_RADIUS = 0.06;
   const MARGIN_PER_ION_RADIUS = 2.5;
+  // Same values as `REARRANGEMENT_LIFT` and `REARRANGEMENT_GLOW_WIDTH` in
+  // `_scene.py`.
+  const REARRANGEMENT_LIFT = 0.5;
+  const REARRANGEMENT_GLOW_WIDTH = 1.2;
   // Colors and text sizes that every drawing shares. Node.js tests load this
   // file without the page, so they read the shared rules from their file.
   const {
@@ -61,21 +67,38 @@ const GridDrawing = (() => {
         end: item[1],
         target: place(item[2], item[3]),
         via: item.length > 4 ? item[4] : null,
+        side: item.length > 5 ? item[5] : 0,
       })),
       starts: movements.map((item) => item[0]),
     }));
-    const layers = raw.layers.map(([start, end, description, gates]) => ({
-      start,
-      end,
-      description,
-      gates: gates.map(([gateIons, zone, gateStart, gateEnd]) => ({
-        ions: gateIons,
-        zone,
-        start: gateStart,
-        end: gateEnd,
-      })),
-    }));
+    const layers = raw.layers.map(
+      ([start, end, description, gates, rearrangements]) => ({
+        start,
+        end,
+        description,
+        gates: gates.map(([gateIons, zone, gateStart, gateEnd]) => ({
+          ions: gateIons,
+          zone,
+          start: gateStart,
+          end: gateEnd,
+        })),
+        rearrangements: rearrangements.map(
+          ([segment, chain, rearrangementStart, rearrangementEnd]) => ({
+            segment,
+            ions: chain,
+            start: rearrangementStart,
+            end: rearrangementEnd,
+          }),
+        ),
+      }),
+    );
     const gates = layers.flatMap((layer) => layer.gates);
+    const rearrangements = layers.flatMap((layer) => layer.rearrangements);
+    const longest = (intervals) =>
+      intervals.reduce(
+        (result, interval) => Math.max(result, interval.end - interval.start),
+        0,
+      );
     const end = ([junction, x, y]) => ({ junction, offset: [x, y] });
     const junctions = raw.junctions.map(([, x, y]) => [x, y]);
     return {
@@ -104,10 +127,12 @@ const GridDrawing = (() => {
       layerStarts: layers.map((layer) => layer.start),
       gates,
       gateStarts: gates.map((gate) => gate.start),
-      longestGate: gates.reduce(
-        (longest, gate) => Math.max(longest, gate.end - gate.start),
-        0,
+      longestGate: longest(gates),
+      rearrangements,
+      rearrangementStarts: rearrangements.map(
+        (rearrangement) => rearrangement.start,
       ),
+      longestRearrangement: longest(rearrangements),
       frozen: null,
       layout: null,
     };
@@ -266,6 +291,7 @@ const GridDrawing = (() => {
     return interpolate(via, target, (travelled - first) / second);
   }
 
+  // Same rules as `track_position` in `_scene.py`.
   function trackPosition(track, time, shape) {
     const index = bisectRight(track.starts, time) - 1;
     if (index < 0) return position(shape, track.initial);
@@ -278,19 +304,70 @@ const GridDrawing = (() => {
     );
     const via = movement.via === null ? null : shape.junctions[movement.via];
     const progress = (time - movement.start) / (movement.end - movement.start);
-    return alongPath(source, via, target, progress);
+    const point = alongPath(source, via, target, progress);
+    if (movement.side === 0 || via !== null) return point;
+    const [start, end] = shape.segments[movement.target.segment];
+    const length = distance(start, end);
+    if (length === 0) return point;
+    const lift =
+      (movement.side *
+        REARRANGEMENT_LIFT *
+        distance(source, target) *
+        Math.sin(Math.PI * progress)) /
+      length;
+    // The left normal of the segment direction is (-dy, dx).
+    return [
+      point[0] - lift * (end[1] - start[1]),
+      point[1] + lift * (end[0] - start[0]),
+    ];
+  }
+
+  // Same rules as `_running` in `_scene.py`.
+  function running(intervals, starts, longest, time) {
+    const result = [];
+    let index = bisectRight(starts, time);
+    const earliestStart = time - longest;
+    while (index > 0 && intervals[index - 1].start >= earliestStart) {
+      index -= 1;
+      const interval = intervals[index];
+      if (isRunning(interval.start, interval.end, time)) result.push(interval);
+    }
+    return result.reverse();
   }
 
   function runningGates(panel, time) {
-    const running = [];
-    let index = bisectRight(panel.gateStarts, time);
-    const earliestStart = time - panel.longestGate;
-    while (index > 0 && panel.gates[index - 1].start >= earliestStart) {
-      index -= 1;
-      const gate = panel.gates[index];
-      if (isRunning(gate.start, gate.end, time)) running.push(gate);
-    }
-    return running.reverse();
+    return running(panel.gates, panel.gateStarts, panel.longestGate, time);
+  }
+
+  function runningRearrangements(panel, time) {
+    return running(
+      panel.rearrangements,
+      panel.rearrangementStarts,
+      panel.longestRearrangement,
+      time,
+    );
+  }
+
+  // The part of its segment that a rearrangement uses: from the first to the
+  // last place of the chain, before and after the rearrangement. Same rules as
+  // `Scene.rearrangement_span` in `_scene.py`.
+  function rearrangementSpan(panel, shape, rearrangement) {
+    const [start, end] = shape.segments[rearrangement.segment];
+    const dx = end[0] - start[0];
+    const dy = end[1] - start[1];
+    const squaredLength = dx * dx + dy * dy;
+    if (squaredLength === 0) return [start, end];
+    const fractions = rearrangement.ions.flatMap((ion) => {
+      const track = panel.ions[panel.ionIndex.get(ion)];
+      return [rearrangement.start, rearrangement.end].map((time) => {
+        const [x, y] = trackPosition(track, time, shape);
+        return ((x - start[0]) * dx + (y - start[1]) * dy) / squaredLength;
+      });
+    });
+    return [
+      interpolate(start, end, Math.min(...fractions)),
+      interpolate(start, end, Math.max(...fractions)),
+    ];
   }
 
   function currentLayer(panel, time) {
@@ -469,6 +546,16 @@ const GridDrawing = (() => {
       context.lineWidth = width;
       line(context, x0, y0, x1, y1);
     });
+    // The part of a segment that a running rearrangement uses glows.
+    for (const rearrangement of runningRearrangements(panel, shownTime)) {
+      if (rearrangement.end === rearrangement.start) continue;
+      paintLineGlow(
+        context,
+        rearrangementSpan(panel, shape, rearrangement).map(layout.point),
+        REARRANGEMENT_GLOW_WIDTH * radius,
+        colors.rearrangement,
+      );
+    }
     const showPlanning =
       settings.show_compiler_planning === true && panel.planning !== null;
     const snapshot = showPlanning ? planningSnapshot(panel, shownTime) : null;
@@ -1268,9 +1355,11 @@ const GridDrawing = (() => {
     pick,
     planningSnapshot,
     prepare,
+    rearrangementSpan,
     resetLayout,
     settingsText,
     runningGates,
+    runningRearrangements,
     stepTimes,
     timeBounds,
     trackPosition,

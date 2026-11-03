@@ -28,7 +28,9 @@ ColorChange = tuple[int, str | None, str | None, str | None]
 # "ion_fill" fills ions without a chosen fill, and "gate" marks gates that run
 # outside a processing zone. "segment" draws transport lines and "junction"
 # draws junctions and trap sites. "planning" marks the compiler planning
-# overlay of the Grid view.
+# overlay of the Grid view. "rearrangement" marks the part of a Grid segment
+# that a running rearrangement uses; it is neutral, so that it differs from
+# every processing-zone color.
 COLORS: dict[str, dict[str, str]] = {
     "light": {
         "background": "#ffffff",
@@ -41,6 +43,7 @@ COLORS: dict[str, dict[str, str]] = {
         "muted_text": "#64748b",
         "chip": "#f1f5f9",
         "planning": "#b45309",
+        "rearrangement": "#475569",
     },
     "dark": {
         "background": "#0f1218",
@@ -53,6 +56,7 @@ COLORS: dict[str, dict[str, str]] = {
         "muted_text": "#8b95a5",
         "chip": "#1b212b",
         "planning": "#facc15",
+        "rearrangement": "#cbd5e1",
     },
 }
 ION_PALETTE = (

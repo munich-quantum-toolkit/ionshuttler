@@ -16,6 +16,13 @@ junction, or at a fixed offset from one. Each ion position is a segment and a
 fraction of the way from the segment start to its end. A renderer can therefore
 move a junction and redraw every segment and ion without a new replay. The
 browser drawing in ``draw.js`` and the Matplotlib renderer use the same rules.
+
+A rearrangement shows only its order before and after. Each ion of the chain
+that changes its place moves straight to its new place and away from the
+segment and back, so that it passes the other ions of the chain. Ions that move
+toward the segment end pass on the left of the segment direction, and ions that
+move toward the segment start pass on the right. Ions that travel farther pass
+farther out. The drawing does not show the swaps that the rearrangement takes.
 """
 
 from __future__ import annotations
@@ -26,10 +33,10 @@ from bisect import bisect_right
 from dataclasses import dataclass
 from functools import cached_property
 from itertools import groupby
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
 from mqt.ionshuttler.core.gates import GateAction, GlobalGate
-from mqt.ionshuttler.grid.actions import Cycle, JunctionMove
+from mqt.ionshuttler.grid.actions import Cycle, JunctionMove, Rearrangement
 from mqt.ionshuttler.grid.architecture import GridArchitecture
 from mqt.ionshuttler.grid.model import Junction, SegmentEndpoint
 from mqt.ionshuttler.grid.state import GridMachineState
@@ -51,6 +58,14 @@ _DIGITS = 4
 _ION_RADIUS_PER_SPACING = 0.38
 _MAX_ION_RADIUS = 0.06
 _MARGIN_PER_ION_RADIUS = 2.5
+# Halfway through a rearrangement, an ion is this fraction of its travel
+# distance away from the segment. Ions that travel farther thus pass farther
+# out, and two ions that pass each other stay at least one place apart. Same
+# value as `REARRANGEMENT_LIFT` in `draw.js`.
+REARRANGEMENT_LIFT = 0.5
+# Width, in ion radii, of the glow along the part of a segment that a running
+# rearrangement uses. Same value as `REARRANGEMENT_GLOW_WIDTH` in `draw.js`.
+REARRANGEMENT_GLOW_WIDTH = 1.2
 
 
 @dataclass(frozen=True)
@@ -79,13 +94,17 @@ class Movement:
 
     The ion leaves its previous place at ``start`` and reaches ``target`` at
     ``end``. A junction move passes through junction ``via``. Ions that only
-    shift inside their segment have no ``via`` junction.
+    shift inside their segment have no ``via`` junction. ``side`` is 0, except
+    in a rearrangement: there it is 1 for an ion that moves toward the segment
+    end and passes on the left of the segment direction, and -1 for an ion
+    that moves toward the segment start and passes on the right.
     """
 
     start: int
     end: int
     target: Place
     via: int | None = None
+    side: int = 0
 
 
 @dataclass(frozen=True)
@@ -113,6 +132,22 @@ class GateUse:
 
 
 @dataclass(frozen=True)
+class RearrangementUse:
+    """Store the segment and the ion chain of one scheduled rearrangement.
+
+    ``ions`` lists the chain in segment order before the rearrangement.
+    """
+
+    segment: int
+    ions: tuple[int, ...]
+    start: int
+    end: int
+
+
+_Interval = TypeVar("_Interval", GateUse, RearrangementUse)
+
+
+@dataclass(frozen=True)
 class Layer:
     """Store the actions that start at one schedule time."""
 
@@ -120,6 +155,7 @@ class Layer:
     end: int
     description: str
     gates: tuple[GateUse, ...]
+    rearrangements: tuple[RearrangementUse, ...]
 
 
 @dataclass(frozen=True)
@@ -315,7 +351,7 @@ class Scene:
                             movement.end,
                             movement.target.segment,
                             movement.target.fraction,
-                            *(() if movement.via is None else (movement.via,)),
+                            *_movement_path(movement),
                         ]
                         for movement in track.movements
                     ],
@@ -328,6 +364,10 @@ class Scene:
                     layer.end,
                     layer.description,
                     [[list(gate.ions), gate.processing_zone, gate.start, gate.end] for gate in layer.gates],
+                    [
+                        [rearrangement.segment, list(rearrangement.ions), rearrangement.start, rearrangement.end]
+                        for rearrangement in layer.rearrangements
+                    ],
                 ]
                 for layer in self.layers
             ],
@@ -371,16 +411,36 @@ class Scene:
         Returns:
             The running gates.
         """
-        gates = self._gates
-        index = bisect_right(self._gate_starts, time)
-        earliest_start = time - self._longest_gate
-        running: list[GateUse] = []
-        while index > 0 and gates[index - 1].start >= earliest_start:
-            index -= 1
-            gate = gates[index]
-            if _is_running(gate.start, gate.end, time):
-                running.append(gate)
-        return tuple(reversed(running))
+        return _running(self._gates, self._gate_starts, self._longest_gate, time)
+
+    def running_rearrangements(self, time: float) -> tuple[RearrangementUse, ...]:
+        """Return the rearrangements that run at a schedule time.
+
+        A rearrangement runs from its start time until just before its end time.
+
+        Returns:
+            The running rearrangements.
+        """
+        return _running(self._rearrangements, self._rearrangement_starts, self._longest_rearrangement, time)
+
+    def rearrangement_span(self, rearrangement: RearrangementUse) -> tuple[Coordinate, Coordinate]:
+        """Return the part of its segment that a rearrangement uses.
+
+        The part reaches from the first to the last place of the chain, before
+        and after the rearrangement.
+
+        Returns:
+            The two ends of the part, in segment direction.
+        """
+        return rearrangement_span(
+            self.geometry,
+            rearrangement,
+            [
+                track_position(self._tracks[ion], time, self.geometry)
+                for ion in rearrangement.ions
+                for time in (rearrangement.start, rearrangement.end)
+            ],
+        )
 
     def current_layer(self, time: float) -> Layer | None:
         """Return the latest started action layer if it still runs.
@@ -405,6 +465,22 @@ class Scene:
     @cached_property
     def _longest_gate(self) -> int:
         return max((gate.end - gate.start for gate in self._gates), default=0)
+
+    @cached_property
+    def _tracks(self) -> dict[int, IonTrack]:
+        return {track.ion: track for track in self.ions}
+
+    @cached_property
+    def _rearrangements(self) -> tuple[RearrangementUse, ...]:
+        return tuple(rearrangement for layer in self.layers for rearrangement in layer.rearrangements)
+
+    @cached_property
+    def _rearrangement_starts(self) -> list[int]:
+        return [rearrangement.start for rearrangement in self._rearrangements]
+
+    @cached_property
+    def _longest_rearrangement(self) -> int:
+        return max((rearrangement.end - rearrangement.start for rearrangement in self._rearrangements), default=0)
 
     @cached_property
     def _layer_starts(self) -> list[int]:
@@ -540,7 +616,10 @@ def track_position(track: IonTrack, time: float, shape: Geometry) -> Coordinate:
 
     Between movements the ion stays at the target of its last finished
     movement. A junction move travels with constant speed along both parts of
-    its path.
+    its path. An ion of a rearrangement also moves away from the segment and
+    back: its distance from the segment is ``REARRANGEMENT_LIFT`` times its
+    travel distance times the sine of the progress angle, so it is largest
+    halfway through.
 
     Returns:
         The drawing coordinate.
@@ -556,7 +635,37 @@ def track_position(track: IonTrack, time: float, shape: Geometry) -> Coordinate:
     source = shape.position(track.initial if index == 0 else movements[index - 1].target)
     via = None if movement.via is None else shape.junctions[movement.via]
     progress = (time - movement.start) / (movement.end - movement.start)
-    return _along_path(source, via, target, progress)
+    point = _along_path(source, via, target, progress)
+    if movement.side == 0 or via is not None:
+        return point
+    start, end = shape.segments[movement.target.segment]
+    length = math.dist(start, end)
+    if length == 0:
+        return point
+    lift = movement.side * REARRANGEMENT_LIFT * math.dist(source, target) * math.sin(math.pi * progress) / length
+    # The left normal of the segment direction is (-dy, dx).
+    return (point[0] - lift * (end[1] - start[1]), point[1] + lift * (end[0] - start[0]))
+
+
+def rearrangement_span(
+    shape: Geometry,
+    rearrangement: RearrangementUse,
+    points: Sequence[Coordinate],
+) -> tuple[Coordinate, Coordinate]:
+    """Return the part of the rearrangement's segment that contains the projections of some points.
+
+    Returns:
+        The two ends of the part, in segment direction.
+    """
+    start, end = shape.segments[rearrangement.segment]
+    squared_length = (end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2
+    if squared_length == 0:
+        return start, end
+    fractions = [
+        ((x - start[0]) * (end[0] - start[0]) + (y - start[1]) * (end[1] - start[1])) / squared_length
+        for x, y in points
+    ]
+    return _interpolate(start, end, min(fractions)), _interpolate(start, end, max(fractions))
 
 
 def panel_layout(
@@ -778,10 +887,18 @@ def _replay(
         state = architecture.apply_layer(state, actions)
         after = _state_places(architecture, state, segment_index)
         waypoints, transport_end = _junction_waypoints(architecture, actions, junction_index)
+        rearrangements = _rearrangement_uses(actions, segment_index)
+        rearrangement_end = {ion: rearrangement.end for rearrangement in rearrangements for ion in rearrangement.ions}
         for ion, target in after.items():
-            if target == places[ion]:
+            source = places[ion]
+            if target == source:
                 continue
-            _add_movement(movements[ion], Movement(start_time, transport_end, target, waypoints.get(ion)))
+            if ion in rearrangement_end:
+                end = max(transport_end, rearrangement_end[ion])
+                side = 1 if target.fraction > source.fraction else -1
+            else:
+                end, side = transport_end, 0
+            _add_movement(movements[ion], Movement(start_time, end, target, waypoints.get(ion), side))
             places[ion] = target
         layers.append(
             Layer(
@@ -789,6 +906,7 @@ def _replay(
                 max(action.end_time for action in actions),
                 "; ".join(_describe(action) for action in actions),
                 _gate_uses(actions),
+                rearrangements,
             )
         )
     tracks = tuple(IonTrack(ion, initial[ion], tuple(movements[ion])) for ion in sorted(initial))
@@ -798,16 +916,24 @@ def _replay(
 def _add_movement(movements: list[Movement], movement: Movement) -> None:
     """Append a movement and keep the ion's movements free of overlap.
 
-    A segment shift that starts while the ion still moves extends the running
-    movement to the new target. A junction move that starts early makes the
-    running movement finish when the junction move starts.
+    A segment shift or rearrangement that starts while the ion still moves
+    extends the running movement to the new target. The extended movement
+    passes other ions if one of the two movements does. A junction move that
+    starts early makes the running movement finish when the junction move
+    starts.
     """
     if movements and movements[-1].end > movement.start:
         running = movements[-1]
         if movement.via is None:
-            movements[-1] = Movement(running.start, max(running.end, movement.end), movement.target, running.via)
+            movements[-1] = Movement(
+                running.start,
+                max(running.end, movement.end),
+                movement.target,
+                running.via,
+                running.side or movement.side,
+            )
             return
-        movements[-1] = Movement(running.start, movement.start, running.target, running.via)
+        movements[-1] = Movement(running.start, movement.start, running.target, running.via, running.side)
     movements.append(movement)
 
 
@@ -863,6 +989,53 @@ def _gate_uses(actions: Sequence[ScheduledAction[Any]]) -> tuple[GateUse, ...]:
         for item in actions
         if isinstance(item.action, GateAction)
     )
+
+
+def _rearrangement_uses(
+    actions: Sequence[ScheduledAction[Any]],
+    segment_index: Mapping[str, int],
+) -> tuple[RearrangementUse, ...]:
+    """Collect the rearrangements of one action layer.
+
+    Returns:
+        The segments, ion chains, and intervals.
+    """
+    return tuple(
+        RearrangementUse(segment_index[item.action.segment_id], item.action.ions, item.start_time, item.end_time)
+        for item in actions
+        if isinstance(item.action, Rearrangement)
+    )
+
+
+def _movement_path(movement: Movement) -> tuple[int | None, ...]:
+    """Return the optional JSON entries of a movement: ``[via]`` or ``[via, side]``.
+
+    Returns:
+        The entries; none for a shift inside a segment.
+    """
+    if movement.side != 0:
+        return (movement.via, movement.side)
+    return () if movement.via is None else (movement.via,)
+
+
+def _running(intervals: Sequence[_Interval], starts: Sequence[int], longest: int, time: float) -> tuple[_Interval, ...]:
+    """Return the intervals that run at a time.
+
+    ``intervals`` are sorted by start time, ``starts`` holds their start times,
+    and ``longest`` is the longest duration.
+
+    Returns:
+        The running intervals, sorted by start time.
+    """
+    index = bisect_right(starts, time)
+    earliest_start = time - longest
+    running: list[_Interval] = []
+    while index > 0 and intervals[index - 1].start >= earliest_start:
+        index -= 1
+        interval = intervals[index]
+        if _is_running(interval.start, interval.end, time):
+            running.append(interval)
+    return tuple(reversed(running))
 
 
 def _describe(scheduled_action: ScheduledAction[Action]) -> str:
