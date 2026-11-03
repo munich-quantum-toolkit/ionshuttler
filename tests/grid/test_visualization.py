@@ -63,6 +63,7 @@ if TYPE_CHECKING:
 
     from mqt.ionshuttler.core.actions import Action
     from mqt.ionshuttler.grid.planning_trace import PlanningSnapshot
+    from mqt.ionshuttler.visualization.grid._scene import Scene
 
 
 def _result_from_layers(
@@ -323,7 +324,7 @@ def test_rearranged_ions_pass_each_other_beside_their_segment() -> None:
     before = scene.ion_positions(0)
     halfway = scene.ion_positions(1.5)
     after = scene.ion_positions(3)
-    lift = REARRANGEMENT_LIFT * math.dist(before[0], before[2])
+    lift = REARRANGEMENT_LIFT * scene.geometry.ion_radius
 
     assert after[0] == before[2]
     assert after[2] == before[0]
@@ -335,19 +336,35 @@ def test_rearranged_ions_pass_each_other_beside_their_segment() -> None:
     assert math.dist(halfway[2], (before[1][0], before[1][1] - lift)) < 1e-9
 
 
-def test_ions_of_a_reversal_stay_apart() -> None:
-    """Keep the ions of a reversal one ion diameter apart, also two ions that move in the same direction."""
-    chain = Segment("chain", capacity=5)
+def _reversal_scene(capacity: int) -> Scene:
+    """Reverse a full segment of ``capacity`` ions that runs from left to right."""
+    chain = Segment("chain", capacity=capacity)
     architecture = GridArchitecture((chain,), (Junction("west", (chain.start,)), Junction("east", (chain.end,))))
-    ions = (0, 1, 2, 3, 4)
+    ions = tuple(range(capacity))
     result = _result_from_layers(architecture, {"chain": ions}, [(0, Rearrangement("chain", ions, ions[::-1]), None)])
-    scene = build_scene(result, _REARRANGEMENT_COORDINATES)
+    return build_scene(result, _REARRANGEMENT_COORDINATES)
+
+
+def test_rearranged_ions_pass_symmetrically_and_near_their_segment() -> None:
+    """Lift each ion in proportion to the places that it moves, up to a fixed distance from the segment."""
+    scene = _reversal_scene(5)
+    limit = REARRANGEMENT_LIFT * scene.geometry.ion_radius
+
+    for step in range(20 * scene.end_time + 1):
+        assert all(abs(y) <= limit + 1e-12 for _x, y in scene.ion_positions(step / 20).values())
+    halfway = scene.ion_positions(scene.end_time / 2)
+    # Ions 0 and 4 move four places, ions 1 and 3 move two places, and ion 2 stays.
+    assert [halfway[ion][1] for ion in range(5)] == pytest.approx([limit, limit / 2, 0, -limit / 2, -limit])
+
+
+def test_swapped_ions_stay_apart() -> None:
+    """Keep the two ions of a swap one ion diameter apart while they pass each other."""
+    scene = _reversal_scene(2)
     diameter = 2 * scene.geometry.ion_radius
 
     for step in range(20 * scene.end_time + 1):
-        positions = list(scene.ion_positions(step / 20).values())
-        gaps = [math.dist(first, second) for index, first in enumerate(positions) for second in positions[index + 1 :]]
-        assert min(gaps) >= diameter
+        first, second = scene.ion_positions(step / 20).values()
+        assert math.dist(first, second) >= diameter
 
 
 def test_running_rearrangement_marks_the_part_of_the_segment_that_its_chain_uses() -> None:
@@ -366,7 +383,11 @@ def test_running_rearrangement_marks_the_part_of_the_segment_that_its_chain_uses
 
 
 def test_rearranged_ions_keep_passing_when_another_ion_enters_their_segment() -> None:
-    """Extend a running rearrangement to the places that remain after another ion joins the segment."""
+    """Extend a running rearrangement to the places that remain after another ion joins the segment.
+
+    The arriving ion shortens the way of one rearranged ion and lengthens the
+    way of the other. Both still pass the same distance from the segment.
+    """
     source = Segment("source", capacity=3)
     side = Segment("side", capacity=2)
     architecture = GridArchitecture(
@@ -386,9 +407,10 @@ def test_rearranged_ions_keep_passing_when_another_ion_enters_their_segment() ->
     halfway = scene.ion_positions(2)
     final = scene.ion_positions(4)
 
-    assert [(movement.start, movement.end, movement.side) for movement in scene.ions[0].movements] == [(0, 4, 1)]
-    assert [(movement.start, movement.end, movement.side) for movement in scene.ions[1].movements] == [(0, 4, -1)]
-    assert halfway[0][1] > 0 > halfway[1][1]
+    assert [(movement.start, movement.end, movement.lift) for movement in scene.ions[0].movements] == [(0, 4, 1)]
+    assert [(movement.start, movement.end, movement.lift) for movement in scene.ions[1].movements] == [(0, 4, -1)]
+    assert halfway[0][1] > 0
+    assert math.isclose(halfway[0][1], -halfway[1][1])
     assert final[1][0] < final[0][0] < final[2][0]
     assert final[0][1] == final[1][1] == final[2][1] == 0
 

@@ -173,8 +173,10 @@ A rearrangement reorders a chain of neighboring ions in one segment. While it
 runs, the part of the segment that the chain uses glows. Each ion of the chain
 that changes its place moves to its new place beside the segment. Ions that move
 toward the segment end pass on the left of the segment direction. Ions that move
-toward the segment start pass on the right. The view shows the order before and
-after the rearrangement, not the swaps that it takes.
+toward the segment start pass on the right. The ions that move the most places
+pass two ion radii from the segment. The other ions pass closer, in proportion
+to the places that they move. The view shows the order before and after the
+rearrangement, not the swaps that it takes.
 
 ### Layout
 

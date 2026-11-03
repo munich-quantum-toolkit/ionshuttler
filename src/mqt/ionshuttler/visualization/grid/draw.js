@@ -23,7 +23,7 @@ const GridDrawing = (() => {
   const MARGIN_PER_ION_RADIUS = 2.5;
   // Same values as `REARRANGEMENT_LIFT` and `REARRANGEMENT_GLOW_WIDTH` in
   // `_scene.py`.
-  const REARRANGEMENT_LIFT = 0.5;
+  const REARRANGEMENT_LIFT = 2;
   const REARRANGEMENT_GLOW_WIDTH = 1.2;
   // Colors and text sizes that every drawing shares. Node.js tests load this
   // file without the page, so they read the shared rules from their file.
@@ -67,7 +67,7 @@ const GridDrawing = (() => {
         end: item[1],
         target: place(item[2], item[3]),
         via: item.length > 4 ? item[4] : null,
-        side: item.length > 5 ? item[5] : 0,
+        lift: item.length > 5 ? item[5] : 0,
       })),
       starts: movements.map((item) => item[0]),
     }));
@@ -305,14 +305,14 @@ const GridDrawing = (() => {
     const via = movement.via === null ? null : shape.junctions[movement.via];
     const progress = (time - movement.start) / (movement.end - movement.start);
     const point = alongPath(source, via, target, progress);
-    if (movement.side === 0 || via !== null) return point;
+    if (movement.lift === 0 || via !== null) return point;
     const [start, end] = shape.segments[movement.target.segment];
     const length = distance(start, end);
     if (length === 0) return point;
     const lift =
-      (movement.side *
+      (movement.lift *
         REARRANGEMENT_LIFT *
-        distance(source, target) *
+        shape.ionRadius *
         Math.sin(Math.PI * progress)) /
       length;
     // The left normal of the segment direction is (-dy, dx).

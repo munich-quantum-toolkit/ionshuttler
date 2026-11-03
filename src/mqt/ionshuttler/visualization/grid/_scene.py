@@ -21,8 +21,10 @@ A rearrangement shows only its order before and after. Each ion of the chain
 that changes its place moves straight to its new place and away from the
 segment and back, so that it passes the other ions of the chain. Ions that move
 toward the segment end pass on the left of the segment direction, and ions that
-move toward the segment start pass on the right. Ions that travel farther pass
-farther out. The drawing does not show the swaps that the rearrangement takes.
+move toward the segment start pass on the right. The ions that move the most
+places pass two ion radii from the segment; the other ions pass closer, in
+proportion to the places that they move. The drawing does not show the swaps
+that the rearrangement takes.
 """
 
 from __future__ import annotations
@@ -58,11 +60,10 @@ _DIGITS = 4
 _ION_RADIUS_PER_SPACING = 0.38
 _MAX_ION_RADIUS = 0.06
 _MARGIN_PER_ION_RADIUS = 2.5
-# Halfway through a rearrangement, an ion is this fraction of its travel
-# distance away from the segment. Ions that travel farther thus pass farther
-# out, and two ions that pass each other stay at least one place apart. Same
-# value as `REARRANGEMENT_LIFT` in `draw.js`.
-REARRANGEMENT_LIFT = 0.5
+# Halfway through a rearrangement, the ions that move the most places pass
+# this many ion radii away from the segment. Same value as `REARRANGEMENT_LIFT`
+# in `draw.js`.
+REARRANGEMENT_LIFT = 2.0
 # Width, in ion radii, of the glow along the part of a segment that a running
 # rearrangement uses. Same value as `REARRANGEMENT_GLOW_WIDTH` in `draw.js`.
 REARRANGEMENT_GLOW_WIDTH = 1.2
@@ -94,17 +95,21 @@ class Movement:
 
     The ion leaves its previous place at ``start`` and reaches ``target`` at
     ``end``. A junction move passes through junction ``via``. Ions that only
-    shift inside their segment have no ``via`` junction. ``side`` is 0, except
-    in a rearrangement: there it is 1 for an ion that moves toward the segment
-    end and passes on the left of the segment direction, and -1 for an ion
-    that moves toward the segment start and passes on the right.
+    shift inside their segment have no ``via`` junction. ``lift`` is 0, except
+    in a rearrangement: there it is the ion's distance from the segment
+    halfway through, in units of ``REARRANGEMENT_LIFT`` ion radii. It is
+    positive for an ion that moves toward the segment end and passes on the
+    left of the segment direction, and negative for an ion that moves toward
+    the segment start and passes on the right. Its size is the number of
+    places that the ion moves, divided by the largest number of places that
+    an ion of the chain moves.
     """
 
     start: int
     end: int
     target: Place
     via: int | None = None
-    side: int = 0
+    lift: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -617,9 +622,9 @@ def track_position(track: IonTrack, time: float, shape: Geometry) -> Coordinate:
     Between movements the ion stays at the target of its last finished
     movement. A junction move travels with constant speed along both parts of
     its path. An ion of a rearrangement also moves away from the segment and
-    back: its distance from the segment is ``REARRANGEMENT_LIFT`` times its
-    travel distance times the sine of the progress angle, so it is largest
-    halfway through.
+    back: its distance from the segment is ``lift`` times
+    ``REARRANGEMENT_LIFT`` ion radii times the sine of the progress angle, so
+    it is largest halfway through.
 
     Returns:
         The drawing coordinate.
@@ -636,13 +641,13 @@ def track_position(track: IonTrack, time: float, shape: Geometry) -> Coordinate:
     via = None if movement.via is None else shape.junctions[movement.via]
     progress = (time - movement.start) / (movement.end - movement.start)
     point = _along_path(source, via, target, progress)
-    if movement.side == 0 or via is not None:
+    if movement.lift == 0 or via is not None:
         return point
     start, end = shape.segments[movement.target.segment]
     length = math.dist(start, end)
     if length == 0:
         return point
-    lift = movement.side * REARRANGEMENT_LIFT * math.dist(source, target) * math.sin(math.pi * progress) / length
+    lift = movement.lift * REARRANGEMENT_LIFT * shape.ion_radius * math.sin(math.pi * progress) / length
     # The left normal of the segment direction is (-dy, dx).
     return (point[0] - lift * (end[1] - start[1]), point[1] + lift * (end[0] - start[0]))
 
@@ -889,16 +894,12 @@ def _replay(
         waypoints, transport_end = _junction_waypoints(architecture, actions, junction_index)
         rearrangements = _rearrangement_uses(actions, segment_index)
         rearrangement_end = {ion: rearrangement.end for rearrangement in rearrangements for ion in rearrangement.ions}
+        lifts = _rearrangement_lifts(actions)
         for ion, target in after.items():
-            source = places[ion]
-            if target == source:
+            if target == places[ion]:
                 continue
-            if ion in rearrangement_end:
-                end = max(transport_end, rearrangement_end[ion])
-                side = 1 if target.fraction > source.fraction else -1
-            else:
-                end, side = transport_end, 0
-            _add_movement(movements[ion], Movement(start_time, end, target, waypoints.get(ion), side))
+            end = max(transport_end, rearrangement_end[ion]) if ion in rearrangement_end else transport_end
+            _add_movement(movements[ion], Movement(start_time, end, target, waypoints.get(ion), lifts.get(ion, 0.0)))
             places[ion] = target
         layers.append(
             Layer(
@@ -930,10 +931,10 @@ def _add_movement(movements: list[Movement], movement: Movement) -> None:
                 max(running.end, movement.end),
                 movement.target,
                 running.via,
-                running.side or movement.side,
+                running.lift or movement.lift,
             )
             return
-        movements[-1] = Movement(running.start, movement.start, running.target, running.via, running.side)
+        movements[-1] = Movement(running.start, movement.start, running.target, running.via, running.lift)
     movements.append(movement)
 
 
@@ -1007,14 +1008,34 @@ def _rearrangement_uses(
     )
 
 
-def _movement_path(movement: Movement) -> tuple[int | None, ...]:
-    """Return the optional JSON entries of a movement: ``[via]`` or ``[via, side]``.
+def _rearrangement_lifts(actions: Sequence[ScheduledAction[Any]]) -> dict[int, float]:
+    """Return the lift of each ion of the rearrangements in one action layer; see :class:`Movement`.
+
+    The lift depends only on the order before and after, so that the arcs of
+    a chain are symmetric even when other ions enter or leave the segment.
+
+    Returns:
+        Lifts keyed by ion ID.
+    """
+    lifts: dict[int, float] = {}
+    for item in actions:
+        action = item.action
+        if not isinstance(action, Rearrangement):
+            continue
+        moved = {ion: action.new_order.index(ion) - index for index, ion in enumerate(action.ions)}
+        most = max(abs(places) for places in moved.values())
+        lifts.update({ion: _round(places / most) for ion, places in moved.items()})
+    return lifts
+
+
+def _movement_path(movement: Movement) -> tuple[int | float | None, ...]:
+    """Return the optional JSON entries of a movement: ``[via]`` or ``[via, lift]``.
 
     Returns:
         The entries; none for a shift inside a segment.
     """
-    if movement.side != 0:
-        return (movement.via, movement.side)
+    if movement.lift != 0:
+        return (movement.via, movement.lift)
     return () if movement.via is None else (movement.via,)
 
 
