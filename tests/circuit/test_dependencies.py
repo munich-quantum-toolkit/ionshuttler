@@ -9,13 +9,129 @@
 
 from __future__ import annotations
 
-import pytest
+import math
+import time
+from typing import TYPE_CHECKING
 
-from mqt.ionshuttler.circuit import parse_circuit, with_commutation_aware_dependencies
+import numpy as np
+import pytest
+from qiskit.circuit import Gate
+from qiskit.circuit.commutation_library import SessionCommutationChecker
+from qiskit.circuit.library import RXGate, RXXGate, RYGate, RYYGate, RZGate, RZZGate
+
+from mqt.ionshuttler.circuit import Circuit, parse_circuit, with_commutation_aware_dependencies
+from mqt.ionshuttler.core.gates import Measure, Reset, Rx, Rxx, Ry, Ryy, Rz, Rzz
+
+if TYPE_CHECKING:
+    from mqt.ionshuttler.core.gates import GateAction
+
+_ANGLES = (0.3, math.pi / 2, math.pi, 2 * math.pi, 0.0, -math.pi / 2)
+_ROTATIONS = (Rx, Ry, Rz, Rx, Ry, Rz)
+_PAIR_ROTATIONS = (Rxx, Ryy, Rzz, Rzz)
+_QISKIT_ROTATIONS = {"rx": RXGate, "ry": RYGate, "rz": RZGate, "rxx": RXXGate, "ryy": RYYGate, "rzz": RZZGate}
 
 
 def _qasm(*instructions: str) -> str:
     return "\n".join(("OPENQASM 2.0;", 'include "qelib1.inc";', "qreg q[2];", *instructions))
+
+
+def _random_circuit(seed: int, num_ions: int, num_gates: int, barrier_chance: float = 0.08) -> Circuit:
+    """Return a circuit of rotations (some equal to the identity), measurements, resets, and barriers."""
+    rng = np.random.default_rng(seed)
+    gates: list[GateAction] = []
+    predecessors: list[frozenset[int]] = []
+    barriers: list[tuple[frozenset[int], ...]] = []
+    latest: dict[int, int] = {}
+    for gate_id in range(num_gates):
+        targets = frozenset(int(ion) for ion in rng.choice(num_ions, size=rng.integers(1, num_ions + 1), replace=False))
+        barriers.append((targets,) if rng.random() < barrier_chance else ())
+        choice = int(rng.integers(len(_ROTATIONS) + len(_PAIR_ROTATIONS) + 2))
+        angle = _ANGLES[int(rng.integers(len(_ANGLES)))]
+        gate: GateAction
+        if choice < len(_ROTATIONS):
+            gate = _ROTATIONS[choice](ion=int(rng.integers(num_ions)), theta=angle, gate_id=gate_id)
+        elif choice < len(_ROTATIONS) + len(_PAIR_ROTATIONS):
+            first, second = (int(ion) for ion in rng.choice(num_ions, size=2, replace=False))
+            gate = _PAIR_ROTATIONS[choice - len(_ROTATIONS)](ion_a=first, ion_b=second, theta=angle, gate_id=gate_id)
+        elif choice == len(_ROTATIONS) + len(_PAIR_ROTATIONS):
+            gate = Measure(ion=int(rng.integers(num_ions)), gate_id=gate_id)
+        else:
+            gate = Reset(ion=int(rng.integers(num_ions)), gate_id=gate_id)
+        gates.append(gate)
+        predecessors.append(frozenset(latest[ion] for ion in gate.ions if ion in latest))
+        for ion in gate.ions:
+            latest[ion] = gate_id
+    barriers.append(())
+    return Circuit(num_ions, tuple(gates), tuple(predecessors), tuple(barriers))
+
+
+def _qiskit_operation(gate: GateAction) -> Gate:
+    rotation = _QISKIT_ROTATIONS.get(gate.circuit_name or "")
+    if rotation is None:
+        return Gate(gate.circuit_name or "", len(gate.ions), [])
+    return rotation(*(getattr(gate, name) for name in gate.parameter_names))
+
+
+def _orders(predecessors: tuple[frozenset[int], ...]) -> list[int]:
+    """Return, for each gate, a bit set of every gate that must run before it."""
+    before: list[int] = []
+    for gate_predecessors in predecessors:
+        bits = 0
+        for predecessor in gate_predecessors:
+            bits |= before[predecessor] | (1 << predecessor)
+        before.append(bits)
+    return before
+
+
+def _pairwise_orders(circuit: Circuit) -> list[int]:
+    """Order each pair of gates or barriers that share an ion, unless both are gates that commute."""
+    nodes: list[tuple[tuple[int, ...], Gate | None]] = []
+    gate_nodes: list[int] = []
+    for gate_id, gate in enumerate(circuit.gates):
+        nodes.extend((tuple(sorted(targets)), None) for targets in circuit.barriers[gate_id])
+        gate_nodes.append(len(nodes))
+        nodes.append((gate.ions, _qiskit_operation(gate)))
+    before: list[int] = []
+    for later, (later_ions, later_operation) in enumerate(nodes):
+        bits = 0
+        for earlier, (earlier_ions, earlier_operation) in enumerate(nodes[:later]):
+            if set(earlier_ions).isdisjoint(later_ions):
+                continue
+            if (
+                earlier_operation is None
+                or later_operation is None
+                or not SessionCommutationChecker.commute(
+                    earlier_operation, list(earlier_ions), [], later_operation, list(later_ions), []
+                )
+            ):
+                bits |= before[earlier] | (1 << earlier)
+        before.append(bits)
+    gate_of_node = {node: gate_id for gate_id, node in enumerate(gate_nodes)}
+    return [
+        sum(1 << gate_of_node[earlier] for earlier in gate_of_node if (before[node] >> earlier) & 1)
+        for node in gate_nodes
+    ]
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_commutation_aware_dependencies_order_exactly_the_noncommuting_pairs(seed: int) -> None:
+    """Imply the same order as ordering every non-commuting pair on a shared ion and every pair across a barrier."""
+    circuit = _random_circuit(seed, num_ions=2 + seed % 4, num_gates=10 + seed % 50)
+
+    dependencies = with_commutation_aware_dependencies(circuit)
+
+    assert _orders(dependencies.predecessors) == _pairwise_orders(circuit)
+
+
+def test_commutation_aware_dependencies_scale_to_long_circuits() -> None:
+    """Analyze a 20 000-gate circuit in seconds; checking all pairs would take minutes and gigabytes."""
+    circuit = _random_circuit(1, num_ions=24, num_gates=20_000, barrier_chance=0.001)
+
+    began = time.perf_counter()
+    dependencies = with_commutation_aware_dependencies(circuit)
+
+    assert time.perf_counter() - began < 60
+    assert len(dependencies.predecessors) == 20_000
 
 
 def test_commutation_aware_dependencies_release_commuting_rotations() -> None:

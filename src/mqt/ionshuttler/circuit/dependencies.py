@@ -9,19 +9,15 @@
 
 from __future__ import annotations
 
-from functools import cache
 from typing import TYPE_CHECKING
 
-from qiskit import QuantumCircuit
 from qiskit.circuit import Gate
+from qiskit.circuit.commutation_library import SessionCommutationChecker
 from qiskit.circuit.library import RXGate, RXXGate, RYGate, RYYGate, RZGate, RZZGate
-from qiskit.converters import circuit_to_dagdependency
 
 from .model import Circuit
 
 if TYPE_CHECKING:
-    from qiskit.dagcircuit import DAGDependency
-
     from mqt.ionshuttler.core.gates import GateAction
 
 _QISKIT_GATE_TYPES = {
@@ -37,96 +33,166 @@ _QISKIT_GATE_TYPES = {
 def with_commutation_aware_dependencies(circuit: Circuit) -> Circuit:
     """Return a scheduling view that permits commuting gate reordering.
 
-    A barrier still orders every gate on its qubits.
+    Two gates keep their order when they share an ion and do not commute, as
+    Qiskit's commutation checker decides. A barrier orders every gate on its
+    qubits. The returned predecessors imply exactly these orders; they need
+    not be the smallest sets that do.
+
+    The analysis walks back along each ion of a gate and stops at a gate that
+    already follows every earlier gate on that ion. For typical circuits, time
+    and memory therefore grow about linearly with the number of gates.
 
     Args:
         circuit: Parsed circuit whose gate IDs define schedule identity.
 
     Returns:
-        A circuit with Qiskit's commutation-aware direct predecessors.
+        A circuit whose predecessors order every pair of gates that share an
+        ion and do not commute, and every gate across a barrier on its ions.
 
     Raises:
-        ValueError: If the dependency operations do not match the parsed gates.
-    """
-    quantum_circuit = _as_quantum_circuit(circuit)
-    dependency_graph = circuit_to_dagdependency(quantum_circuit)
-    qubit_indices = {qubit: index for index, qubit in enumerate(dependency_graph.qubits)}
-    operation_nodes = tuple(node for node in dependency_graph.get_nodes() if node.op.name != "barrier")
-    if len(operation_nodes) != len(circuit.gates):
-        msg = "source operations do not match the parsed circuit"
-        raise ValueError(msg)
-
-    node_to_gate: dict[int, int] = {}
-    for gate, node in zip(circuit.gates, operation_nodes, strict=True):
-        ions = tuple(qubit_indices[qubit] for qubit in node.qargs)
-        if gate.gate_id is None or gate.ions != ions or gate.circuit_name != node.op.name.lower():
-            msg = "source operations do not match the parsed circuit"
-            raise ValueError(msg)
-        node_to_gate[node.node_id] = gate.gate_id
-    left_out = _barrier_orders_left_out(dependency_graph)
-
-    @cache
-    def gate_predecessors(node_id: int) -> frozenset[int]:
-        predecessors: set[int] = set()
-        for predecessor_id in (*dependency_graph.direct_predecessors(node_id), *left_out.get(node_id, ())):
-            if predecessor_id in node_to_gate:
-                predecessors.add(node_to_gate[predecessor_id])
-            else:
-                predecessors.update(gate_predecessors(predecessor_id))
-        return frozenset(predecessors)
-
-    predecessors = [frozenset[int]() for _gate in circuit.gates]
-    for node_id, gate_id in node_to_gate.items():
-        predecessors[gate_id] = gate_predecessors(node_id)
+        ValueError: If a gate type has no circuit name.
+    """  # ruff: ignore[docstring-extraneous-exception] - Raised while building the Qiskit operations.
+    ordering = _Ordering()
+    gate_node: list[int] = []
+    for gate_id, gate in enumerate(circuit.gates):
+        for targets in circuit.barriers[gate_id]:
+            ordering.add(tuple(sorted(targets)), None)
+        gate_node.append(ordering.add(gate.ions, _as_qiskit_gate(gate)))
+    predecessors = tuple(frozenset(ordering.gates_before(node)) for node in gate_node)
     return Circuit(
         num_ions=circuit.num_ions,
         gates=circuit.gates,
-        predecessors=tuple(predecessors),
+        predecessors=predecessors,
         barriers=circuit.barriers,
     )
 
 
-def _barrier_orders_left_out(dependency_graph: DAGDependency) -> dict[int, set[int]]:
-    """Return the orders that a barrier requires and that the commutation analysis leaves out.
+class _Ordering:
+    """Collect gates and barriers in circuit order with the nodes that each must follow.
 
-    Qiskit lets an operation that equals the identity, such as ``rz(2*pi)``,
-    commute with a barrier. A barrier orders every operation on its qubits.
-
-    Returns:
-        Additional direct predecessors by node ID.
+    Nodes are numbered in circuit order. A barrier is a node without an
+    operation; it commutes with nothing on its qubits. An identity, such as
+    ``rz(2*pi)``, commutes with every gate, so only barriers order it.
     """
-    nodes = tuple(dependency_graph.get_nodes())
-    left_out: dict[int, set[int]] = {}
-    for barrier in nodes:
-        if barrier.op.name != "barrier":
-            continue
-        qubits = set(barrier.qargs)
-        before = set(dependency_graph.predecessors(barrier.node_id))
-        after = set(dependency_graph.successors(barrier.node_id))
-        for node in nodes:
-            if node.node_id == barrier.node_id or qubits.isdisjoint(node.qargs):
-                continue
-            if node.node_id < barrier.node_id and node.node_id not in before:
-                left_out.setdefault(barrier.node_id, set()).add(node.node_id)
-            elif node.node_id > barrier.node_id and node.node_id not in after:
-                left_out.setdefault(node.node_id, set()).add(barrier.node_id)
-    return left_out
 
+    def __init__(self) -> None:
+        self.ions: list[tuple[int, ...]] = []
+        self.operations: list[Gate | None] = []
+        self.signatures: list[tuple[object, ...] | None] = []
+        self.identity: list[bool] = []
+        self.after: list[list[int]] = []
+        # For each node and each of its ions: whether the node follows every earlier node on that ion,
+        # and whether it follows every earlier node except identities.
+        self.follows_all: list[dict[int, bool]] = []
+        self.follows_gates: list[dict[int, bool]] = []
+        self.on_ion: dict[int, list[int]] = {}
+        self.barrier_gates: dict[int, frozenset[int]] = {}
+        self.gate_number: dict[int, int] = {}
+        self.known: dict[tuple[object, ...], bool] = {}
+        self.known_identity: dict[tuple[object, ...], bool] = {}
 
-def _as_quantum_circuit(circuit: Circuit) -> QuantumCircuit:
-    """Build a Qiskit circuit from the parsed gates and barriers.
+    def add(self, ions: tuple[int, ...], operation: Gate | None) -> int:
+        """Add one gate (with its Qiskit operation) or one barrier (``None``).
 
-    Returns:
-        The circuit used for dependency analysis.
-    """
-    quantum_circuit = QuantumCircuit(circuit.num_ions)
-    for gate_id, gate in enumerate(circuit.gates):
-        for targets in circuit.barriers[gate_id]:
-            quantum_circuit.barrier(*sorted(targets))
-        quantum_circuit.append(_as_qiskit_gate(gate), gate.ions)
-    for targets in circuit.barriers[-1]:
-        quantum_circuit.barrier(*sorted(targets))
-    return quantum_circuit
+        Returns:
+            The node number of the gate or barrier.
+        """
+        node = len(self.ions)
+        barrier = operation is None
+        signature = None if operation is None else (operation.name, tuple(operation.params), len(ions))
+        self.ions.append(ions)
+        self.operations.append(operation)
+        self.signatures.append(signature)
+        self.identity.append(operation is not None and signature is not None and self.is_identity(operation, signature))
+        after: list[int] = []
+        found: set[int] = set()
+        follows_all: dict[int, bool] = {}
+        follows_gates: dict[int, bool] = {}
+        for ion in ions:
+            complete = complete_for_gates = True
+            # Walk back along the ion. A node that the new node already follows needs no entry; a node that
+            # also follows every earlier node that matters ends the walk. A gate never follows an identity,
+            # so it passes identities; a barrier follows every node.
+            for earlier in reversed(self.on_ion.get(ion, ())):
+                if not barrier and self.identity[earlier]:
+                    complete = False
+                    continue
+                if not (earlier in found or self.follows_found(earlier, after)):
+                    if self.commute(node, earlier):
+                        complete = complete_for_gates = False
+                        continue
+                    after.append(earlier)
+                    found.add(earlier)
+                if barrier and self.follows_all[earlier][ion]:
+                    break
+                if not barrier and self.follows_gates[earlier][ion]:
+                    complete = complete and self.follows_all[earlier][ion]
+                    break
+            follows_all[ion] = complete
+            follows_gates[ion] = complete_for_gates
+        for ion in ions:
+            self.on_ion.setdefault(ion, []).append(node)
+        self.after.append(after)
+        self.follows_all.append(follows_all)
+        self.follows_gates.append(follows_gates)
+        if barrier:
+            self.barrier_gates[node] = frozenset(self.gates_before(node))
+        else:
+            self.gate_number[node] = len(self.gate_number)
+        return node
+
+    def is_identity(self, operation: Gate, signature: tuple[object, ...]) -> bool:
+        """Return whether an operation commutes with every rotation on each of its qubits, so equals the identity."""
+        if signature not in self.known_identity:
+            qubits = list(range(operation.num_qubits))
+            self.known_identity[signature] = all(
+                SessionCommutationChecker.commute(operation, qubits, [], probe, [qubit], [])
+                for qubit in qubits
+                for probe in (RXGate(0.7), RYGate(0.7), RZGate(0.7))
+            )
+        return self.known_identity[signature]
+
+    def follows_found(self, earlier: int, after: list[int]) -> bool:
+        """Return whether a node in ``after`` must follow ``earlier`` because they do not commute."""
+        return any(
+            earlier < found
+            and not set(self.ions[earlier]).isdisjoint(self.ions[found])
+            and not self.commute(earlier, found)
+            for found in after
+        )
+
+    def gates_before(self, node: int) -> set[int]:
+        """Return the gate numbers that ``node`` follows, looking through barriers."""
+        gates: set[int] = set()
+        for earlier in self.after[node]:
+            if earlier in self.gate_number:
+                gates.add(self.gate_number[earlier])
+            else:
+                gates.update(self.barrier_gates[earlier])
+        return gates
+
+    def commute(self, first: int, second: int) -> bool:
+        """Return whether two nodes commute; nodes on disjoint ions always do, barriers never."""
+        first_ions, second_ions = self.ions[first], self.ions[second]
+        first_operation, second_operation = self.operations[first], self.operations[second]
+        if first_operation is None or second_operation is None:
+            return set(first_ions).isdisjoint(second_ions)
+        # The answer depends only on the operations and on which ions they share.
+        shared = tuple(second_ions.index(ion) if ion in second_ions else -1 for ion in first_ions)
+        key = (self.signatures[first], self.signatures[second], shared)
+        known = self.known.get(key)
+        if known is None:
+            local = {ion: position for position, ion in enumerate(dict.fromkeys((*first_ions, *second_ions)))}
+            known = SessionCommutationChecker.commute(
+                first_operation,
+                [local[ion] for ion in first_ions],
+                [],
+                second_operation,
+                [local[ion] for ion in second_ions],
+                [],
+            )
+            self.known[key] = known
+        return known
 
 
 def _as_qiskit_gate(gate: GateAction) -> Gate:
