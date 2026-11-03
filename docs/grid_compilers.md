@@ -58,6 +58,19 @@ upcoming gates, routes several ions concurrently, and uses cycles to clear
 blocked paths. Independent gates and transport actions can overlap when they use
 different resources.
 
+Transport consists of junction moves, cycles of junction moves, and
+rearrangements. A {py:class}`~mqt.ionshuttler.grid.Rearrangement` reorders
+neighboring ions inside an ordered segment. It takes the `swap` duration of
+{py:class}`~mqt.ionshuttler.grid.TransportTiming` once per layer of neighbor
+swaps, counted as in the permutation-based Linear compiler. It occupies only the
+ions that it reorders: an ion that enters the segment meanwhile joins at the
+segment end it enters, outside the reordered ions. The compilers use
+rearrangements to swap the two ions of a full segment of capacity 2. The greedy
+scheduler swaps when the ion in front would otherwise leave its own route and
+the swap is not longer than two junction moves, or when no other transport is
+possible. Remove `Rearrangement` from the architecture's
+`supported_action_types` to compile without it.
+
 By default, the compiler also:
 
 - uses commutation-aware circuit dependencies;
@@ -129,9 +142,8 @@ result = GridCompiler(architecture, config).compile(circuit)
 
 ### Model limits
 
-- The Grid model has no segment-reordering action or reordering cost.
-  `UNORDERED` segments leave their internal ion order unspecified, so the Grid
-  model permits reordering without a separate action or duration.
+- `UNORDERED` segments leave their internal ion order unspecified, so the Grid
+  model permits reordering there without a separate action or duration.
 - The compiler uses bounded heuristics and does not guarantee a minimum
   makespan. A failed compilation does not prove that the input is infeasible.
 - Grid timing does not include any transport or reordering that a future

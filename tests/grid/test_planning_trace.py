@@ -226,7 +226,7 @@ def test_planning_trace_round_trips_through_result_json() -> None:
 
 def test_grid_diagnostics_reject_an_unknown_stop_reason() -> None:
     """Name the field when saved diagnostics contain an unknown stop reason."""
-    data = GridDiagnostics(1, 0, 0, 0, 0, GridStopReason.COMPLETED).to_dict()
+    data = GridDiagnostics(1, 0, 0, 0, 0, 0, GridStopReason.COMPLETED).to_dict()
     data["stop_reason"] = "finished"
 
     with pytest.raises(ValueError, match="stop_reason has unknown value 'finished'"):

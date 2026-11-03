@@ -16,7 +16,7 @@ from itertools import combinations, count, pairwise
 from typing import TYPE_CHECKING
 
 from mqt.ionshuttler.core.schedule import ScheduledAction
-from mqt.ionshuttler.grid.actions import Cycle, JunctionMove
+from mqt.ionshuttler.grid.actions import Cycle, JunctionMove, Rearrangement
 from mqt.ionshuttler.grid.model import SegmentOccupancy
 
 if TYPE_CHECKING:
@@ -31,8 +31,8 @@ if TYPE_CHECKING:
 OccupancyKey = tuple[tuple[str, tuple[int, ...]], ...]
 JunctionCrossings = frozenset[tuple[str, str]] | None
 # Favor states close to the target over short paths: the placement search needs a legal sequence, not the shortest.
-# The first search uses junction moves only and favors closeness strongly, which is fast while segments have free
-# capacity; the second search adds cycles, which move ions through full segments, and keeps routes shorter.
+# The first search uses junction moves and swaps only and favors closeness strongly, which is fast while segments
+# have free capacity; the second search adds cycles, which move ions through full segments, and keeps routes shorter.
 _PLACEMENT_SEARCH_WEIGHT = 6
 _PLACEMENT_CYCLE_SEARCH_WEIGHT = 3
 # Cycle-search steps per expanded placement state; on full grids, only cycles through several segments can move.
@@ -75,7 +75,7 @@ def route_gate_bfs(
                 return (*path, move), explored
         cycles, cycle_work = _cycle_candidates(architecture, current, moves, max_work=max_states - explored)
         explored += cycle_work
-        for action in (*moves, *cycles):
+        for action in (*moves, *cycles, *rearrangements(architecture, current)):
             duration = architecture.action_duration(action)
             timed_action = ScheduledAction(0, action, current.time, duration)
             try:
@@ -109,11 +109,12 @@ def route_to_placement(
     The search first expands the states that look closest to the target: the
     sum of each targeted ion's routing distance to its target segment, plus,
     for an exact target, two moves for each ion that sits in its target
-    segment in the wrong order. The sequence is legal but not necessarily the
-    shortest one. The search first uses junction moves only; if that finds no
-    sequence, it searches again with cycles, which move ions through full
-    segments. ``max_states`` bounds the number of expanded states of each
-    search.
+    segment in the wrong order, or one swap for a reversed pair when the
+    architecture supports :class:`~mqt.ionshuttler.grid.Rearrangement`. The
+    sequence is legal but not necessarily the shortest one. The search first
+    uses junction moves and swaps only; if that finds no sequence, it
+    searches again with cycles, which move ions through full segments.
+    ``max_states`` bounds the number of expanded states of each search.
 
     Returns:
         The movement sequence, or ``None`` if the target is unreachable or the
@@ -145,6 +146,8 @@ def route_to_placement(
             for segment_id, ions in current.occupancy
         )
 
+    swaps_allowed = architecture.supports(Rearrangement)
+
     def remaining(current: GridMachineState) -> int | None:
         total = 0
         for segment_id, ions in current.occupancy:
@@ -158,8 +161,11 @@ def route_to_placement(
                 total += distance
                 if distance == 0 and target_position is not None:
                     positions.append(target_position[ion])
-            if architecture.segment(segment_id).occupancy is SegmentOccupancy.ORDERED:
-                total += 2 * (len(positions) - _longest_increasing_length(positions))
+            segment = architecture.segment(segment_id)
+            if segment.occupancy is SegmentOccupancy.ORDERED:
+                out_of_order = len(positions) - _longest_increasing_length(positions)
+                # One physical swap restores a reversed pair; otherwise an ion leaves and returns.
+                total += out_of_order if swaps_allowed and segment.capacity == 2 else 2 * out_of_order
         return total
 
     def reached(current: GridMachineState) -> bool:
@@ -702,10 +708,25 @@ def movement_candidates(
     max_cycle_work: int,
     allowed_crossings: JunctionCrossings = None,
 ) -> tuple[tuple[Action, ...], int]:
-    """Return deterministic moves and the work used to find simultaneous rotations."""
+    """Return deterministic moves and swaps, and the work used to find simultaneous rotations."""
     moves = junction_moves(architecture, state, allowed_crossings=allowed_crossings)
     cycles, explored = _cycle_candidates(architecture, state, moves, max_work=max_cycle_work)
-    return (*moves, *cycles), explored
+    return (*moves, *cycles, *rearrangements(architecture, state)), explored
+
+
+def rearrangements(architecture: GridArchitecture, state: GridMachineState) -> tuple[Rearrangement, ...]:
+    """Return the rearrangements that the compilers use: the swap of the idle ions of a full segment of capacity 2."""
+    if not architecture.supports(Rearrangement):
+        return ()
+    busy_until = dict(state.ions_busy_until)
+    return tuple(
+        Rearrangement(segment_id, ions, ions[::-1])
+        for segment_id, ions in state.occupancy
+        if len(ions) == 2
+        and architecture.segment(segment_id).capacity == 2
+        and architecture.segment(segment_id).occupancy is SegmentOccupancy.ORDERED
+        and all(busy_until.get(ion, state.time) <= state.time for ion in ions)
+    )
 
 
 def junction_moves(
@@ -948,6 +969,7 @@ __all__ = [
     "junction_moves",
     "movement_candidates",
     "next_segments_toward",
+    "rearrangements",
     "route_gate_bfs",
     "route_junction_crossing_greedy_cycle",
     "route_to_placement",

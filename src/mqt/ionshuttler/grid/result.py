@@ -51,6 +51,7 @@ class GridDiagnostics:
         junction_moves: Number of junction moves, including the moves inside
             cycles.
         cycles: Number of cycles.
+        rearrangements: Number of rearrangements inside segments.
         gates: Number of completed gates.
         stop_reason: Why scheduling stopped.
         planning_trace: One snapshot per scheduling decision, in decision
@@ -63,6 +64,7 @@ class GridDiagnostics:
     explored_routing_states: int
     junction_moves: int
     cycles: int
+    rearrangements: int
     gates: int
     stop_reason: GridStopReason
     planning_trace: tuple[PlanningSnapshot, ...] | None = None
@@ -75,7 +77,7 @@ class GridDiagnostics:
                 a :class:`GridStopReason`, or the trace contains another value.
             ValueError: If a counter is negative.
         """
-        for name in ("iterations", "explored_routing_states", "junction_moves", "cycles", "gates"):
+        for name in ("iterations", "explored_routing_states", "junction_moves", "cycles", "rearrangements", "gates"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int):
                 msg = f"{name} must be an integer"
@@ -103,6 +105,7 @@ class GridDiagnostics:
             "explored_routing_states": self.explored_routing_states,
             "junction_moves": self.junction_moves,
             "cycles": self.cycles,
+            "rearrangements": self.rearrangements,
             "gates": self.gates,
             "stop_reason": self.stop_reason.value,
         }
@@ -117,6 +120,7 @@ class GridDiagnostics:
             ("Explored routing states", self.explored_routing_states),
             ("Junction moves", self.junction_moves),
             ("Cycles", self.cycles),
+            ("Rearrangements", self.rearrangements),
             ("Completed gates", self.gates),
         )
 
@@ -142,6 +146,7 @@ class GridDiagnostics:
             explored_routing_states=require_int(mapping, "explored_routing_states"),
             junction_moves=require_int(mapping, "junction_moves"),
             cycles=require_int(mapping, "cycles"),
+            rearrangements=require_int(mapping, "rearrangements"),
             gates=require_int(mapping, "gates"),
             stop_reason=reason,
             planning_trace=(

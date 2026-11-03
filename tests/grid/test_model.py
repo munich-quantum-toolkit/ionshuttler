@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any, cast
 
 import pytest
 
@@ -18,9 +19,11 @@ from mqt.ionshuttler.grid import (
     Junction,
     JunctionMove,
     ProcessingZone,
+    Rearrangement,
     Segment,
     SegmentEndpoint,
     SegmentOccupancy,
+    TransportTiming,
 )
 from mqt.ionshuttler.grid.actions import decode_grid_action
 
@@ -53,6 +56,62 @@ def test_grid_actions_round_trip_as_json() -> None:
     serialized = json.loads(json.dumps(cycle.to_dict()))
 
     assert decode_grid_action(serialized) == cycle
+
+
+def test_rearrangement_round_trips_and_reads_plainly() -> None:
+    """Serialize a rearrangement with its segment, chain, and new order."""
+    rearrangement = Rearrangement("h:0:0", (3, 1, 4), (4, 3, 1))
+
+    assert decode_grid_action(json.loads(json.dumps(rearrangement.to_dict()))) == rearrangement
+    assert str(rearrangement) == "rearrange [q3,q1,q4] → [q4,q3,q1] in h:0:0"
+
+
+@pytest.mark.parametrize(
+    ("ions", "new_order", "layers"),
+    [
+        ((0, 1), (1, 0), 1),
+        ((0, 1, 2), (2, 1, 0), 3),
+        ((0, 1, 2), (1, 0, 2), 1),
+        ((0, 1, 2, 3), (1, 0, 3, 2), 1),
+        ((0, 1, 2, 3), (3, 2, 1, 0), 5),
+    ],
+)
+def test_rearrangement_counts_layers_of_neighbor_swaps(
+    ions: tuple[int, ...], new_order: tuple[int, ...], layers: int
+) -> None:
+    """Count the swap layers of the insertion sort that the Linear compiler uses."""
+    assert Rearrangement("a", ions, new_order).swap_layers == layers
+
+
+@pytest.mark.parametrize(
+    ("segment_id", "ions", "new_order", "error", "match"),
+    [
+        ("", (0, 1), (1, 0), ValueError, "non-empty"),
+        (1, (0, 1), (1, 0), TypeError, "string"),
+        ("a", (0,), (0,), ValueError, "at least two different"),
+        ("a", (0, 0), (0, 0), ValueError, "at least two different"),
+        ("a", (-1, 1), (1, -1), ValueError, "at least two different"),
+        ("a", (True, 1), (1, True), TypeError, "integers"),
+        ("a", (0, 1), (1, 2), ValueError, "exactly the ions"),
+        ("a", (0, 1), (0, 1), ValueError, "differ from the current order"),
+    ],
+)
+def test_rearrangement_rejects_malformed_fields(
+    segment_id: object, ions: tuple[object, ...], new_order: tuple[object, ...], error: type[Exception], match: str
+) -> None:
+    """Reject a rearrangement without a segment, a chain of two ions, or a new order of the same ions."""
+    with pytest.raises(error, match=match):
+        cast("Any", Rearrangement)(segment_id, ions, new_order)
+
+
+def test_transport_timing_has_a_swap_duration() -> None:
+    """Serialize the swap duration and default it when older data lacks it."""
+    timing = TransportTiming(junction_move=20, swap=15)
+
+    assert TransportTiming.from_dict(timing.to_dict()) == timing
+    assert TransportTiming.from_dict({"junction_move": 20}) == TransportTiming(20)
+    with pytest.raises(ValueError, match="swap"):
+        TransportTiming(swap=0)
 
 
 def test_grid_actions_have_concise_human_readable_text() -> None:

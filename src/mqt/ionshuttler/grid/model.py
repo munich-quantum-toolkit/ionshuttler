@@ -269,27 +269,35 @@ class ProcessingZone:
 
 @dataclass(frozen=True)
 class TransportTiming:
-    """Configure the duration of Grid transport actions."""
+    """Configure the duration of Grid transport actions.
+
+    ``swap`` is the duration of one swap of two neighboring ions inside a
+    segment. A :class:`~mqt.ionshuttler.grid.Rearrangement` takes one swap
+    duration per layer of swaps.
+    """
 
     junction_move: int = 1
+    swap: int = 1
 
     def __post_init__(self) -> None:
         """Ensure transport takes at least one timestep."""
         _require_positive_int(self.junction_move, "junction_move")
+        _require_positive_int(self.swap, "swap")
 
     def to_dict(self) -> dict[str, int]:
         """Return JSON-compatible timing data."""
-        return {"junction_move": self.junction_move}
+        return {"junction_move": self.junction_move, "swap": self.swap}
 
     @classmethod
     def from_dict(cls, data: object) -> TransportTiming:
-        """Restore Grid transport timing.
+        """Restore Grid transport timing; a missing swap duration takes its default.
 
         Returns:
             The restored timing.
         """
         mapping = require_mapping(data, "transport timing")
-        return cls(require_int(mapping, "junction_move"))
+        swap = cls.swap if mapping.get("swap") is None else require_int(mapping, "swap")
+        return cls(require_int(mapping, "junction_move"), swap)
 
 
 def _require_identifier(value: object, label: str) -> None:

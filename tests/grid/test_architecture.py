@@ -23,9 +23,11 @@ from mqt.ionshuttler.grid import (
     Junction,
     JunctionMove,
     ProcessingZone,
+    Rearrangement,
     Segment,
     SegmentEndpoint,
     SegmentOccupancy,
+    TransportTiming,
 )
 from mqt.ionshuttler.grid.schedule import schedule_from_json
 
@@ -82,6 +84,118 @@ def test_simultaneous_cycle_can_rotate_full_segments() -> None:
     final = architecture.apply_layer(state, (ScheduledAction(0, cycle, 0, 1),))
 
     assert dict(final.occupancy) == {"a": (2,), "b": (0,), "c": (1,)}
+
+
+def test_rearrangement_reverses_a_full_segment_and_claims_its_ions() -> None:
+    """Swap two ions in place for the configured swap duration."""
+    source = Segment("source", capacity=2)
+    side = Segment("side", capacity=2)
+    architecture = GridArchitecture(
+        (source, side),
+        (Junction("j", (source.end, side.start)),),
+        transport_timing=TransportTiming(junction_move=3, swap=5),
+    )
+    state = architecture.initial_state({"source": (0, 1), "side": ()})
+    swap = Rearrangement("source", (0, 1), (1, 0))
+
+    assert architecture.action_duration(swap) == 5
+    swapped = architecture.apply_layer(state, (ScheduledAction(0, swap, 0, 5),))
+
+    assert swapped.occupants("source") == (1, 0)
+    with pytest.raises(ValueError, match="busy or claimed"):
+        architecture.apply_layer(
+            swapped.at_time(1), (ScheduledAction(1, JunctionMove(source.end, side.start, (0,)), 1, 3),)
+        )
+    with pytest.raises(ValueError, match="busy or claimed"):
+        architecture.apply_layer(
+            state,
+            (ScheduledAction(0, swap, 0, 5), ScheduledAction(1, JunctionMove(source.end, side.start, (1,)), 0, 3)),
+        )
+    moved = architecture.apply_layer(
+        swapped.at_time(5), (ScheduledAction(1, JunctionMove(source.end, side.start, (0,)), 5, 3),)
+    )
+    assert moved.occupants("side") == (0,)
+
+
+def test_rearrangement_reorders_part_of_a_larger_segment() -> None:
+    """Reorder a chain of three neighbors in a segment of five; the ions outside the chain stay free."""
+    source = Segment("source", capacity=5)
+    side = Segment("side", capacity=2)
+    architecture = GridArchitecture(
+        (source, side),
+        (Junction("j", (source.end, side.start)),),
+        transport_timing=TransportTiming(junction_move=3, swap=5),
+    )
+    state = architecture.initial_state({"source": (0, 1, 2, 3, 4), "side": ()})
+    rearrangement = Rearrangement("source", (1, 2, 3), (3, 2, 1))
+
+    assert architecture.action_duration(rearrangement) == 15
+    rearranged = architecture.apply_layer(
+        state,
+        (
+            ScheduledAction(0, rearrangement, 0, 15),
+            ScheduledAction(1, JunctionMove(source.end, side.start, (4,)), 0, 3),
+        ),
+    )
+
+    assert rearranged.occupants("source") == (0, 3, 2, 1)
+    assert rearranged.occupants("side") == (4,)
+    with pytest.raises(ValueError, match="busy or claimed"):
+        architecture.apply_layer(
+            rearranged.at_time(3), (ScheduledAction(2, JunctionMove(source.end, side.start, (1,)), 3, 3),)
+        )
+
+
+def test_an_arriving_ion_joins_outside_a_running_rearrangement() -> None:
+    """Let an ion enter the segment end next to a rearranged chain without joining the chain."""
+    source = Segment("source", capacity=3)
+    side = Segment("side", capacity=2)
+    architecture = GridArchitecture(
+        (source, side),
+        (Junction("j", (source.end, side.start)),),
+        transport_timing=TransportTiming(junction_move=3, swap=5),
+    )
+    state = architecture.initial_state({"source": (0, 1), "side": (2,)})
+    swapping = architecture.apply_layer(state, (ScheduledAction(0, Rearrangement("source", (0, 1), (1, 0)), 0, 5),))
+
+    joined = architecture.apply_layer(
+        swapping.at_time(1), (ScheduledAction(1, JunctionMove(side.start, source.end, (2,)), 1, 3),)
+    )
+
+    assert joined.occupants("source") == (1, 0, 2)
+    next_swap = Rearrangement("source", (0, 2), (2, 0))
+    with pytest.raises(ValueError, match="busy or claimed"):
+        architecture.apply_layer(joined.at_time(4), (ScheduledAction(2, next_swap, 4, 5),))
+    swapped_again = architecture.apply_layer(joined.at_time(5), (ScheduledAction(2, next_swap, 5, 5),))
+    assert swapped_again.occupants("source") == (1, 2, 0)
+
+
+@pytest.mark.parametrize(
+    ("placement", "rearrangement", "match"),
+    [
+        ({"pair": (0,)}, Rearrangement("pair", (0, 1), (1, 0)), "neighboring ions"),
+        ({"bucket": (0, 1)}, Rearrangement("bucket", (0, 1), (1, 0)), "ordered segment"),
+        ({"pair": (1, 0)}, Rearrangement("pair", (0, 1), (1, 0)), "current order"),
+        ({"triple": (0, 1, 2)}, Rearrangement("triple", (0, 2), (2, 0)), "neighboring ions"),
+        ({"pair": (0, 1)}, Rearrangement("missing", (0, 1), (1, 0)), "unknown segment"),
+    ],
+)
+def test_rearrangement_needs_neighbors_in_an_ordered_segment(
+    placement: dict[str, tuple[int, ...]], rearrangement: Rearrangement, match: str
+) -> None:
+    """Allow a rearrangement only of neighboring ions, named in order, in an ordered segment."""
+    architecture = GridArchitecture(
+        (
+            Segment("pair", capacity=2),
+            Segment("triple", capacity=3),
+            Segment("bucket", capacity=2, occupancy=SegmentOccupancy.UNORDERED),
+        ),
+        (),
+    )
+    state = architecture.initial_state(placement)
+
+    with pytest.raises(ValueError, match=match):
+        architecture.apply_layer(state, (ScheduledAction(0, rearrangement, 0, 1),))
 
 
 def test_ordered_move_requires_boundary_chain_and_maps_orientation() -> None:

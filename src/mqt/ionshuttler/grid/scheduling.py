@@ -11,14 +11,15 @@ from __future__ import annotations
 
 import operator
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import groupby
 from typing import TYPE_CHECKING
 
 from mqt.ionshuttler.core.actions import Action
 from mqt.ionshuttler.core.gates import GateAction
 from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
-from mqt.ionshuttler.grid.actions import Cycle, JunctionMove
+from mqt.ionshuttler.grid.actions import Cycle, JunctionMove, Rearrangement
+from mqt.ionshuttler.grid.model import SegmentOccupancy
 from mqt.ionshuttler.grid.planning_trace import IdleReason, MoveStatus, PlannedGate, PlanningSnapshot, PrioritizedIon
 from mqt.ionshuttler.grid.result import GridDiagnostics, GridStopReason
 from mqt.ionshuttler.grid.routing import (
@@ -68,7 +69,7 @@ def schedule_breadth_first(
     scheduled_actions: list[ScheduledAction[Action]] = []
     completed: set[int] = set()
     gate_to_segment_lock = dict(gate_to_segment_assignment)
-    iterations = explored_states = movement_count = cycle_count = 0
+    iterations = explored_states = 0
     planning_trace: list[PlanningSnapshot] | None = [] if config.record_planning_trace else None
     stalled = False
 
@@ -148,7 +149,6 @@ def schedule_breadth_first(
             )
             state = architecture.apply_layer(state, (timed_action,)).at_time(timed_action.end_time)
             scheduled_actions.append(timed_action)
-            movement_count, cycle_count = _count_transport(action, movement_count, cycle_count)
         if planning_trace is not None:
             # breadth-first search may choose any compatible processing-zone segment; record the one it reached.
             routed_target = {} if not route or gate_id is None else {gate_id: state.ion_segment(gate.ions[0])}
@@ -186,8 +186,6 @@ def schedule_breadth_first(
         )
         explored_states += explored
         scheduled_actions.extend(target_layer)
-        for item in target_layer:
-            movement_count, cycle_count = _count_transport(item.action, movement_count, cycle_count)
         if planning_trace is not None:
             planning_trace.append(
                 _planning_snapshot(
@@ -205,13 +203,15 @@ def schedule_breadth_first(
 
     completed_objective = gates_complete and _placement_reached(state, target_state, partial_target_by_ion)
 
+    junction_move_count, cycle_count, rearrangement_count = _count_transport(scheduled_actions)
     return (
         Schedule(tuple(scheduled_actions), state.time, initial_state),
         GridDiagnostics(
             iterations=iterations,
             explored_routing_states=explored_states,
-            junction_moves=movement_count,
+            junction_moves=junction_move_count,
             cycles=cycle_count,
+            rearrangements=rearrangement_count,
             gates=len(completed),
             stop_reason=_stop_reason(completed=completed_objective, stalled=stalled),
             planning_trace=None if planning_trace is None else tuple(planning_trace),
@@ -238,12 +238,22 @@ def schedule_greedy(
     completed: set[int] = set()
     started: dict[int, int] = {}
     gate_to_segment_lock: dict[int, str] = dict(gate_to_segment_assignment)
-    iterations = explored_states = movement_count = cycle_count = 0
+    iterations = explored_states = 0
     planning_trace: list[PlanningSnapshot] | None = [] if config.record_planning_trace else None
     stalled = False
     stall_clear_attempted_since_gate_completion = False
     # Transport decisions since the last gate start, keyed by placement and gate progress.
     placements_without_gate: set[object] = set()
+    gates_by_ion: defaultdict[int, list[int]] = defaultdict(list)
+    for gate in circuit.gates:
+        if gate.gate_id is not None:
+            for ion in gate.ions:
+                gates_by_ion[ion].append(gate.gate_id)
+    swap_guard = _SwapGuard(
+        {ion: tuple(gate_ids) for ion, gate_ids in gates_by_ion.items()},
+        completed,
+        config.allowed_junction_crossings,
+    )
 
     while len(completed) < len(circuit.gates) and iterations < config.max_iterations:
         iterations += 1
@@ -314,6 +324,7 @@ def schedule_greedy(
             allowed_crossings=config.allowed_junction_crossings,
             selected_gate_requests=selected_gate_requests,
             planning_requests=planning_requests,
+            swap_guard=swap_guard,
         )
         explored_states += explored
         if blocked_targets:
@@ -348,6 +359,7 @@ def schedule_greedy(
                 max_states=config.max_routing_states,
                 allowed_crossings=config.allowed_junction_crossings,
                 selected_gate_requests=selected_gate_requests,
+                swap_guard=swap_guard,
             )
             explored_states += additional_moves_explored
             action_layer = movement_layer
@@ -404,8 +416,6 @@ def schedule_greedy(
                     )
                 )
             scheduled_actions.extend(routed_layer)
-            for routed_item in routed_layer:
-                movement_count, cycle_count = _count_transport(routed_item.action, movement_count, cycle_count)
             placements_without_gate.clear()
             continue
         elif movement_layer:
@@ -432,14 +442,12 @@ def schedule_greedy(
                 break
             state = state.at_time(next_time)
             continue
+        targets = dict(priority)
+        for item in action_layer:
+            if isinstance(item.action, Rearrangement):
+                swap_guard.record(item.action, swap_guard.progress(architecture, state, item.action.ions, targets))
         state = architecture.apply_layer(state, action_layer)
         scheduled_actions.extend(action_layer)
-        for movement_item in movement_layer:
-            movement_count, cycle_count = _count_transport(
-                movement_item.action,
-                movement_count,
-                cycle_count,
-            )
         if any(item.end_time > state.time for item in action_layer):
             state = state.at_time(state.time + 1)
 
@@ -466,8 +474,6 @@ def schedule_greedy(
         )
         explored_states += explored
         scheduled_actions.extend(target_layer)
-        for item in target_layer:
-            movement_count, cycle_count = _count_transport(item.action, movement_count, cycle_count)
         if planning_trace is not None:
             planning_trace.append(
                 _planning_snapshot(
@@ -485,13 +491,15 @@ def schedule_greedy(
 
     completed_objective = gates_complete and _placement_reached(state, target_state, partial_target_by_ion)
 
+    junction_move_count, cycle_count, rearrangement_count = _count_transport(scheduled_actions)
     return (
         Schedule(tuple(scheduled_actions), state.time, initial_state),
         GridDiagnostics(
             iterations=iterations,
             explored_routing_states=explored_states,
-            junction_moves=movement_count,
+            junction_moves=junction_move_count,
             cycles=cycle_count,
+            rearrangements=rearrangement_count,
             gates=len(completed),
             stop_reason=_stop_reason(completed=completed_objective, stalled=stalled),
             planning_trace=None if planning_trace is None else tuple(planning_trace),
@@ -541,8 +549,13 @@ def _route_to_target(
     free_at: dict[tuple[str, str | int], int] = {}
     timed: list[tuple[int, Action, int]] = []
     for action in route or ():
-        moves = action.moves if isinstance(action, Cycle) else (action,)
         resources: set[tuple[str, str | int]] = set()
+        if isinstance(action, Rearrangement):
+            resources.add(("segment", action.segment_id))
+            resources.update(("ion", ion) for ion in action.ions)
+            moves: tuple[Action, ...] = ()
+        else:
+            moves = action.moves if isinstance(action, Cycle) else (action,)
         for move in moves:
             assert isinstance(move, JunctionMove)
             resources.update({("segment", move.source.segment_id), ("segment", move.destination.segment_id)})
@@ -695,17 +708,23 @@ def _action_layer_gate_ids(layer: Sequence[ScheduledAction[Action]]) -> set[int]
     }
 
 
-def _count_transport(action: Action, moves: int, cycles: int) -> tuple[int, int]:
-    """Add one transport action to the diagnostic counters.
+def _count_transport(scheduled_actions: Sequence[ScheduledAction[Action]]) -> tuple[int, int, int]:
+    """Count the transport of a schedule.
 
     Returns:
-        The updated junction-move and cycle counters.
+        The number of junction moves (including the moves inside cycles),
+        cycles, and rearrangements.
     """
-    if isinstance(action, Cycle):
-        return moves + len(action.moves), cycles + 1
-    if isinstance(action, JunctionMove):
-        return moves + 1, cycles
-    return moves, cycles
+    moves = cycles = rearrangements = 0
+    for item in scheduled_actions:
+        if isinstance(item.action, Cycle):
+            moves += len(item.action.moves)
+            cycles += 1
+        elif isinstance(item.action, JunctionMove):
+            moves += 1
+        elif isinstance(item.action, Rearrangement):
+            rearrangements += 1
+    return moves, cycles, rearrangements
 
 
 def _complete_started_gates(
@@ -957,11 +976,13 @@ def _priority_movement_layer(
     allowed_crossings: frozenset[tuple[str, str]] | None,
     selected_gate_requests: frozenset[tuple[int, str]] = frozenset(),
     planning_requests: list[PrioritizedIon] | None = None,
+    swap_guard: _SwapGuard | None = None,
 ) -> tuple[tuple[ScheduledAction[Action], ...], int, frozenset[str]]:
     """Pack next-step transport candidates in global ion-priority order.
 
     If ``planning_requests`` is a list, the function appends the status of each
-    prioritized ion to it.
+    prioritized ion to it. With ``swap_guard``, an ion behind another ion may
+    swap with it, see :func:`_greedy_swap`.
 
     Returns:
         The selected transport layer, total candidate count, and targets whose
@@ -982,11 +1003,8 @@ def _priority_movement_layer(
     claimed_by_gates = {
         ion for item in fixed_actions if isinstance(item.action, GateAction) for ion in item.action.ions
     }
-    available_moves = tuple(
-        move
-        for move in junction_moves(architecture, state, allowed_crossings=allowed_crossings)
-        if not _moves_retained_ion(move, retained_ions)
-    )
+    all_moves = junction_moves(architecture, state, allowed_crossings=allowed_crossings)
+    available_moves = tuple(move for move in all_moves if not _moves_retained_ion(move, retained_ions))
     ion_priorities = {ion: rank for rank, (ion, _target) in enumerate(priority)}
     ion_to_target_segment = dict(priority)
     explored = 0
@@ -1026,6 +1044,18 @@ def _priority_movement_layer(
         candidate_moves = tuple(move for move in available_moves if protected_ions.isdisjoint(move.ions))
         candidate_actions: tuple[Action, ...] | None = None
         candidates_explored = 0
+        swap_request = _SwapRequest(
+            ion,
+            frozenset(destination_segment_ids),
+            all_moves,
+            ion_priorities,
+            ion_to_target_segment,
+            retained_ions | claimed_by_gates,
+        )
+        swap = None if swap_guard is None else _greedy_swap(architecture, state, swap_request, swap_guard)
+        if swap is not None:
+            candidate_actions = (swap,)
+            destination_segment_ids = ()
         for destination_segment_id in destination_segment_ids:
             # All equally short choices share the configured routing-work budget.
             candidate_actions, destination_explored = route_junction_crossing_greedy_cycle(
@@ -1042,6 +1072,9 @@ def _priority_movement_layer(
             if candidate_actions is not None or candidates_explored >= max_states:
                 break
         explored += candidates_explored
+        if not candidate_actions and swap_guard is not None:
+            swap = _greedy_swap(architecture, state, swap_request, swap_guard, last_resort=True)
+            candidate_actions = None if swap is None else (swap,)
         if not candidate_actions:
             record_request(ion, target_segment_id, MoveStatus.NO_CANDIDATE)
             if (ion, target_segment_id) in selected_gate_requests:
@@ -1083,6 +1116,121 @@ def _priority_movement_layer(
         selected_layer.extend(candidate_layer)
         record_request(ion, target_segment_id, MoveStatus.SELECTED, candidate_actions)
     return tuple(selected_layer), explored, frozenset(blocked_targets)
+
+
+@dataclass(frozen=True)
+class _SwapRequest:
+    """Describe one prioritized ion that asks to cross a junction."""
+
+    ion: int
+    destination_segment_ids: frozenset[str]
+    moves: tuple[JunctionMove, ...]
+    ion_priorities: Mapping[int, int]
+    ion_to_target_segment: Mapping[int, str]
+    # Ions that a gate keeps in their processing zone or that start a gate in this layer.
+    staying_ions: frozenset[int]
+
+
+@dataclass
+class _SwapGuard:
+    """Keep the Greedy strategy from swapping one ion pair back and forth.
+
+    A pair may swap again in the same segment only after local progress of the
+    pair itself: a completed gate on one of its ions, or a smaller summed
+    routing distance of both ions to their targets than at the last swap.
+    """
+
+    gates_by_ion: Mapping[int, tuple[int, ...]]
+    completed: set[int]
+    allowed_crossings: frozenset[tuple[str, str]] | None
+    last_swap: dict[tuple[str, frozenset[int]], tuple[int, int]] = field(default_factory=dict)
+
+    def progress(
+        self, architecture: GridArchitecture, state: GridMachineState, ions: tuple[int, ...], targets: Mapping[int, str]
+    ) -> tuple[int, int]:
+        """Return the summed routing distance of ``ions`` to their targets and their completed gates."""
+        distance = sum(
+            routing_distance(architecture, state.ion_segment(ion), targets[ion], self.allowed_crossings) or 0
+            for ion in ions
+            if ion in targets
+        )
+        gates = sum(gate_id in self.completed for ion in ions for gate_id in self.gates_by_ion.get(ion, ()))
+        return distance, gates
+
+    def allows(self, swap: Rearrangement, progress: tuple[int, int]) -> bool:
+        """Return whether the pair of ``swap`` made local progress since it last swapped in this segment."""
+        last = self.last_swap.get((swap.segment_id, frozenset(swap.ions)))
+        return last is None or progress[1] > last[1] or progress[0] < last[0]
+
+    def record(self, swap: Rearrangement, progress: tuple[int, int]) -> None:
+        """Remember the progress of the pair at this swap."""
+        self.last_swap[swap.segment_id, frozenset(swap.ions)] = progress
+
+
+def _greedy_swap(
+    architecture: GridArchitecture,
+    state: GridMachineState,
+    request: _SwapRequest,
+    guard: _SwapGuard,
+    *,
+    last_resort: bool = False,
+) -> Rearrangement | None:
+    """Return a swap that brings the requested ion to the exit of its segment, or ``None``.
+
+    The ion must sit behind another ion of a full segment of capacity 2, at an
+    exit toward one of the requested destinations. Without ``last_resort``, the
+    rule swaps when the ion in front has a target but does not leave through
+    the same exit: it stays (target reached, kept for a gate, or higher
+    priority), or it would have to come back, which costs two junction moves.
+    An ion in front without a target is moved away as before. With
+    ``last_resort``, the rule swaps whenever the guard allows it, because no
+    other transport was found.
+    """
+    if not architecture.supports(Rearrangement):
+        return None
+    ion = request.ion
+    source_segment_id = state.ion_segment(ion)
+    segment = architecture.segment(source_segment_id)
+    occupants = state.occupants(source_segment_id)
+    if segment.occupancy is SegmentOccupancy.UNORDERED or segment.capacity != 2 or len(occupants) != 2:
+        return None
+    toward_destination = [
+        move
+        for move in request.moves
+        if move.source.segment_id == source_segment_id
+        and move.destination.segment_id in request.destination_segment_ids
+    ]
+    # The ion can already leave, or no exit of this segment leads toward a destination.
+    if any(move.ions == (ion,) for move in toward_destination) or not any(
+        ion in move.ions for move in toward_destination
+    ):
+        return None
+    front = occupants[0] if occupants[1] == ion else occupants[1]
+    busy_until = dict(state.ions_busy_until)
+    if any(busy_until.get(other, state.time) > state.time for other in occupants):
+        return None
+    if not last_resort:
+        front_target = request.ion_to_target_segment.get(front)
+        if front_target is None:
+            return None
+        front_route = (
+            ()
+            if front_target == source_segment_id
+            else next_segments_toward(architecture, source_segment_id, front_target, guard.allowed_crossings)
+        )
+        if request.destination_segment_ids.intersection(front_route):
+            return None
+        stays = (
+            front_target == source_segment_id
+            or front in request.staying_ions
+            or request.ion_priorities[front] < request.ion_priorities[ion]
+        )
+        timing = architecture.transport_timing
+        if not stays and timing.swap > 2 * timing.junction_move:
+            return None
+    swap = Rearrangement(source_segment_id, occupants, occupants[::-1])
+    progress = guard.progress(architecture, state, occupants, request.ion_to_target_segment)
+    return swap if guard.allows(swap, progress) else None
 
 
 def _moves_retained_ion(action: Action, retained_ions: frozenset[int]) -> bool:

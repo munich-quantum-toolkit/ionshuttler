@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from mqt.ionshuttler.core.gates import Rx
@@ -18,10 +20,12 @@ from mqt.ionshuttler.grid import (
     GridArchitecture,
     Junction,
     JunctionMove,
+    Rearrangement,
     Segment,
     rectangular_grid,
     square_grid,
 )
+from mqt.ionshuttler.grid.actions import DEFAULT_ACTION_TYPES
 from mqt.ionshuttler.grid.routing import (
     clear_blocked_path,
     junction_moves,
@@ -30,6 +34,10 @@ from mqt.ionshuttler.grid.routing import (
     route_gate_bfs,
     route_to_placement,
 )
+
+if TYPE_CHECKING:
+    from mqt.ionshuttler.core.actions import Action
+    from mqt.ionshuttler.grid import GridMachineState
 
 
 @pytest.mark.parametrize("capacity", [2, 3])
@@ -256,3 +264,56 @@ def test_route_to_placement_reaches_an_exact_placement_of_eighteen_ions() -> Non
         timed = ScheduledAction(0, action, state.time, architecture.action_duration(action))
         state = architecture.apply_layer(state, (timed,)).at_time(timed.end_time)
     assert state.occupancy == target.occupancy
+
+
+def _replay(architecture: GridArchitecture, state: GridMachineState, route: tuple[Action, ...]) -> GridMachineState:
+    for action in route:
+        timed = ScheduledAction(0, action, state.time, architecture.action_duration(action))
+        state = architecture.apply_layer(state, (timed,)).at_time(timed.end_time)
+    return state
+
+
+def _ring_of_pairs(*, swaps: bool) -> GridArchitecture:
+    a, b, c = (Segment(name, capacity=2) for name in "abc")
+    action_types = tuple(action for action in DEFAULT_ACTION_TYPES if swaps or action is not Rearrangement)
+    return GridArchitecture(
+        (a, b, c),
+        (Junction("ab", (a.end, b.start)), Junction("bc", (b.end, c.start)), Junction("ca", (c.end, a.start))),
+        supported_action_types=action_types,
+    )
+
+
+def test_route_to_placement_reverses_a_full_segment_with_one_swap() -> None:
+    """Restore the order inside a segment with one swap instead of a detour."""
+    architecture = _ring_of_pairs(swaps=True)
+    start = architecture.initial_state({"a": (0, 1)})
+    target = architecture.initial_state({"a": (1, 0)})
+
+    route, _explored = route_to_placement(architecture, start, max_states=100, target_state=target)
+
+    assert route == (Rearrangement("a", (0, 1), (1, 0)),)
+
+
+def test_route_to_placement_detours_without_swaps() -> None:
+    """Reach the reversed order through junctions when the architecture has no swap."""
+    architecture = _ring_of_pairs(swaps=False)
+    start = architecture.initial_state({"a": (0, 1)})
+    target = architecture.initial_state({"a": (1, 0)})
+
+    route, _explored = route_to_placement(architecture, start, max_states=1_000, target_state=target)
+
+    assert route is not None
+    assert not any(isinstance(action, Rearrangement) for action in route)
+    assert _replay(architecture, start, route).occupancy == target.occupancy
+
+
+def test_route_gate_bfs_swaps_an_ion_to_the_only_exit() -> None:
+    """Bring a gate ion past the ion in front when the only exit leads into a one-ion segment."""
+    source = Segment("source", capacity=2)
+    target = Segment("target")
+    architecture = GridArchitecture((source, target), (Junction("j", (source.end, target.start)),))
+    state = architecture.initial_state({"source": (0, 1), "target": ()})
+
+    route, _explored = route_gate_bfs(architecture, state, Rx(ion=0, theta=0.5), frozenset({"target"}), max_states=100)
+
+    assert route == (Rearrangement("source", (0, 1), (1, 0)), JunctionMove(source.end, target.start, (0,)))

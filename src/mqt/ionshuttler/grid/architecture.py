@@ -23,6 +23,7 @@ from mqt.ionshuttler.grid.actions import (
     GRID_ACTION_TYPES,
     Cycle,
     JunctionMove,
+    Rearrangement,
 )
 from mqt.ionshuttler.grid.model import (
     Junction,
@@ -229,6 +230,8 @@ class GridArchitecture:
         """
         if isinstance(action, JunctionMove | Cycle):
             return self.transport_timing.junction_move
+        if isinstance(action, Rearrangement):
+            return self.transport_timing.swap * action.swap_layers
         if isinstance(action, GateAction) and action.circuit_name is not None:
             return self.gate_timing.duration_for(action.circuit_name)
         msg = f"GridArchitecture defines no duration for {type(action).__name__}"
@@ -298,6 +301,15 @@ class GridArchitecture:
                     moves.extend((move, item.end_time) for move in action.moves)
                 else:
                     moves.append((action, item.end_time))
+            elif isinstance(action, Rearrangement):
+                self._claim_rearrangement(
+                    current,
+                    item,
+                    action,
+                    occupancy=occupancy,
+                    claimed_ions=claimed_ions,
+                    ion_busy=ion_busy,
+                )
             elif isinstance(action, GateAction):
                 self._claim_gate(
                     current,
@@ -517,6 +529,51 @@ class GridArchitecture:
         pz_busy[zone.zone_id] = item.end_time
         claimed_ions.update(ions)
         for ion in ions:
+            ion_busy[ion] = item.end_time
+
+    def _claim_rearrangement(
+        self,
+        state: GridMachineState,
+        item: ScheduledAction[Any],
+        rearrangement: Rearrangement,
+        *,
+        occupancy: dict[str, tuple[int, ...]],
+        claimed_ions: set[int],
+        ion_busy: dict[int, int],
+    ) -> None:
+        if item.processing_zone_id is not None:
+            msg = "transport actions must not select a processing zone"
+            raise ValueError(msg)
+        segment = self._segments_by_id.get(rearrangement.segment_id)
+        if segment is None:
+            msg = f"unknown segment {rearrangement.segment_id!r}"
+            raise ValueError(msg)
+        if segment.occupancy is SegmentOccupancy.UNORDERED:
+            msg = "a rearrangement needs an ordered segment"
+            raise ValueError(msg)
+        current = occupancy[rearrangement.segment_id]
+        size = len(rearrangement.ions)
+        first = next(
+            (index for index in range(len(current) - size + 1) if current[index : index + size] == rearrangement.ions),
+            None,
+        )
+        if first is None:
+            msg = "a rearrangement must name neighboring ions of its segment in their current order"
+            raise ValueError(msg)
+        if any(ion_busy[ion] > state.time for ion in rearrangement.ions) or claimed_ions.intersection(
+            rearrangement.ions
+        ):
+            msg = "an ion of the rearrangement is busy or claimed by another action"
+            raise ValueError(msg)
+        # Only the chain is claimed. Other ions may enter or leave the segment meanwhile; an ion enters and leaves
+        # only at a segment end, so it never moves into the chain.
+        occupancy[rearrangement.segment_id] = (
+            *current[:first],
+            *rearrangement.new_order,
+            *current[first + size :],
+        )
+        claimed_ions.update(rearrangement.ions)
+        for ion in rearrangement.ions:
             ion_busy[ion] = item.end_time
 
     def _validate_cycle(self, cycle: Cycle) -> None:
