@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from mqt.ionshuttler.core.gates import Rx
@@ -18,18 +20,26 @@ from mqt.ionshuttler.grid import (
     GridArchitecture,
     Junction,
     JunctionMove,
+    Rearrangement,
     Segment,
+    TransportTiming,
     rectangular_grid,
     square_grid,
 )
+from mqt.ionshuttler.grid.actions import DEFAULT_ACTION_TYPES
 from mqt.ionshuttler.grid.routing import (
     clear_blocked_path,
     junction_moves,
     movement_candidates,
     next_segments_toward,
+    rearrangements,
     route_gate_bfs,
     route_to_placement,
 )
+
+if TYPE_CHECKING:
+    from mqt.ionshuttler.core.actions import Action
+    from mqt.ionshuttler.grid import GridMachineState
 
 
 @pytest.mark.parametrize("capacity", [2, 3])
@@ -256,3 +266,109 @@ def test_route_to_placement_reaches_an_exact_placement_of_eighteen_ions() -> Non
         timed = ScheduledAction(0, action, state.time, architecture.action_duration(action))
         state = architecture.apply_layer(state, (timed,)).at_time(timed.end_time)
     assert state.occupancy == target.occupancy
+
+
+def _replay(architecture: GridArchitecture, state: GridMachineState, route: tuple[Action, ...]) -> GridMachineState:
+    for action in route:
+        timed = ScheduledAction(0, action, state.time, architecture.action_duration(action))
+        state = architecture.apply_layer(state, (timed,)).at_time(timed.end_time)
+    return state
+
+
+def _ring_of_pairs(*, swaps: bool, swap: int = 1) -> GridArchitecture:
+    a, b, c = (Segment(name, capacity=2) for name in "abc")
+    action_types = tuple(action for action in DEFAULT_ACTION_TYPES if swaps or action is not Rearrangement)
+    return GridArchitecture(
+        (a, b, c),
+        (Junction("ab", (a.end, b.start)), Junction("bc", (b.end, c.start)), Junction("ca", (c.end, a.start))),
+        supported_action_types=action_types,
+        transport_timing=TransportTiming(junction_move=1, swap=swap),
+    )
+
+
+def test_route_to_placement_reverses_a_full_segment_with_one_swap() -> None:
+    """Restore the order inside a segment with one swap instead of a detour."""
+    architecture = _ring_of_pairs(swaps=True)
+    start = architecture.initial_state({"a": (0, 1)})
+    target = architecture.initial_state({"a": (1, 0)})
+
+    route, _explored = route_to_placement(architecture, start, max_states=100, target_state=target)
+
+    assert route == (Rearrangement("a", (0, 1), (1, 0)),)
+
+
+def test_rearrangements_respect_segment_support() -> None:
+    """Offer rearrangements only for segments that implement them."""
+    disabled = Segment("disabled", capacity=2, supported_action_types=())
+    enabled = Segment("enabled", capacity=2)
+    architecture = GridArchitecture((disabled, enabled), ())
+    state = architecture.initial_state({"disabled": (0, 1), "enabled": (2, 3)})
+
+    assert rearrangements(architecture, state) == (Rearrangement("enabled", (2, 3), (3, 2)),)
+
+
+def test_route_to_placement_detours_without_swaps() -> None:
+    """Reach the reversed order through junctions when the architecture has no swap."""
+    architecture = _ring_of_pairs(swaps=False)
+    start = architecture.initial_state({"a": (0, 1)})
+    target = architecture.initial_state({"a": (1, 0)})
+
+    route, _explored = route_to_placement(architecture, start, max_states=1_000, target_state=target)
+
+    assert route is not None
+    assert not any(isinstance(action, Rearrangement) for action in route)
+    assert _replay(architecture, start, route).occupancy == target.occupancy
+
+
+def test_route_to_placement_prefers_junction_moves_to_a_much_longer_swap() -> None:
+    """Weigh actions by their duration: three junction moves around the ring beat a swap of 20 timesteps."""
+    architecture = _ring_of_pairs(swaps=True, swap=20)
+    start = architecture.initial_state({"a": (0, 1)})
+    target = architecture.initial_state({"a": (1, 0)})
+
+    route, _explored = route_to_placement(architecture, start, max_states=1_000, target_state=target)
+
+    assert route is not None
+    assert not any(isinstance(action, Rearrangement) for action in route)
+    assert _replay(architecture, start, route).occupancy == target.occupancy
+    assert _replay(architecture, start, route).time - start.time < 20
+
+
+@pytest.mark.parametrize(("swap", "goes_around"), [(1, False), (5, True)])
+def test_route_gate_bfs_finds_the_fastest_sequence(swap: int, *, goes_around: bool) -> None:
+    """Swap past the ion in front when that is faster than three junction moves around it, and go around otherwise."""
+    source = Segment("source", capacity=2)
+    target, first, second = Segment("target"), Segment("first"), Segment("second")
+    architecture = GridArchitecture(
+        (source, target, first, second),
+        (
+            Junction("exit", (source.end, target.start)),
+            Junction("back", (source.start, first.end)),
+            Junction("middle", (first.start, second.end)),
+            Junction("entry", (second.start, target.end)),
+        ),
+        transport_timing=TransportTiming(junction_move=1, swap=swap),
+    )
+    state = architecture.initial_state({"source": (0, 1), "target": (), "first": (), "second": ()})
+
+    route, _explored = route_gate_bfs(architecture, state, Rx(ion=0, theta=0.5), frozenset({"target"}), max_states=100)
+
+    around = (
+        JunctionMove(source.start, first.end, (0,)),
+        JunctionMove(first.start, second.end, (0,)),
+        JunctionMove(second.start, target.end, (0,)),
+    )
+    past = (Rearrangement("source", (0, 1), (1, 0)), JunctionMove(source.end, target.start, (0,)))
+    assert route == (around if goes_around else past)
+
+
+def test_route_gate_bfs_swaps_an_ion_to_the_only_exit() -> None:
+    """Bring a gate ion past the ion in front when the only exit leads into a one-ion segment."""
+    source = Segment("source", capacity=2)
+    target = Segment("target")
+    architecture = GridArchitecture((source, target), (Junction("j", (source.end, target.start)),))
+    state = architecture.initial_state({"source": (0, 1), "target": ()})
+
+    route, _explored = route_gate_bfs(architecture, state, Rx(ion=0, theta=0.5), frozenset({"target"}), max_states=100)
+
+    assert route == (Rearrangement("source", (0, 1), (1, 0)), JunctionMove(source.end, target.start, (0,)))

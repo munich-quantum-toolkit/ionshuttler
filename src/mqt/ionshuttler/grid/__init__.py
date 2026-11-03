@@ -14,7 +14,7 @@ from mqt.ionshuttler.core.gates import GateTiming
 from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 
-from .actions import Cycle, JunctionMove
+from .actions import Cycle, JunctionMove, Rearrangement
 from .architecture import GridArchitecture
 from .config import GridCompilerConfig, GridCompilerStrategy
 from .layouts import from_networkx, hexagonal_grid, rectangular_grid, square_grid
@@ -75,6 +75,7 @@ __all__ = [
     "Junction",
     "JunctionMove",
     "ProcessingZone",
+    "Rearrangement",
     "Schedule",
     "ScheduledAction",
     "Segment",

@@ -23,6 +23,7 @@ from mqt.ionshuttler.grid import (
     DependencyMode,
     GateTiming,
     GridArchitecture,
+    GridCompilationResult,
     GridCompiler,
     GridCompilerConfig,
     GridCompilerStrategy,
@@ -31,6 +32,7 @@ from mqt.ionshuttler.grid import (
     Junction,
     JunctionMove,
     ProcessingZone,
+    Rearrangement,
     Segment,
     SegmentOccupancy,
     TransportTiming,
@@ -68,6 +70,7 @@ def test_compiler_routes_a_two_ion_gate_and_round_trips_result(strategy: GridCom
     assert result.diagnostics is not None
     assert result.diagnostics.junction_moves == 1
     assert result.diagnostics.cycles == 0
+    assert result.diagnostics.rearrangements == 0
     assert result.diagnostics.gates == 1
     result.validate()
     assert result_from_json(result.to_json()) == result
@@ -290,6 +293,110 @@ def test_compiler_reaches_an_exact_permutation_of_nine_ions(strategy: GridCompil
     assert len(set(starts)) < len(starts)
 
 
+def _opposite_exits(*, swap: int, side_segments: bool, rearrange: bool = True) -> GridArchitecture:
+    """Return a line W - P - Q; the two ions in P must leave through opposite ends."""
+    w = Segment("w", capacity=2, processing_zones=(ProcessingZone("pz_w"),))
+    p = Segment("p", capacity=2, supported_action_types=(Rearrangement,) if rearrange else ())
+    q = Segment("q", capacity=2, processing_zones=(ProcessingZone("pz_q"),))
+    sides = (Segment("side_w", capacity=2), Segment("side_q", capacity=2)) if side_segments else ()
+    return GridArchitecture(
+        (w, p, q, *sides),
+        (
+            Junction("wp", (w.end, p.start, *(segment.start for segment in sides[:1]))),
+            Junction("pq", (p.end, q.start, *(segment.start for segment in sides[1:]))),
+        ),
+        transport_timing=TransportTiming(junction_move=1, swap=swap),
+    )
+
+
+def _swaps(result: GridCompilationResult) -> list[Rearrangement]:
+    return [item.action for item in result.schedule.scheduled_actions if isinstance(item.action, Rearrangement)]
+
+
+def test_greedy_compiler_swaps_two_ions_that_leave_through_opposite_ends() -> None:
+    """Swap instead of carrying the ion in front away from its own target."""
+    architecture = _opposite_exits(swap=1, side_segments=False)
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY)).compile(
+        _qasm(4, "rzz(0.5) q[0],q[2];", "rzz(0.5) q[1],q[3];"),
+        initial_placement={"w": (3,), "p": (0, 1), "q": (2,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert _swaps(result) == [Rearrangement("p", (0, 1), (1, 0))]
+    assert result.diagnostics is not None
+    assert result.diagnostics.rearrangements == 1
+    result.validate()
+
+
+def test_greedy_compiler_respects_segment_rearrangement_support() -> None:
+    """Move an ion aside instead of rearranging inside a segment that does not support it."""
+    architecture = _opposite_exits(swap=1, side_segments=True, rearrange=False)
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY)).compile(
+        _qasm(4, "rzz(0.5) q[0],q[2];", "rzz(0.5) q[1],q[3];"),
+        initial_placement={"w": (3,), "p": (0, 1), "q": (2,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert _swaps(result) == []
+    result.validate()
+
+
+def test_greedy_compiler_moves_the_ion_in_front_aside_when_a_swap_takes_longer() -> None:
+    """Use a side segment when a swap takes longer than moving the ion in front away and back."""
+    architecture = _opposite_exits(swap=3, side_segments=True)
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY)).compile(
+        _qasm(4, "rzz(0.5) q[0],q[2];", "rzz(0.5) q[1],q[3];"),
+        initial_placement={"w": (3,), "p": (0, 1), "q": (2,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert _swaps(result) == []
+    result.validate()
+
+
+@pytest.mark.parametrize(("swap", "swaps"), [(2, 1), (3, 0)])
+def test_greedy_compiler_swaps_past_a_waiting_ion_only_when_the_swap_is_not_longer(swap: int, swaps: int) -> None:
+    """Weigh a swap against moving the ion in front aside and back, also when that ion waits for a later gate."""
+    w = Segment("w", capacity=2)
+    p = Segment("p", capacity=2, processing_zones=(ProcessingZone("pz_p"),))
+    q = Segment("q", capacity=2, processing_zones=(ProcessingZone("pz_q"),))
+    side = Segment("side", capacity=2)
+    architecture = GridArchitecture(
+        (w, p, q, side),
+        (Junction("wp", (w.end, p.start)), Junction("pq", (p.end, q.start, side.start))),
+        transport_timing=TransportTiming(junction_move=1, swap=swap),
+    )
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY)).compile(
+        _qasm(3, "rzz(0.5) q[0],q[2];", "rx(0.5) q[0];", "rzz(0.5) q[1],q[0];"),
+        initial_placement={"w": (), "p": (0, 1), "q": (2,), "side": ()},
+        gate_to_processing_zone={0: "pz_q", 1: "pz_q", 2: "pz_p"},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert len(_swaps(result)) == swaps
+    result.validate()
+
+
+def test_greedy_compiler_does_not_swap_a_blocked_pair_back() -> None:
+    """Swap a pair only once while neither ion makes progress toward its full target segment."""
+    p = Segment("p", capacity=2)
+    first = Segment("first", capacity=2, processing_zones=(ProcessingZone("pz_first"),))
+    second = Segment("second", capacity=2, processing_zones=(ProcessingZone("pz_second"),))
+    architecture = GridArchitecture((p, first, second), (Junction("j", (p.end, first.start, second.start)),))
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY)).compile(
+        _qasm(6, "rzz(0.5) q[0],q[2];", "rzz(0.5) q[1],q[4];"),
+        initial_placement={"p": (0, 1), "first": (2, 3), "second": (4, 5)},
+    )
+
+    assert result.status is CompilationStatus.FAILED
+    assert len(_swaps(result)) == 1
+
+
 @pytest.mark.parametrize("strategy", list(GridCompilerStrategy))
 def test_compiler_reverses_the_ion_order_inside_a_segment(strategy: GridCompilerStrategy) -> None:
     """Treat the ion order of an ordered segment as part of an exact target."""
@@ -309,6 +416,7 @@ def test_compiler_reverses_the_ion_order_inside_a_segment(strategy: GridCompiler
 
     assert result.status is CompilationStatus.SUCCESS
     assert result.final_state.occupants("a") == (1, 0)
+    assert _swaps(result) == [Rearrangement("a", (0, 1), (1, 0))]
 
 
 def test_compiler_rejects_measurement_without_a_measuring_processing_zone() -> None:
@@ -1336,7 +1444,7 @@ def test_compiler_returns_a_valid_failed_prefix_when_the_zone_is_unreachable() -
     assert result.status is CompilationStatus.FAILED
     assert result.path == []
     assert result.final_state == result.initial_state
-    assert result.diagnostics == GridDiagnostics(1, 1, 0, 0, 0, GridStopReason.NO_PROGRESS)
+    assert result.diagnostics == GridDiagnostics(1, 1, 0, 0, 0, 0, GridStopReason.NO_PROGRESS)
     result.validate()
 
 
