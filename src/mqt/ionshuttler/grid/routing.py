@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from bisect import bisect_left
 from collections import deque
-from heapq import heappop, heappush
+from heapq import heappop, heappush, nsmallest
 from itertools import combinations, count, pairwise
 from typing import TYPE_CHECKING
 
@@ -37,6 +37,9 @@ _PLACEMENT_SEARCH_WEIGHT = 6
 _PLACEMENT_CYCLE_SEARCH_WEIGHT = 3
 # Cycle-search steps per expanded placement state; on full grids, only cycles through several segments can move.
 _PLACEMENT_CYCLE_WORK = 1024
+# The placement search drops waiting states once it holds more than twice the states it can still expand, plus
+# this many; the slack keeps the pruning infrequent.
+_PLACEMENT_WAITING_SLACK = 1024
 
 
 def route_gate_bfs(
@@ -123,7 +126,8 @@ def route_to_placement(
     one. The search first uses junction moves and swaps only; if that finds no
     sequence, it searches again with cycles, which move ions through full
     segments. ``max_states`` bounds the number of expanded states of each
-    search.
+    search and, up to a constant, the number of states that wait for
+    expansion.
 
     Returns:
         The movement sequence, or ``None`` if the target is unreachable or the
@@ -199,6 +203,8 @@ def route_to_placement(
         # Parents use the full occupancy, because a recorded move names the ions it moves.
         parents: dict[OccupancyKey, tuple[OccupancyKey, Action] | None] = {state.occupancy: None}
         best_cost = {search_key(state): 0}
+        expanded_keys: set[object] = set()
+        expanded_occupancies: set[OccupancyKey] = set()
         expanded = 0
         explored = 0
         while frontier and expanded < max_states:
@@ -207,6 +213,8 @@ def route_to_placement(
                 continue
             expanded += 1
             explored += 1
+            expanded_keys.add(search_key(current))
+            expanded_occupancies.add(current.occupancy)
             if reached(current):
                 return _movement_path(parents, current.occupancy), explored
             candidates, cycle_work = movement_candidates(
@@ -233,6 +241,20 @@ def route_to_placement(
                 best_cost[following_key] = following_cost
                 parents[following.occupancy] = (current.occupancy, action)
                 heappush(frontier, (following_cost + weight * estimate, next(order), following_cost, following))
+            # The search expands at most ``unexpanded`` more states. A waiting state behind that many live ones is
+            # never expanded: a live state that a cheaper path replaces leaves a better one in its place. Dropping
+            # such states, and the stale ones that the search skips, bounds memory and keeps the route. The cost
+            # and parent tables forget the dropped states too: a state found again behind a dropped one is never
+            # expanded either, and a route runs only through expanded states.
+            unexpanded = max_states - expanded
+            if len(frontier) > 2 * unexpanded + _PLACEMENT_WAITING_SLACK:
+                frontier = nsmallest(
+                    unexpanded, (entry for entry in frontier if entry[2] <= best_cost[search_key(entry[3])])
+                )
+                kept_keys = expanded_keys | {search_key(entry[3]) for entry in frontier}
+                kept_occupancies = expanded_occupancies | {entry[3].occupancy for entry in frontier}
+                best_cost = {key: value for key, value in best_cost.items() if key in kept_keys}
+                parents = {key: value for key, value in parents.items() if key in kept_occupancies}
         return None, explored
 
     route, explored = search(_PLACEMENT_SEARCH_WEIGHT, 0)
