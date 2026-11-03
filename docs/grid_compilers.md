@@ -74,13 +74,15 @@ Use `segment.supports(Rearrangement)` to query the local capability.
 By default, the compiler also:
 
 - uses commutation-aware circuit dependencies;
-- partitions gates between suitable processing zones before scheduling;
+- selects processing zones while scheduling;
 - runs ten lookahead rounds, each selecting at most one gate per target
   processing-zone segment, and prioritizes the ions used by those gates.
 
-Set `pre_partition=False` in
-{py:meth}`~mqt.ionshuttler.grid.compiler.GridCompiler.compile` to select
-processing zones while scheduling. Use `gate_to_processing_zone` to assign
+Set `pre_partition=True` in
+{py:class}`~mqt.ionshuttler.grid.config.GridCompilerConfig` to partition gates
+between suitable processing zones before scheduling. Use
+`gate_to_processing_zone` in
+{py:meth}`~mqt.ionshuttler.grid.compiler.GridCompiler.compile` to assign
 individual gate IDs to processing-zone IDs explicitly. An explicit mapping
 replaces pre-partitioning, even when `pre_partition=True`. Unassigned gates
 select a processing zone while scheduling.

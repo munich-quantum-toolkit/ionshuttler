@@ -23,7 +23,6 @@ from mqt.ionshuttler.linear.cost import zero_heuristic
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from typing import Literal
 
     from mqt.ionshuttler.core.actions import Action
     from mqt.ionshuttler.linear.cost import HeuristicFn
@@ -57,7 +56,7 @@ def test_architecture_and_compiler_config_use_ready_to_run_defaults() -> None:
         record_planning_trace=False,
         dependency_mode=DependencyMode.COMMUTATION_AWARE,
         max_compile_time=1800.0,
-        pre_partition=True,
+        pre_partition=False,
         pre_partition_config=None,
         action_types=None,
     )
@@ -165,6 +164,12 @@ def test_search_config_rejects_invalid_bounds(
             "pre_partition",
             id="integer-partition-flag",
         ),
+        pytest.param(
+            lambda: PermutationConfig(pre_partition=cast("bool", 0)),
+            TypeError,
+            "pre_partition",
+            id="integer-permutation-partition-flag",
+        ),
         pytest.param(lambda: PermutationConfig(lookahead_gates=0), ValueError, "lookahead_gates", id="no-lookahead"),
         pytest.param(
             lambda: PermutationConfig(record_planning_trace=cast("bool", 1)),
@@ -191,14 +196,6 @@ def test_compiler_configs_require_dependency_mode_enum_values(
     """Reject raw strings so dependency choices remain explicit."""
     with pytest.raises(TypeError, match="dependency_mode must be a DependencyMode"):
         config_type(dependency_mode=cast("DependencyMode", "commutation_aware"))
-
-
-def test_permutation_config_requires_pre_partitioning() -> None:
-    """Do not allow the permutation strategy to skip its required assignment."""
-    pre_partition = False
-
-    with pytest.raises(ValueError, match="requires pre_partition=True"):
-        PermutationConfig(pre_partition=cast("Literal[True]", pre_partition))
 
 
 def test_compiler_configs_reject_invalid_action_types() -> None:

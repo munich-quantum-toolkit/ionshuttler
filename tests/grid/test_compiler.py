@@ -15,6 +15,7 @@ from typing import cast
 
 import pytest
 
+import mqt.ionshuttler.grid.compiler as grid_compiler_module
 from mqt.ionshuttler.circuit import Circuit
 from mqt.ionshuttler.core.gates import GateAction, Measure, Reset, Rx, Ry
 from mqt.ionshuttler.grid import (
@@ -626,13 +627,13 @@ def test_greedy_compiler_clears_a_stall_for_the_selected_gate() -> None:
         architecture,
         GridCompilerConfig(
             strategy=GridCompilerStrategy.GREEDY,
+            pre_partition=False,
             max_routing_states=2,
             allowed_junction_crossings=frozenset({("source", "processor"), ("processor", "free")}),
         ),
     ).compile(
         _qasm(2, "rx(0.25) q[0];"),
         initial_placement={"source": (0,), "processor": (1,)},
-        pre_partition=False,
     )
 
     assert result.status is CompilationStatus.SUCCESS
@@ -673,6 +674,7 @@ def test_greedy_compiler_suppresses_same_target_lookahead_when_selected_gate_is_
         architecture,
         GridCompilerConfig(
             strategy=GridCompilerStrategy.GREEDY,
+            pre_partition=False,
             max_routing_states=1,
             max_iterations=1,
             record_planning_trace=True,
@@ -680,7 +682,6 @@ def test_greedy_compiler_suppresses_same_target_lookahead_when_selected_gate_is_
     ).compile(
         _qasm(3, "rxx(0.5) q[0],q[2];", "rxx(0.25) q[0],q[1];"),
         initial_placement={"source": (0,), "blocker": (1,), "processor": (2,)},
-        pre_partition=False,
     )
 
     assert result.diagnostics is not None
@@ -735,6 +736,7 @@ def test_greedy_compiler_prioritizes_only_ions_in_the_lookahead() -> None:
     result = GridCompiler(
         architecture,
         GridCompilerConfig(
+            pre_partition=False,
             greedy_lookahead_rounds=1,
             max_iterations=1,
             record_planning_trace=True,
@@ -742,7 +744,6 @@ def test_greedy_compiler_prioritizes_only_ions_in_the_lookahead() -> None:
     ).compile(
         _qasm(2, "rx(0.5) q[0];", "ry(0.25) q[1];"),
         initial_placement={"first-source": (0,), "second-source": (1,)},
-        pre_partition=False,
     )
 
     assert result.diagnostics is not None
@@ -1100,6 +1101,7 @@ def test_greedy_compiler_returns_no_progress_if_a_later_gate_becomes_unreachable
     compiler = GridCompiler(
         architecture,
         GridCompilerConfig(
+            pre_partition=False,
             allowed_junction_crossings=frozenset({("source", "rx-processor"), ("source", "ry-processor")}),
         ),
     )
@@ -1107,7 +1109,6 @@ def test_greedy_compiler_returns_no_progress_if_a_later_gate_becomes_unreachable
     result = compiler.compile(
         _qasm(1, "rx(0.5) q[0];", "ry(0.25) q[0];"),
         initial_placement={"source": (0,)},
-        pre_partition=False,
     )
 
     assert result.status is CompilationStatus.FAILED
@@ -1127,10 +1128,9 @@ def test_greedy_compiler_ignores_a_processing_zone_on_an_undersized_segment() ->
         (Junction("junction", (source.end, undersized.start, processor.start)),),
     )
 
-    result = GridCompiler(architecture).compile(
+    result = GridCompiler(architecture, GridCompilerConfig(pre_partition=False)).compile(
         _qasm(2, "rxx(0.5) q[0],q[1];"),
         initial_placement={"source": (0, 1)},
-        pre_partition=False,
     )
 
     assert result.status is CompilationStatus.SUCCESS
@@ -1179,10 +1179,12 @@ def test_greedy_compiler_moves_a_blocking_ion_aside_at_the_exit_junction() -> No
         (Junction("exit", (source.end, processor.start, side.start)),),
     )
 
-    result = GridCompiler(architecture, GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY)).compile(
+    result = GridCompiler(
+        architecture,
+        GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY, pre_partition=False),
+    ).compile(
         _qasm(2, "rx(0.5) q[0];"),
         initial_placement={"source": (0, 1)},
-        pre_partition=False,
     )
 
     assert result.status is CompilationStatus.SUCCESS
@@ -1304,11 +1306,10 @@ def test_greedy_compiler_routes_to_the_nearest_processing_zone() -> None:
 
     result = GridCompiler(
         architecture,
-        GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY),
+        GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY, pre_partition=False),
     ).compile(
         _qasm(1, "rx(0.5) q[0];"),
         initial_placement={"source": (0,)},
-        pre_partition=False,
     )
 
     assert result.status is CompilationStatus.SUCCESS
@@ -1330,7 +1331,7 @@ def test_explicit_gate_assignment_replaces_pre_partitioning(strategy: GridCompil
         ),
     )
 
-    result = GridCompiler(architecture, GridCompilerConfig(strategy=strategy)).compile(
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=strategy, pre_partition=True)).compile(
         _qasm(1, "rx(0.5) q[0];"),
         initial_placement={"source": (0,)},
         gate_to_processing_zone={0: "far-pz"},
@@ -1350,7 +1351,7 @@ def test_compiler_can_compute_a_gate_zone_assignment() -> None:
     )
     compiler = GridCompiler(
         architecture,
-        GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY),
+        GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY, pre_partition=True),
     )
 
     result = compiler.compile(
@@ -1363,16 +1364,44 @@ def test_compiler_can_compute_a_gate_zone_assignment() -> None:
     assert result.diagnostics.gates == 3
 
 
-def test_compiler_requires_a_boolean_pre_partition_switch() -> None:
-    """Reject non-Boolean pre-partition switches at the public boundary."""
-    processor = Segment("processor", processing_zones=(ProcessingZone("pz"),))
+@pytest.mark.parametrize(
+    ("config", "expected_partitioning"),
+    [
+        (GridCompilerConfig(), False),
+        (GridCompilerConfig(pre_partition=True), True),
+    ],
+)
+def test_pre_partitioning_follows_the_config(
+    monkeypatch: pytest.MonkeyPatch,
+    config: GridCompilerConfig,
+    *,
+    expected_partitioning: bool,
+) -> None:
+    """Assign gates to processing zones before scheduling only when the config requests it."""
+    calls: list[object] = []
 
+    def partition(*args: object, **_kwargs: object) -> dict[int, str]:
+        calls.append(args)
+        return {}
+
+    monkeypatch.setattr(grid_compiler_module, "compute_gate_zone_assignment", partition)
+    left = Segment("left", capacity=2, processing_zones=(ProcessingZone("left-pz"),))
+    right = Segment("right", capacity=2, processing_zones=(ProcessingZone("right-pz"),))
+    architecture = GridArchitecture((left, right), (Junction("middle", (left.end, right.start)),))
+
+    result = GridCompiler(architecture, config).compile(
+        _qasm(2, "rxx(0.5) q[0],q[1];"),
+        initial_placement={"left": (0,), "right": (1,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert bool(calls) is expected_partitioning
+
+
+def test_compiler_config_requires_a_boolean_pre_partition_switch() -> None:
+    """Reject non-Boolean pre-partition switches."""
     with pytest.raises(TypeError, match="pre_partition must be a boolean"):
-        GridCompiler(GridArchitecture((processor,), ())).compile(
-            _qasm(1, "rx(0.5) q[0];"),
-            initial_placement={"processor": (0,)},
-            pre_partition=cast("bool", 1),
-        )
+        GridCompilerConfig(pre_partition=cast("bool", 1))
 
 
 def test_greedy_compiler_skips_an_incompatible_processing_zone() -> None:

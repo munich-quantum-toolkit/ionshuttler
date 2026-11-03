@@ -31,6 +31,11 @@ class GridCompilerConfig:
     """Bound the deterministic Grid compiler.
 
     ``dependency_mode`` controls whether commuting gates can change order.
+    By default, the compiler selects processing zones while scheduling. With
+    ``pre_partition=True``, it assigns gates to processing zones before
+    scheduling; this has no effect when fewer than two compatible, mutually
+    reachable processing zones are available. ``pre_partition_config`` tunes
+    the assignment.
     ``max_iterations`` bounds scheduling progress. ``max_routing_states``
     bounds each breadth-first search or greedy candidate evaluation.
     ``allowed_junction_crossings`` optionally limits routing to directed segment
@@ -42,6 +47,7 @@ class GridCompilerConfig:
 
     strategy: GridCompilerStrategy = GridCompilerStrategy.GREEDY
     dependency_mode: DependencyMode = DependencyMode.COMMUTATION_AWARE
+    pre_partition: bool = False
     pre_partition_config: FineGrainedTabuConfig | None = None
     allowed_junction_crossings: frozenset[tuple[str, str]] | None = None
     max_iterations: int = 10_000
@@ -54,14 +60,17 @@ class GridCompilerConfig:
 
         Raises:
             TypeError: If a mode does not use its enum type, a junction
-                crossing is malformed, or ``record_planning_trace`` is not a
-                boolean.
+                crossing is malformed, or ``pre_partition`` or
+                ``record_planning_trace`` is not a boolean.
         """
         if not isinstance(self.strategy, GridCompilerStrategy):
             msg = "strategy must be a GridCompilerStrategy"
             raise TypeError(msg)
         if not isinstance(self.dependency_mode, DependencyMode):
             msg = "dependency_mode must be a DependencyMode"
+            raise TypeError(msg)
+        if not isinstance(self.pre_partition, bool):
+            msg = "pre_partition must be a boolean"
             raise TypeError(msg)
         if self.allowed_junction_crossings is not None:
             crossings = frozenset(self.allowed_junction_crossings)

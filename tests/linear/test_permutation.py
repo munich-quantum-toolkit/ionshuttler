@@ -372,16 +372,16 @@ def test_permutation_prefers_the_pre_partitioned_zone(monkeypatch: pytest.Monkey
     circuit = QuantumCircuit(2)
     circuit.rzz(0.1, 0, 1)
 
-    result = _compile(circuit, LinearArchitecture(num_sites=11, processing_zones={"left": [4, 5], "right": [9, 10]}))
+    architecture = LinearArchitecture(num_sites=11, processing_zones={"left": [4, 5], "right": [9, 10]})
+    result = LinearCompiler(architecture, PermutationConfig(pre_partition=True)).compile(circuit)
 
     gate = next(item for item in result.schedule.scheduled_actions if isinstance(item.action, Rzz))
     assert gate.processing_zone_id == "right"
     assert _permutation_diagnostics(result).gates_in_preferred_zone == 1
 
 
-def test_ring_permutation_picks_the_nearest_zone_across_the_wrap_edge(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Measure zone distance along the ring when no zone is preferred."""
-    monkeypatch.setattr(compiler_module, "compute_gate_zone_assignment", lambda *_args, **_kwargs: {})
+def test_ring_permutation_picks_the_nearest_zone_across_the_wrap_edge() -> None:
+    """Measure zone distance along the ring when pre-partitioning is off."""
     architecture = LinearArchitecture(
         num_sites=10,
         processing_zones={"middle": [3, 4], "end": [8, 9]},
@@ -390,10 +390,13 @@ def test_ring_permutation_picks_the_nearest_zone_across_the_wrap_edge(monkeypatc
     circuit = QuantumCircuit(2)
     circuit.rzz(0.1, 0, 1)
 
-    result = LinearCompiler(architecture, PermutationConfig()).compile(circuit, initial_placement=[0, 1])
+    result = LinearCompiler(architecture, PermutationConfig(pre_partition=False)).compile(
+        circuit, initial_placement=[0, 1]
+    )
 
     gate = next(item for item in result.schedule.scheduled_actions if isinstance(item.action, Rzz))
     assert gate.processing_zone_id == "end"
+    assert _permutation_diagnostics(result).preferred_gate_zones == ()
     result.validate()
 
 

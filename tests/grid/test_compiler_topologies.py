@@ -15,7 +15,7 @@ from mqt.ionshuttler.grid import GridCompiler, GridCompilerConfig
 
 from .topology_cases import TopologyCase, topology_cases
 
-_SUPPORTED_CONFIGURATIONS = (pytest.param(GridCompilerConfig(), id="greedy"),)
+_SUPPORTED_CONFIGURATIONS = (pytest.param(GridCompilerConfig(pre_partition=False), id="greedy"),)
 
 
 @pytest.mark.parametrize("config", _SUPPORTED_CONFIGURATIONS)
@@ -28,7 +28,6 @@ def test_supported_compiler_configuration_terminates_on_topology_case(
     result = GridCompiler(case.architecture, config).compile(
         case.qasm,
         initial_placement=case.initial_placement,
-        pre_partition=False,
     )
 
     assert result.status is case.expected_status

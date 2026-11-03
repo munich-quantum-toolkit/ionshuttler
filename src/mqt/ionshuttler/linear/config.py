@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from mqt.ionshuttler.core.actions import Action
 from mqt.ionshuttler.core.dependencies import DependencyMode
@@ -120,8 +120,9 @@ class SearchConfig(LinearCompilerConfig):
 class PermutationConfig(LinearCompilerConfig):
     """Configuration of the permutation-based strategy.
 
-    This strategy requires ``pre_partition=True`` because it constructs each
-    target placement from preferred gate zones.
+    By default, this strategy sends the ions of each gate to the nearest
+    processing zone with room. With ``pre_partition=True``, it constructs each
+    target placement from preferred gate zones instead.
 
     ``lookahead_gates`` bounds how many upcoming gates the compiler inspects
     when it fills one group of gates. A larger value can fill groups better but
@@ -130,7 +131,6 @@ class PermutationConfig(LinearCompilerConfig):
     diagnostics. Use it to inspect the compiler's decisions; it costs memory.
     """
 
-    pre_partition: Literal[True] = True
     lookahead_gates: int = 32
     record_planning_trace: bool = False
 
@@ -139,12 +139,8 @@ class PermutationConfig(LinearCompilerConfig):
 
         Raises:
             TypeError: If a Boolean option, an action type, or the dependency mode is invalid.
-            ValueError: If pre-partitioning is disabled.
         """
         super().__post_init__()
-        if not self.pre_partition:
-            msg = "PermutationConfig requires pre_partition=True"
-            raise ValueError(msg)
         _require_integer_at_least(self.lookahead_gates, "lookahead_gates", minimum=1)
         if not isinstance(self.record_planning_trace, bool):
             msg = "record_planning_trace must be a boolean"

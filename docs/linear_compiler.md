@@ -225,7 +225,7 @@ Both configuration types inherit these settings from
 | `action_types`         | Operations that the compiler may use. `None` uses every operation supported by the architecture.                                                                                                          |
 | `dependency_mode`      | `DependencyMode.COMMUTATION_AWARE`, the default, lets commuting gates change order. `DependencyMode.CONSERVATIVE` keeps the dependencies from the circuit parser. The Grid compiler has the same setting. |
 | `max_compile_time`     | Wall-clock budget in seconds for the complete compilation, including pre-partitioning. A finite value prevents unexpectedly long runs; `None` removes the time limit. Defaults to 1800 seconds.           |
-| `pre_partition`        | Assigns gates to preferred processing zones. Search disables it by default; the permutation strategy requires it.                                                                                         |
+| `pre_partition`        | Assigns gates to preferred processing zones. Both strategies disable it by default.                                                                                                                       |
 | `pre_partition_config` | Optional fine-grained tabu settings used when pre-partitioning runs. `None` uses the partitioner's defaults.                                                                                              |
 
 (linear-permutation-strategy)=
@@ -234,7 +234,8 @@ Both configuration types inherit these settings from
 
 The permutation strategy works as follows:
 
-1. It uses
+1. By default, it sends the ions of each gate to the nearest processing zone
+   with room. With `pre_partition=True`, it first uses
    {py:func}`~mqt.ionshuttler.partitioning.compute_fine_grained_gate_partition`
    to assign each gate to a preferred processing zone.
 2. It groups ready gates that fit one ion placement.
@@ -253,9 +254,6 @@ a processing zone. The compiler treats the remaining site order as a chain and
 selects the lowest-cost resulting route. This route is the best among those
 evaluated cuts, but it is not guaranteed to be the global minimum over all ring
 routes. The complete schedule is heuristic for both topologies.
-
-The permutation strategy always assigns preferred processing zones before
-scheduling.
 
 ```{code-cell} ipython3
 from mqt.ionshuttler.linear import PermutationConfig

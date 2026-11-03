@@ -47,7 +47,6 @@ class GridCompiler:
         initial_placement: Mapping[str, Sequence[int]] | None = None,
         target_placement: Mapping[str, Sequence[int]] | None = None,
         gate_to_processing_zone: Mapping[int, str] | None = None,
-        pre_partition: bool = True,
     ) -> GridCompilationResult:
         """Compile a circuit with the configured scheduling strategy.
 
@@ -62,9 +61,6 @@ class GridCompiler:
             gate_to_processing_zone: Optional physical gate-to-processing-zone assignment.
                 When set, this assignment replaces automatic pre-partitioning.
                 Gates not in the mapping select a processing zone while scheduling.
-            pre_partition: Assign gates to processing zones before scheduling.
-                This is a no-op when fewer than two compatible, mutually
-                reachable processing zones are available.
 
         Returns:
             A validated complete or partial compilation result.
@@ -100,11 +96,7 @@ class GridCompiler:
             else {ion: segment_id for segment_id, ions in requested_target.occupancy for ion in ions}
         )
         _validate_gate_capabilities(parsed, self.architecture)
-        gate_to_segment_assignment = self._resolve_gate_assignment(
-            parsed,
-            gate_to_processing_zone,
-            pre_partition=pre_partition,
-        )
+        gate_to_segment_assignment = self._resolve_gate_assignment(parsed, gate_to_processing_zone)
         if self.config.strategy is GridCompilerStrategy.GREEDY:
             _validate_initial_gate_reachability(
                 parsed,
@@ -181,8 +173,6 @@ class GridCompiler:
         self,
         circuit: Circuit,
         explicit_assignment: Mapping[int, str] | None,
-        *,
-        pre_partition: bool,
     ) -> dict[int, str]:
         """Resolve physical gate assignments to processing-zone segments.
 
@@ -193,12 +183,9 @@ class GridCompiler:
             TypeError: If an assignment key or value has the wrong type.
             ValueError: If an assignment is invalid.
         """
-        if not isinstance(pre_partition, bool):
-            msg = "pre_partition must be a boolean"
-            raise TypeError(msg)
         if explicit_assignment is not None:
             assignment = dict(explicit_assignment)
-        elif pre_partition:
+        elif self.config.pre_partition:
             assignment = compute_gate_zone_assignment(
                 circuit,
                 self.architecture,

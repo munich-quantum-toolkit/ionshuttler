@@ -470,7 +470,7 @@ def test_partition_time_counts_toward_compile_budget(
 def test_permutation_strategy_runs_through_the_compiler() -> None:
     """Select the permutation strategy through configuration and report its statistics."""
     architecture = LinearArchitecture(num_sites=9, processing_zones={"left": [1, 2], "right": [6, 7]})
-    config = PermutationConfig()
+    config = PermutationConfig(pre_partition=True)
     circuit = QuantumCircuit(3)
     circuit.rzz(0.1, 0, 1)
     circuit.rx(0.2, 2)
@@ -490,7 +490,8 @@ def test_permutation_strategy_runs_through_the_compiler() -> None:
     [
         (SearchConfig(), False),
         (SearchConfig(pre_partition=True), True),
-        (PermutationConfig(), True),
+        (PermutationConfig(), False),
+        (PermutationConfig(pre_partition=True), True),
     ],
 )
 def test_pre_partitioning_follows_the_active_config(
@@ -499,7 +500,7 @@ def test_pre_partitioning_follows_the_active_config(
     *,
     expected_partitioning: bool,
 ) -> None:
-    """Partition only when the active configuration requests or requires it."""
+    """Partition only when the active configuration requests it."""
     calls: list[object] = []
 
     def partition(*args: object, **_kwargs: object) -> dict[int, str]:
