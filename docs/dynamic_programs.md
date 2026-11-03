@@ -64,7 +64,7 @@ entangle_and_measure = Circuit(
 correction = Circuit(num_ions=2, gates=(Rx(ion=1, theta=0.5, gate_id=0),), predecessors=(frozenset(),))
 program = Program(
     num_ions=2,
-    steps=(entangle_and_measure, Branch(Condition(outcomes=(0,), true_for=frozenset({(1,)})), (correction,))),
+    steps=(entangle_and_measure, Branch(Condition.measured(0), (correction,))),
 )
 
 architecture = square_grid(2, processing_zone_segments=("h:0:0",), segment_capacity=2)
@@ -81,8 +81,10 @@ for summary in result.path_summaries():
   processing zone. Their durations come from
   {py:class}`~mqt.ionshuttler.core.gates.GateTiming`, and each processing zone
   declares whether it supports them.
-- A {py:class}`~mqt.ionshuttler.dynamic.program.Condition` lists the measurement
-  outcomes it reads and the outcome combinations for which the branch runs.
+- A {py:class}`~mqt.ionshuttler.dynamic.program.Condition` is a logic expression
+  over measurement outcomes, built from `Condition.measured(n)` with `&`, `|`,
+  `^`, and `~`. Integer counters and register comparisons in OpenQASM become
+  such expressions, so a decision can read any number of outcomes.
 - A branch starts no earlier than `feedback_delay` after the last measurement
   that its condition reads.
 - Both sides of a branch start from the placement before it. When later steps

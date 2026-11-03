@@ -86,7 +86,7 @@ def _measure_then_branch() -> Program:
         predecessors=(frozenset(), frozenset({0})),
     )
     correction = Circuit(num_ions=2, gates=(Rx(ion=1, theta=0.5, gate_id=0),), predecessors=(frozenset(),))
-    return Program(2, (prefix, Branch(Condition((0,), frozenset({(1,)})), (correction,))))
+    return Program(2, (prefix, Branch(Condition.measured(0), (correction,))))
 
 
 @pytest.mark.parametrize("name", ["teleportation", "nested_branches", "reset_and_reuse", "register_conditions"])
@@ -110,7 +110,9 @@ def test_flagged_steane_error_correction_compiles_on_every_path() -> None:
     assert program.num_ions == 9
     first = program.steps[1]
     assert isinstance(first, Branch)
-    assert first.condition == Condition((0, 1), frozenset({(0, 1), (1, 0), (1, 1)}))
+    assert first.condition.outcomes == (0, 1)
+    for syndrome, flag in ((0, 0), (0, 1), (1, 0), (1, 1)):
+        assert first.condition.holds({0: syndrome, 1: flag}) == bool(syndrome or flag)
     assert len(list(program.paths())) == 7
     assert result.status is CompilationStatus.SUCCESS
     result.validate()
@@ -199,7 +201,7 @@ def test_an_impossible_return_names_the_failing_branch_side() -> None:
     prefix = Circuit(num_ions=2, gates=(Measure(ion=0, outcome=0, gate_id=0),), predecessors=(frozenset(),))
     correction = Circuit(num_ions=2, gates=(Rx(ion=1, theta=0.5, gate_id=0),), predecessors=(frozenset(),))
     suffix = Circuit(num_ions=2, gates=(Rx(ion=0, theta=0.5, gate_id=0),), predecessors=(frozenset(),))
-    program = Program(2, (prefix, Branch(Condition((0,), frozenset({(1,)})), (correction,)), suffix))
+    program = Program(2, (prefix, Branch(Condition.measured(0), (correction,)), suffix))
 
     result = compile_program(
         program, GridCompiler(architecture, one_way), initial_placement={"first": (0,), "second": (1,)}
@@ -397,7 +399,7 @@ def test_transport_for_the_predicted_side_starts_before_the_decision() -> None:
         predecessors=(frozenset(), frozenset({0})),
     )
     predicted = Circuit(num_ions=2, gates=(Rx(ion=1, theta=0.5, gate_id=0),), predecessors=(frozenset(),))
-    program = Program(2, (prefix, Branch(Condition((0,), frozenset({(0,)})), (predicted,))))
+    program = Program(2, (prefix, Branch(~Condition.measured(0), (predicted,))))
     compiler = GridCompiler(architecture)
     placement = {"left": (0,), "memory": (1,)}
 

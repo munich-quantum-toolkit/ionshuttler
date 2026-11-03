@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from .schedule import ScheduleStep
 
 PROGRAM_RESULT_SCHEMA = "mqt.ionshuttler.program_result"
-PROGRAM_RESULT_VERSION = 1
+PROGRAM_RESULT_VERSION = 2
 
 PlacementT = TypeVar("PlacementT")
 

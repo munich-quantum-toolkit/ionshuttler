@@ -13,6 +13,7 @@ same name after native-gate synthesis with an all-to-all target.
 
 from __future__ import annotations
 
+from itertools import product
 from pathlib import Path
 
 import pytest
@@ -38,10 +39,10 @@ def test_teleportation_becomes_a_circuit_and_two_branches() -> None:
     assert {type(gate) for gate in prefix.gates} == {Rx, Rz, Rxx, Measure}
     assert [gate.outcome for gate in prefix.gates if isinstance(gate, Measure)] == [0, 1]
     assert isinstance(x_correction, Branch)
-    assert x_correction.condition == Condition((1,), frozenset({(1,)}))
+    assert x_correction.condition == Condition.measured(1)
     assert x_correction.else_steps == ()
     assert isinstance(z_correction, Branch)
-    assert z_correction.condition == Condition((0,), frozenset({(1,)}))
+    assert z_correction.condition == Condition.measured(0)
     correction = z_correction.then_steps[0]
     assert isinstance(correction, Circuit)
     # MQT places q[2] on site 1; the ion number follows the program qubit.
@@ -77,7 +78,7 @@ def test_nested_branch_reads_an_outcome_measured_inside_its_parent() -> None:
     assert isinstance(outer, Branch)
     inner = outer.then_steps[1]
     assert isinstance(inner, Branch)
-    assert inner.condition == Condition((1,), frozenset({(1,)}))
+    assert inner.condition == Condition.measured(1)
     entangle = inner.else_steps[0]
     assert isinstance(entangle, Circuit)
     assert any(isinstance(gate, Rxx) for gate in entangle.gates)
@@ -97,13 +98,44 @@ def test_reset_keeps_the_ion_for_later_gates() -> None:
     assert prefix.predecessors[reset_position] == frozenset({reset_position - 1})
 
 
-def test_register_comparisons_become_truth_tables() -> None:
-    """Translate whole-register and bitwise comparisons into outcome combinations."""
+def test_register_comparisons_become_conditions() -> None:
+    """Translate whole-register and bitwise comparisons into conditions on the measured bits."""
     program = parse_program(_read("register_conditions"))
 
     both, different = (step for step in program.steps if isinstance(step, Branch))
-    assert both.condition == Condition((0, 1), frozenset({(1, 1)}))
-    assert different.condition == Condition((0, 1), frozenset({(0, 1), (1, 0)}))
+    for first, second in product((0, 1), repeat=2):
+        values = {0: first, 1: second}
+        assert both.condition.holds(values) == (first == second == 1)
+        assert different.condition.holds(values) == (first != second)
+
+
+def test_counters_and_register_comparisons_read_many_outcomes() -> None:
+    """Read integer counters and a comparison of two 9-bit registers over 18 outcomes."""
+    program = parse_program(_read("counted_outcomes"))
+
+    at_least_nine, equal, fewer_than_five = (step.condition for step in program.steps if isinstance(step, Branch))
+    assert at_least_nine.outcomes == equal.outcomes == fewer_than_five.outcomes == tuple(range(18))
+    # Every 997th assignment of the 2^18 assignments, plus the edge cases.
+    samples = [[(number >> position) & 1 for position in range(18)] for number in range(0, 1 << 18, 997)]
+    for bits in [*samples, [1] * 18, [1] * 4 + [0] * 14, [1, 0, 1] * 6]:
+        values = dict(enumerate(bits))
+        assert at_least_nine.holds(values) == (sum(bits) >= 9)
+        assert equal.holds(values) == (bits[:9] == bits[9:])
+        assert fewer_than_five.holds(values) == (sum(bits) - 3 < 2)
+
+
+def test_a_counter_changed_inside_a_branch_decides_a_nested_branch() -> None:
+    """Carry a counter out of a branch side and read it in a branch nested in that side."""
+    program = parse_program(_read("counter_in_branch"))
+
+    _prefix, outer = program.steps
+    assert isinstance(outer, Branch)
+    assert outer.condition == Condition.measured(0)
+    inner = next(step for step in outer.else_steps if isinstance(step, Branch))
+    assert inner.condition.outcomes == (1,)
+    # The else side counts one, plus one more when outcome 1 is 1.
+    assert inner.condition.holds({1: 1})
+    assert not inner.condition.holds({1: 0})
 
 
 @pytest.mark.parametrize(
@@ -139,7 +171,7 @@ def test_counted_loop_keeps_its_body_and_count() -> None:
     assert loop.count == 3
     _body, correction = loop.steps
     assert isinstance(correction, Branch)
-    assert correction.condition == Condition((0,), frozenset({(1,)}))
+    assert correction.condition == Condition.measured(0)
     assert len(list(program.paths())) == 8
 
 
@@ -150,5 +182,5 @@ def test_while_loop_reads_entry_and_repeat_conditions() -> None:
     (loop,) = program.steps
     assert isinstance(loop, Loop)
     assert loop.count is None
-    assert loop.entry == Condition((), frozenset({()}))
-    assert loop.repeat == Condition((0,), frozenset({(1,)}))
+    assert loop.entry == Condition.always()
+    assert loop.repeat == Condition.measured(0)

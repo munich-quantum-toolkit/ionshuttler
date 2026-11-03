@@ -23,53 +23,153 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
 PROGRAM_SCHEMA = "mqt.ionshuttler.program"
-PROGRAM_VERSION = 1
+PROGRAM_VERSION = 2
 
 # One measured value: the outcome number, followed by the iteration of each
 # enclosing loop for an outcome measured inside loops.
 OutcomeKey: TypeAlias = "int | tuple[int, ...]"
 
+_OPERATIONS = frozenset({"measured", "always", "never", "not", "all", "any", "odd"})
+_SYMBOLS = {"all": " & ", "any": " | ", "odd": " ^ "}
+_LONGEST_SHOWN_CONDITION = 40
 
-@dataclass(frozen=True)
+# One part of a condition: its operation, its outcome number (-1 if none),
+# and the positions of the parts it combines.
+_Part: TypeAlias = "tuple[str, int, tuple[int, ...]]"
+
+
 class Condition:
     """Decide a branch from measurement outcomes.
 
-    ``outcomes`` lists the measurement outcomes that the decision reads, in
-    ascending order. ``true_for`` lists every combination of these outcomes,
-    as 0/1 values in the order of ``outcomes``, for which the condition holds.
+    A condition is a logic expression over measurement outcomes, each read as
+    0 or 1. Build it from :meth:`measured`, :meth:`always`, and :meth:`never`
+    with the operators ``&`` (both hold), ``|`` (at least one holds), ``^``
+    (exactly one holds), and ``~`` (does not hold). The operators simplify
+    constant parts. Conditions may share parts, so a condition that reads many
+    outcomes, such as the comparison of two syndromes, stays small. Two
+    conditions are equal when they have the same structure.
     """
 
-    outcomes: tuple[int, ...]
-    true_for: frozenset[tuple[int, ...]]
+    __slots__ = ("_hash", "_operands", "_operation", "_outcome", "_outcomes", "_parts")
 
-    def __post_init__(self) -> None:
-        """Validate the outcome numbers and combinations.
+    def __init__(self, operation: str, operands: Iterable[Condition] = (), outcome: int | None = None) -> None:
+        """Create one part of a condition.
+
+        Prefer :meth:`measured`, :meth:`always`, :meth:`never`, and the
+        operators, which also simplify constant parts.
+
+        Args:
+            operation: ``"measured"``, ``"always"``, ``"never"``, ``"not"``,
+                ``"all"``, ``"any"``, or ``"odd"`` (an odd number of operands hold).
+            operands: The conditions that ``"not"``, ``"all"``, ``"any"``, and ``"odd"`` combine.
+            outcome: The measurement outcome number that ``"measured"`` reads.
 
         Raises:
-            ValueError: If an outcome number or combination is malformed.
+            TypeError: If an operand is not a condition.
+            ValueError: If the operation, operands, and outcome do not fit together.
         """
-        outcomes = tuple(self.outcomes)
-        if any(isinstance(outcome, bool) or not isinstance(outcome, int) or outcome < 0 for outcome in outcomes):
-            msg = "condition outcomes must be non-negative integers"
+        operands = tuple(operands)
+        if any(not isinstance(operand, Condition) for operand in operands):
+            msg = "condition operands must be conditions"
+            raise TypeError(msg)
+        if operation not in _OPERATIONS:
+            msg = f"unknown condition operation: {operation!r}"
             raise ValueError(msg)
-        if list(outcomes) != sorted(set(outcomes)):
-            msg = "condition outcomes must be unique and ascending"
-            raise ValueError(msg)
-        true_for = frozenset(tuple(values) for values in self.true_for)
-        for values in true_for:
-            if len(values) != len(outcomes) or any(value not in {0, 1} for value in values):
-                msg = "each true_for entry must give one 0/1 value per condition outcome"
+        if operation == "measured":
+            if isinstance(outcome, bool) or not isinstance(outcome, int) or outcome < 0:
+                msg = "condition outcomes must be non-negative integers"
                 raise ValueError(msg)
-        object.__setattr__(self, "outcomes", outcomes)
-        object.__setattr__(self, "true_for", true_for)
+        elif outcome is not None:
+            msg = f"a condition part {operation!r} reads no outcome"
+            raise ValueError(msg)
+        expected = {"measured": 0, "always": 0, "never": 0, "not": 1}.get(operation)
+        if (expected is not None and len(operands) != expected) or (expected is None and not operands):
+            msg = f"wrong number of operands for a condition part {operation!r}"
+            raise ValueError(msg)
+        self._operation = operation
+        self._operands: tuple[Condition, ...] = operands
+        self._outcome = outcome
+        # Computed on first use; a condition does not change after construction.
+        self._parts: tuple[_Part, ...] | None = None
+        self._outcomes: tuple[int, ...] | None = None
+        self._hash: int | None = None
+
+    @classmethod
+    def measured(cls, outcome: int) -> Condition:
+        """Return the condition that measurement ``outcome`` gave 1."""
+        return cls("measured", outcome=outcome)
+
+    @classmethod
+    def always(cls) -> Condition:
+        """Return the condition that always holds."""
+        return cls("always")
+
+    @classmethod
+    def never(cls) -> Condition:
+        """Return the condition that never holds."""
+        return cls("never")
+
+    @property
+    def operation(self) -> str:
+        """The operation of this part, as passed to the constructor."""
+        return self._operation
+
+    @property
+    def operands(self) -> tuple[Condition, ...]:
+        """The conditions that this part combines."""
+        return self._operands
+
+    @property
+    def outcome(self) -> int | None:
+        """The outcome number that a ``"measured"`` part reads, else ``None``."""
+        return self._outcome
+
+    @property
+    def outcomes(self) -> tuple[int, ...]:
+        """All measurement outcome numbers that the condition reads, in ascending order."""
+        if self._outcomes is None:
+            outcomes = sorted({outcome for operation, outcome, _ in self._part_list() if operation == "measured"})
+            self._outcomes = tuple(outcomes)
+        return self._outcomes
 
     def holds(self, values: Mapping[int, int]) -> bool:
-        """Return whether the condition holds for the given measurement outcomes."""
-        return tuple(values[outcome] for outcome in self.outcomes) in self.true_for
+        """Return whether the condition holds for the given measurement outcomes.
+
+        Raises:
+            KeyError: If ``values`` lacks an outcome that the condition reads.
+        """  # ruff: ignore[docstring-extraneous-exception] - The outcome lookup raises KeyError.
+        results: list[bool] = []
+        for operation, outcome, operands in self._part_list():
+            if operation == "measured":
+                result = bool(values[outcome])
+            elif operation in {"always", "never"}:
+                result = operation == "always"
+            elif operation == "not":
+                result = not results[operands[0]]
+            elif operation == "all":
+                result = all(results[position] for position in operands)
+            elif operation == "any":
+                result = any(results[position] for position in operands)
+            else:
+                result = sum(results[position] for position in operands) % 2 == 1
+            results.append(result)
+        return results[-1]
 
     def to_dict(self) -> dict[str, object]:
-        """Return JSON-compatible condition data."""
-        return {"outcomes": list(self.outcomes), "true_for": [list(values) for values in sorted(self.true_for)]}
+        """Return JSON-compatible condition data.
+
+        ``parts`` lists each distinct part once, after the parts it combines;
+        the last part is the whole condition.
+        """
+        parts: list[dict[str, object]] = []
+        for operation, outcome, operands in self._part_list():
+            part: dict[str, object] = {"operation": operation}
+            if operation == "measured":
+                part["outcome"] = outcome
+            elif operands:
+                part["operands"] = list(operands)
+            parts.append(part)
+        return {"parts": parts}
 
     @classmethod
     def from_dict(cls, data: object) -> Condition:
@@ -82,13 +182,118 @@ class Condition:
             ValueError: If the serialized condition is malformed.
         """
         mapping = require_mapping(data, "condition")
-        true_for: list[tuple[int, ...]] = []
-        for values in require_list(mapping, "true_for"):
-            if not isinstance(values, list):
-                msg = "true_for must contain lists of 0/1 values"
-                raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Malformed JSON uses ValueError.
-            true_for.append(tuple(values))
-        return cls(tuple(require_int_list(mapping, "outcomes")), frozenset(true_for))
+        built: list[Condition] = []
+        for raw_part in require_list(mapping, "parts"):
+            part = require_mapping(raw_part, "condition part")
+            operation = require_str(part, "operation")
+            positions = require_int_list(part, "operands") if "operands" in part else []
+            if any(position < 0 or position >= len(built) for position in positions):
+                msg = "condition parts may only combine earlier parts"
+                raise ValueError(msg)
+            outcome = require_int(part, "outcome") if operation == "measured" else None
+            built.append(cls(operation, (built[position] for position in positions), outcome))
+        if not built:
+            msg = "a condition needs at least one part"
+            raise ValueError(msg)
+        return built[-1]
+
+    def __and__(self, other: object) -> Condition:
+        """Return the condition that both conditions hold."""
+        return _combine("all", self, other)
+
+    def __or__(self, other: object) -> Condition:
+        """Return the condition that at least one condition holds."""
+        return _combine("any", self, other)
+
+    def __xor__(self, other: object) -> Condition:
+        """Return the condition that exactly one condition holds."""
+        return _combine("odd", self, other)
+
+    def __invert__(self) -> Condition:
+        """Return the condition that this condition does not hold."""
+        if self._operation in {"always", "never"}:
+            return Condition("never" if self._operation == "always" else "always")
+        if self._operation == "not":
+            return self._operands[0]
+        return Condition("not", (self,))
+
+    def __eq__(self, other: object) -> bool:
+        """Return whether both conditions have the same structure."""
+        if not isinstance(other, Condition):
+            return NotImplemented
+        return self is other or self._part_list() == other._part_list()
+
+    def __hash__(self) -> int:
+        """Return a hash of the condition structure."""
+        if self._hash is None:
+            self._hash = hash(self._part_list())
+        return self._hash
+
+    def __repr__(self) -> str:
+        """Return the condition as an expression, or a summary of a long condition."""
+        parts = self._part_list()
+        if len(parts) > _LONGEST_SHOWN_CONDITION:
+            return f"Condition(<{len(parts)} parts reading {len(self.outcomes)} outcomes>)"
+        texts: list[str] = []
+        for operation, outcome, operands in parts:
+            if operation == "measured":
+                texts.append(f"measured({outcome})")
+            elif operation in {"always", "never"}:
+                texts.append(f"{operation}()")
+            elif operation == "not":
+                texts.append(f"~{texts[operands[0]]}")
+            else:
+                texts.append("(" + _SYMBOLS[operation].join(texts[position] for position in operands) + ")")
+        return f"Condition({texts[-1]})"
+
+    def _part_list(self) -> tuple[_Part, ...]:
+        """Return each distinct part once, after the parts it combines, with this condition last."""
+        if self._parts is None:
+            position_of_node: dict[int, int] = {}
+            position_of_part: dict[_Part, int] = {}
+            parts: list[_Part] = []
+            stack: list[tuple[Condition, bool]] = [(self, False)]
+            # Walk without recursion, so deep conditions do not reach Python's recursion limit.
+            while stack:
+                node, expanded = stack.pop()
+                if id(node) in position_of_node:
+                    continue
+                if not expanded:
+                    stack.append((node, True))
+                    stack.extend((operand, False) for operand in reversed(node.operands))
+                    continue
+                part = (
+                    node.operation,
+                    -1 if node.outcome is None else node.outcome,
+                    tuple(position_of_node[id(operand)] for operand in node.operands),
+                )
+                if part not in position_of_part:
+                    position_of_part[part] = len(parts)
+                    parts.append(part)
+                position_of_node[id(node)] = position_of_part[part]
+            self._parts = tuple(parts)
+        return self._parts
+
+
+def _combine(operation: str, left: Condition, right: object) -> Condition:
+    """Combine two conditions with ``"all"``, ``"any"``, or ``"odd"`` and simplify constant parts.
+
+    Returns:
+        The combined condition, or ``NotImplemented`` if ``right`` is not a condition.
+    """
+    if not isinstance(right, Condition):
+        return NotImplemented
+    for constant, other in ((left, right), (right, left)):
+        if constant.operation in {"always", "never"}:
+            if operation == "odd":
+                return ~other if constant.operation == "always" else other
+            absorbing = "never" if operation == "all" else "always"
+            return constant if constant.operation == absorbing else other
+    operands = [
+        *(left.operands if left.operation == operation else (left,)),
+        *(right.operands if right.operation == operation else (right,)),
+    ]
+    return Condition(operation, operands)
 
 
 @dataclass(frozen=True)
@@ -349,7 +554,7 @@ def walk_path(
         keys = _keys(condition, depths, condition_iterations)
         if on_decision is not None:
             on_decision(keys)
-        return tuple(values[key] for key in keys) in condition.true_for
+        return _holds(condition, keys, values)
 
     for step in steps:
         if isinstance(step, _BranchShape):
@@ -440,7 +645,7 @@ def _walk_paths(
                 assigned = {**values, **dict(zip(unknown, combination, strict=True))}
                 yield from _walk_paths(work[index:], assigned, decisions, depths, max_iterations)
             return
-        holds = tuple(values[key] for key in keys) in condition.true_for
+        holds = _holds(condition, keys, values)
         if isinstance(step, _LoopCheck):
             following = rest
             if holds:
@@ -460,6 +665,15 @@ def _walk_paths(
 
 def _keys(condition: Condition, depths: Mapping[int, int], iterations: tuple[int, ...]) -> tuple[OutcomeKey, ...]:
     return tuple(outcome_key(outcome, depths.get(outcome, 0), iterations) for outcome in condition.outcomes)
+
+
+def _holds(condition: Condition, keys: Sequence[OutcomeKey], values: Mapping[OutcomeKey, int]) -> bool:
+    """Evaluate ``condition`` with the values of ``keys``, which follow the order of its outcomes.
+
+    Returns:
+        Whether the condition holds.
+    """
+    return condition.holds({outcome: values[key] for outcome, key in zip(condition.outcomes, keys, strict=True)})
 
 
 def _normalize_steps(steps: Iterable[object]) -> tuple[Step, ...]:

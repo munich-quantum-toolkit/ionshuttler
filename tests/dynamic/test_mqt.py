@@ -9,12 +9,13 @@
 
 from __future__ import annotations
 
+from itertools import product
 from pathlib import Path
 
 import pytest
 
 from mqt.ionshuttler.core.gates import Measure, Reset, Rx, Rxx, Ry, Rz
-from mqt.ionshuttler.dynamic import compile_program, parse_program, program_from_qasm
+from mqt.ionshuttler.dynamic import Branch, compile_program, parse_program, program_from_qasm
 from mqt.ionshuttler.grid import CompilationStatus, GridCompiler, square_grid
 
 pytest.importorskip("mqt.core.mlir")
@@ -41,6 +42,29 @@ def test_a_qasm_program_compiles_end_to_end() -> None:
 
     assert result.status is CompilationStatus.SUCCESS
     result.validate()
+
+
+def test_integer_counters_decide_branches() -> None:
+    """Read counters that add measured bits and compare the sum, as in adaptive error correction."""
+    source = """OPENQASM 3.0;
+include "stdgates.inc";
+qubit[4] q;
+bit[3] m;
+m[0] = measure q[0];
+m[1] = measure q[1];
+m[2] = measure q[2];
+int[8] ones = 0;
+if (m[0]) { ones = ones + 1; }
+if (m[1]) { ones = ones + 1; }
+if (m[2]) { ones = ones + 1; }
+if (ones - 1 >= 1) { x q[3]; }
+"""
+    program = program_from_qasm(source)
+
+    *_, branch = program.steps
+    assert isinstance(branch, Branch)
+    for bits in product((0, 1), repeat=3):
+        assert branch.condition.holds(dict(enumerate(bits))) == (sum(bits) >= 2)
 
 
 def test_a_condition_after_a_loop_cannot_read_a_bit_that_the_loop_writes() -> None:

@@ -9,9 +9,11 @@
 
 from __future__ import annotations
 
+import operator
 import re
 from dataclasses import dataclass, field
-from itertools import product
+from functools import reduce
+from itertools import starmap
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeAlias
 
@@ -25,7 +27,9 @@ if TYPE_CHECKING:
 
     from .program import Step
 
-_MAX_CONDITION_OUTCOMES = 16
+_ORDERED_COMPARISONS = frozenset({"slt", "sle", "sgt", "sge", "ult", "ule", "ugt", "uge"})
+_COMPARISONS = frozenset({"eq", "ne"}) | _ORDERED_COMPARISONS
+_BITWISE = {"andi": operator.and_, "ori": operator.or_, "xori": operator.xor}
 
 _GATE_TYPES: dict[str, type[GateAction]] = {
     gate_type.circuit_name: gate_type for gate_type in (Rx, Ry, Rz, Rxx, Ryy, Rzz) if gate_type.circuit_name
@@ -38,6 +42,7 @@ _INTEGER_TYPE = re.compile(r"\bi(\d+)\b")
 _ARGUMENT_BINDING = re.compile(r"(%[\w\-]+)\s*=\s*(%[\w\-]+(?:#\d+)?)")
 _FOR_BOUNDS = re.compile(r"^\s*(%[\w\-]+)\s*=\s*(%[\w\-]+)\s+to\s+(%[\w\-]+)\s+step\s+(%[\w\-]+)")
 _BLOCK_ARGUMENT = re.compile(r"(%[\w\-]+)\s*:")
+_RESULT_GROUP = re.compile(r"(%[\w\-]+)(?::(\d+))?")
 _LAYOUT = re.compile(r"mqt\.layout\s*=\s*\{\s*initial\s*=\s*array<i64:(?P<sites>[^>]*)>")
 
 
@@ -77,6 +82,98 @@ class _Choice:
 
 _Expression: TypeAlias = _Constant | _MeasuredBit | _Unset | _ChangesPerIteration | _Operation | _Choice
 _Record: TypeAlias = "tuple[type[GateAction], tuple[float, ...], tuple[int, ...], int | None]"
+# An integer as one condition per bit, least significant bit first; missing high bits are 0.
+_Bits: TypeAlias = "tuple[Condition, ...]"
+
+
+class _Logic:
+    """Turn classical values into conditions on measurement outcomes.
+
+    Each classical value is converted once, so conditions share the parts of
+    the values they share.
+    """
+
+    def __init__(self) -> None:
+        # Each entry keeps its value alive, so the value's id stays unique.
+        self.converted: dict[int, tuple[_Expression, _Bits]] = {}
+
+    def condition(self, expression: _Expression) -> Condition:
+        """Return the condition that the value is not zero.
+
+        Raises:
+            ValueError: If the value reads a bit that is never set or that a loop writes in another iteration.
+        """  # ruff: ignore[docstring-extraneous-exception] - Raised while converting the value.
+        return reduce(operator.or_, self.bits(expression), Condition.never())
+
+    def bits(self, expression: _Expression) -> _Bits:
+        known = self.converted.get(id(expression))
+        if known is not None:
+            return known[1]
+        bits = _trim(self.convert(expression))
+        self.converted[id(expression)] = (expression, bits)
+        return bits
+
+    def convert(self, expression: _Expression) -> _Bits:
+        if isinstance(expression, _Constant):
+            return tuple(
+                Condition.always() if (expression.value >> position) & 1 else Condition.never()
+                for position in range(expression.value.bit_length())
+            )
+        if isinstance(expression, _MeasuredBit):
+            return (Condition.measured(expression.outcome),)
+        if isinstance(expression, _Unset):
+            msg = "a condition reads a classical bit that is never set"
+            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Program errors use ValueError.
+        if isinstance(expression, _ChangesPerIteration):
+            msg = "a condition reads a classical bit that a loop writes in another iteration"
+            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Program errors use ValueError.
+        if isinstance(expression, _Choice):
+            choice = self.condition(expression.condition)
+            # A side that is not taken is never read; it may hold a bit that is never set.
+            if choice.operation == "always":
+                return self.bits(expression.if_true)
+            if choice.operation == "never":
+                return self.bits(expression.if_false)
+            if_true, if_false = _pad_both(self.bits(expression.if_true), self.bits(expression.if_false))
+            return tuple((choice & then) | (~choice & other) for then, other in zip(if_true, if_false, strict=True))
+        return self.operation(expression)
+
+    def operation(self, expression: _Operation) -> _Bits:
+        name, operands, width = expression.name, expression.operands, expression.width
+        if name == "concat":
+            return tuple(_first(self.bits(operand)) for operand in operands)
+        if name == "bit":
+            bits = self.bits(operands[0])
+            position = operands[1]
+            assert isinstance(position, _Constant)
+            return (bits[position.value],) if position.value < len(bits) else ()
+        if name in {"extui", "trunci"}:
+            return self.bits(operands[0])[:width]
+        if name == "extsi":
+            bits = self.bits(operands[0])
+            source_width = operands[1]
+            assert isinstance(source_width, _Constant)
+            if len(bits) < source_width.value:
+                return bits
+            sign = bits[source_width.value - 1]
+            return (*bits[: source_width.value], *(sign,) * (width - source_width.value))
+        left, right = (self.bits(operand) for operand in operands)
+        if name in _BITWISE:
+            left, right = _pad_both(left, right)
+            return tuple(starmap(_BITWISE[name], zip(left, right, strict=True)))[:width]
+        if name == "addi":
+            return _add(left, right, width)
+        if name == "subi":
+            # Two's complement: left - right = left + (not right) + 1.
+            return _add(left, tuple(~bit for bit in _pad(right, width)), width, Condition.always())
+        if name in {"eq", "ne"}:
+            equal = _equal(left, right)
+            return (equal if name == "eq" else ~equal,)
+        # left > right is right < left, and left <= right is not right < left.
+        if name[1:] in {"gt", "le"}:
+            left, right = right, left
+        less = _less(left, right, width if name.startswith("s") else None)
+        return (~less if name[1:] in {"ge", "le"} else less,)
 
 
 @dataclass
@@ -125,6 +222,7 @@ class _Reader:
         self.ion_of_site = ion_of_site
         self.next_outcome = 0
         self.max_ion = -1
+        self.logic = _Logic()
 
     def error(self, index: int, message: str) -> ValueError:
         return ValueError(f"line {index + 1}: {message}: {self.lines[index].strip()}")
@@ -163,7 +261,7 @@ class _Reader:
                 if records:
                     steps.append(records)
                     records = []
-                branch, index = self.read_branch(index, results, rest, scope)
+                branch, index = self.read_branch(index, match.group("results") or "", rest, scope)
                 steps.append(branch)
                 continue
             if name == "scf.if":
@@ -294,22 +392,47 @@ class _Reader:
             if width is not None:
                 scope.expressions[results[0]] = _Constant(number % (1 << width))
             return
-        width = _integer_width(rest.rsplit(":", 1)[-1]) or 1
+        if operation in {"extui", "extsi", "trunci"}:
+            operand_text, _, types = rest.partition(":")
+            widths = [int(width) for width in _INTEGER_TYPE.findall(types)]
+            if len(widths) != 2:
+                raise self.error(index, f"malformed arith.{operation}")
+            value = self.value(index, _VALUE.findall(operand_text)[0], scope)
+            operands = (value, _Constant(widths[0])) if operation == "extsi" else (value,)
+            scope.expressions[results[0]] = _Operation(operation, operands, widths[1])
+            return
+        value_type = rest.rsplit(":", 1)[-1]
+        names = _VALUE.findall(rest.split(":", 1)[0])
+        if operation == "select":
+            if _integer_width(value_type) is None:
+                raise self.error(index, "only integer values may depend on measurement outcomes")
+            condition, if_true, if_false = (self.value(index, name, scope) for name in names)
+            scope.expressions[results[0]] = _Choice(condition, if_true, if_false)
+            return
+        if operation in {"addi", "subi"} and _integer_width(value_type) is None:
+            first, second = (self.number(index, name, scope) for name in names)
+            scope.numbers[results[0]] = first + second if operation == "addi" else first - second
+            return
+        width = _integer_width(value_type) or 1
         if operation == "cmpi":
             predicate, _, operand_text = rest.strip().partition(",")
-            if predicate.strip() not in {"eq", "ne"}:
+            if predicate.strip() not in _COMPARISONS:
                 raise self.error(index, f"unsupported comparison {predicate.strip()!r}")
             left, right = (self.value(index, value, scope) for value in _VALUE.findall(operand_text.split(":", 1)[0]))
             scope.expressions[results[0]] = _Operation(predicate.strip(), (left, right), width)
             return
-        if operation in {"andi", "ori", "xori"}:
-            left, right = (self.value(index, value, scope) for value in _VALUE.findall(rest.split(":", 1)[0]))
+        if operation in {*_BITWISE, "addi", "subi"}:
+            left, right = (self.value(index, name, scope) for name in names)
             scope.expressions[results[0]] = _Operation(operation, (left, right), width)
             return
         raise self.error(index, f"unsupported operation 'arith.{operation}'")
 
-    def read_branch(self, index: int, results: list[str], rest: str, scope: _Scope) -> tuple[_DraftBranch, int]:
+    def read_branch(self, index: int, results: str, rest: str, scope: _Scope) -> tuple[_DraftBranch, int]:
         """Read one ``qco.if`` with both regions.
+
+        A ``qco.if`` yields the qubits it receives and may also yield classical
+        values, such as a counter that one side changes. Each classical result
+        takes the value of the side that ran.
 
         Returns:
             The branch and the index after its closing line.
@@ -323,12 +446,20 @@ class _Reader:
             raise self.error(close, "expected the else region of qco.if")
         else_scope = self.region_scope(close, closing, scope)
         else_steps, end, else_yield = self.read_region(close + 1, else_scope)
-        then_ions = [then_scope.ions[value] for value in then_yield]
-        else_ions = [else_scope.ions[value] for value in else_yield]
-        if then_ions != else_ions:
-            raise self.error(index, "both branches must yield the same ions in the same order")
-        for name, ion in zip(_result_names(results, len(then_ions)), then_ions, strict=True):
-            scope.ions[name] = ion
+        names, types = _expand_results(results), _result_types(rest)
+        if not len(names) == len(types) == len(then_yield) == len(else_yield):
+            raise self.error(index, "the results of qco.if do not match its yielded values")
+        for name, value_type, then_value, else_value in zip(names, types, then_yield, else_yield, strict=True):
+            if value_type.startswith("!qco.qubit"):
+                if then_scope.ions[then_value] != else_scope.ions[else_value]:
+                    raise self.error(index, "both branches must yield the same ions in the same order")
+                scope.ions[name] = then_scope.ions[then_value]
+            else:
+                scope.expressions[name] = _Choice(
+                    expression,
+                    self.value(index, then_value, then_scope),
+                    self.value(index, else_value, else_scope),
+                )
         _merge_registers(scope, expression, then_scope, else_scope)
         return _DraftBranch(condition, then_steps, else_steps), end + 1
 
@@ -459,17 +590,10 @@ class _Reader:
         return region
 
     def condition(self, index: int, expression: _Expression) -> Condition:
-        outcomes = sorted(_outcomes_in(expression))
-        if len(outcomes) > _MAX_CONDITION_OUTCOMES:
-            raise self.error(index, f"a condition may read at most {_MAX_CONDITION_OUTCOMES} measurement outcomes")
-        true_for: set[tuple[int, ...]] = set()
-        for values in product((0, 1), repeat=len(outcomes)):
-            try:
-                if _evaluate(expression, dict(zip(outcomes, values, strict=True))):
-                    true_for.add(values)
-            except ValueError as error:
-                raise self.error(index, str(error)) from error
-        return Condition(tuple(outcomes), frozenset(true_for))
+        try:
+            return self.logic.condition(expression)
+        except ValueError as error:
+            raise self.error(index, str(error)) from error
 
     def register(self, index: int, name: str, scope: _Scope) -> list[_Expression]:
         try:
@@ -502,10 +626,11 @@ def parse_program(qco: str) -> Program:
     native rotations ``rx``, ``ry``, ``rz``, ``rxx``, ``ryy``, and ``rzz``,
     ``measure``, ``reset``, measurement-conditioned ``qco.if``, ``scf.for``
     with constant bounds, ``scf.while`` whose condition region only computes
-    its condition, classical registers, and integer ``and``, ``or``, ``xor``,
-    and equality comparisons. Every measurement gets an outcome number in
-    program order. A condition may not read a register bit that a loop wrote
-    in another iteration.
+    its condition, classical registers, and integer values built with ``and``,
+    ``or``, ``xor``, addition, subtraction, extension, truncation, ``select``,
+    and comparisons. Every measurement gets an outcome number in program order. A
+    condition may not read a register bit that is never set or that a loop
+    writes in another iteration.
 
     Args:
         qco: Textual QCO module with one entry function.
@@ -667,6 +792,22 @@ def _merge_registers(scope: _Scope, condition: _Expression, then_scope: _Scope, 
             bits[position] = then_bit if then_bit == else_bit else _Choice(condition, then_bit, else_bit)
 
 
+def _expand_results(results: str) -> list[str]:
+    """Return one name per result; ``%name:3`` stands for ``%name#0`` to ``%name#2``."""
+    names: list[str] = []
+    for name, count in _RESULT_GROUP.findall(results):
+        names.extend([f"{name}#{position}" for position in range(int(count))] if count else [name])
+    return names
+
+
+def _result_types(rest: str) -> list[str]:
+    """Return the result types after ``->`` of an operation that opens a region."""
+    if "->" not in rest:
+        return []
+    signature = rest.rsplit("->", 1)[1].split("{", 1)[0].strip().removeprefix("(").removesuffix(")")
+    return [part.strip() for part in signature.split(",") if part.strip()]
+
+
 def _result_names(results: list[str], count: int) -> list[str]:
     if len(results) == 1 and count != 1:
         base = results[0].split(":", 1)[0]
@@ -687,45 +828,54 @@ def _bit_of(expression: _Expression, position: int) -> _Expression:
     return _Operation("bit", (expression, _Constant(position)), 1)
 
 
-def _outcomes_in(expression: _Expression) -> set[int]:
-    if isinstance(expression, _MeasuredBit):
-        return {expression.outcome}
-    if isinstance(expression, _Operation):
-        return set().union(*(_outcomes_in(operand) for operand in expression.operands))
-    if isinstance(expression, _Choice):
-        return _outcomes_in(expression.condition) | _outcomes_in(expression.if_true) | _outcomes_in(expression.if_false)
-    return set()
+def _trim(bits: Sequence[Condition]) -> _Bits:
+    end = len(bits)
+    while end and bits[end - 1].operation == "never":
+        end -= 1
+    return tuple(bits[:end])
 
 
-def _evaluate(expression: _Expression, values: dict[int, int]) -> int:
-    if isinstance(expression, _Constant):
-        return expression.value
-    if isinstance(expression, _MeasuredBit):
-        return values[expression.outcome]
-    if isinstance(expression, _Unset):
-        msg = "a condition reads a classical bit that is never set"
-        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Program errors use ValueError.
-    if isinstance(expression, _ChangesPerIteration):
-        msg = "a condition reads a classical bit that a loop writes in another iteration"
-        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Program errors use ValueError.
-    if isinstance(expression, _Choice):
-        chosen = expression.if_true if _evaluate(expression.condition, values) else expression.if_false
-        return _evaluate(chosen, values)
-    operands = [_evaluate(operand, values) for operand in expression.operands]
-    mask = (1 << expression.width) - 1
-    if expression.name == "concat":
-        return sum(bit << position for position, bit in enumerate(operands))
-    if expression.name == "bit":
-        return (operands[0] >> operands[1]) & 1
-    if expression.name == "eq":
-        return int(operands[0] == operands[1])
-    if expression.name == "ne":
-        return int(operands[0] != operands[1])
-    if expression.name == "andi":
-        return operands[0] & operands[1] & mask
-    if expression.name == "ori":
-        return (operands[0] | operands[1]) & mask
-    return (operands[0] ^ operands[1]) & mask
+def _pad(bits: _Bits, length: int) -> _Bits:
+    return (*bits, *(Condition.never(),) * (length - len(bits)))[:length]
+
+
+def _pad_both(left: _Bits, right: _Bits) -> tuple[_Bits, _Bits]:
+    length = max(len(left), len(right))
+    return _pad(left, length), _pad(right, length)
+
+
+def _first(bits: _Bits) -> Condition:
+    return bits[0] if bits else Condition.never()
+
+
+def _equal(left: _Bits, right: _Bits) -> Condition:
+    left, right = _pad_both(left, right)
+    return reduce(operator.and_, (~(bit ^ other) for bit, other in zip(left, right, strict=True)), Condition.always())
+
+
+def _less(left: _Bits, right: _Bits, signed_width: int | None) -> Condition:
+    """Return whether ``left`` is less than ``right``: signed with ``signed_width`` bits, or unsigned for ``None``."""
+    if signed_width is not None:
+        left, right = _pad(left, signed_width), _pad(right, signed_width)
+        sign, other_sign = left[-1], right[-1]
+        return (sign & ~other_sign) | (~(sign ^ other_sign) & _less(left[:-1], right[:-1], None))
+    left, right = _pad_both(left, right)
+    less = Condition.never()
+    # Each higher bit decides unless both values agree on it.
+    for bit, other in zip(left, right, strict=True):
+        less = (~bit & other) | (~(bit ^ other) & less)
+    return less
+
+
+def _add(left: _Bits, right: _Bits, width: int, carry: Condition | None = None) -> _Bits:
+    length = min(width, max(len(left), len(right)) + 1)
+    left, right = _pad(left, length), _pad(right, length)
+    carry = Condition.never() if carry is None else carry
+    total: list[Condition] = []
+    for bit, other in zip(left, right, strict=True):
+        total.append(bit ^ other ^ carry)
+        carry = (bit & other) | (carry & (bit ^ other))
+    return tuple(total)
 
 
 __all__ = ["parse_program", "program_from_qasm"]

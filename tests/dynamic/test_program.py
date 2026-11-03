@@ -30,26 +30,51 @@ def _rotate(ion: int) -> Circuit:
     return Circuit(num_ions=2, gates=(Rx(ion=ion, theta=0.5, gate_id=0),), predecessors=(frozenset(),))
 
 
-def test_condition_holds_for_its_listed_outcome_combinations() -> None:
-    """Evaluate a condition as a truth table over measurement outcomes."""
-    parity = Condition((0, 2), frozenset({(0, 1), (1, 0)}))
+def test_condition_combines_measured_outcomes() -> None:
+    """Evaluate logic over measurement outcomes and simplify constant parts."""
+    first, last = Condition.measured(0), Condition.measured(2)
+    parity = first ^ last
 
+    assert parity.outcomes == (0, 2)
     assert parity.holds({0: 1, 1: 1, 2: 0})
     assert not parity.holds({0: 1, 2: 1})
+    assert (first & ~last).holds({0: 1, 2: 0})
+    assert not (first | last).holds({0: 0, 2: 0})
     assert Condition.from_dict(json.loads(json.dumps(parity.to_dict()))) == parity
-    with pytest.raises(ValueError, match="unique and ascending"):
-        Condition((2, 0), frozenset())
-    with pytest.raises(ValueError, match="one 0/1 value per condition outcome"):
-        Condition((0,), frozenset({(2,)}))
+    assert first & Condition.always() == first
+    assert first | Condition.always() == Condition.always()
+    assert first ^ Condition.always() == ~first
+    assert ~~first == first
+    with pytest.raises(ValueError, match="non-negative integers"):
+        Condition.measured(-1)
+    with pytest.raises(KeyError):
+        parity.holds({0: 1})
+
+
+def test_condition_keeps_shared_parts_once() -> None:
+    """Serialize and compare a condition with shared parts in size linear in its parts."""
+    # Each step reads the previous step twice, so writing it out as a tree would double its size per step.
+    decision = Condition.measured(0)
+    for outcome in range(1, 40):
+        decision = (decision & Condition.measured(outcome)) | (decision ^ Condition.measured(outcome))
+    rebuilt = Condition.from_dict(json.loads(json.dumps(decision.to_dict())))
+    values = {outcome: outcome % 3 == 0 for outcome in range(40)}
+
+    assert decision.outcomes == tuple(range(40))
+    parts = decision.to_dict()["parts"]
+    assert isinstance(parts, list)
+    assert len(parts) < 200
+    assert rebuilt == decision
+    assert hash(rebuilt) == hash(decision)
+    assert rebuilt.holds(values) == decision.holds(values)
+    with pytest.raises(ValueError, match="only combine earlier parts"):
+        Condition.from_dict({"parts": [{"operation": "not", "operands": [0]}]})
 
 
 def test_program_enumerates_one_assignment_per_path() -> None:
     """Assign only the outcomes that decide branches on each path."""
-    inner = Branch(Condition((1,), frozenset({(1,)})), (_rotate(1),))
-    program = Program(
-        2,
-        (_measure(0, 0), Branch(Condition((0,), frozenset({(1,)})), (_measure(1, 1), inner), (_rotate(0),))),
-    )
+    inner = Branch(Condition.measured(1), (_rotate(1),))
+    program = Program(2, (_measure(0, 0), Branch(Condition.measured(0), (_measure(1, 1), inner), (_rotate(0),))))
 
     assert list(program.paths()) == [{0: 0}, {0: 1, 1: 0}, {0: 1, 1: 1}]
     assert program.outcomes == (0, 1)
@@ -76,17 +101,17 @@ def test_program_round_trip_preserves_circuit_barriers() -> None:
 
 def test_program_requires_outcomes_measured_before_each_branch() -> None:
     """Reject a branch that can read an outcome that its path has not measured."""
-    only_then = Branch(Condition((0,), frozenset({(1,)})), (_measure(1, 1),))
+    only_then = Branch(Condition.measured(0), (_measure(1, 1),))
     with pytest.raises(ValueError, match=r"reads outcomes \[1\] before they are measured"):
-        Program(2, (_measure(0, 0), only_then, Branch(Condition((1,), frozenset({(1,)})), (_rotate(0),))))
+        Program(2, (_measure(0, 0), only_then, Branch(Condition.measured(1), (_rotate(0),))))
     with pytest.raises(ValueError, match="exactly one measurement"):
         Program(2, (_measure(0, 0), _measure(1, 0)))
     with pytest.raises(ValueError, match="act on num_ions ions"):
         Program(3, (_rotate(0),))
 
 
-ALWAYS = Condition((), frozenset({()}))
-OUTCOME_ZERO_IS_ONE = Condition((0,), frozenset({(1,)}))
+ALWAYS = Condition.always()
+OUTCOME_ZERO_IS_ONE = Condition.measured(0)
 
 
 def test_loop_repeats_with_a_count_or_with_two_conditions() -> None:
