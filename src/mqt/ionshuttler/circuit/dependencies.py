@@ -38,9 +38,11 @@ def with_commutation_aware_dependencies(circuit: Circuit) -> Circuit:
     qubits. The returned predecessors imply exactly these orders; they need
     not be the smallest sets that do.
 
-    The analysis walks back along each ion of a gate and stops at a gate that
-    already follows every earlier gate on that ion. For typical circuits, time
-    and memory therefore grow about linearly with the number of gates.
+    The analysis walks back along each ion of a gate to the first earlier gate
+    that the new gate must follow. Each gate stores the earlier gates on its
+    ions that it may not follow, so beyond that first gate the walk checks only
+    these stored gates. Time and memory therefore grow about linearly with the
+    number of gates, unless long runs of commuting gates share an ion.
 
     Args:
         circuit: Parsed circuit whose gate IDs define schedule identity.
@@ -79,13 +81,14 @@ class _Ordering:
         self.ions: list[tuple[int, ...]] = []
         self.operations: list[Gate | None] = []
         self.signatures: list[tuple[object, ...] | None] = []
-        self.identity: list[bool] = []
         self.after: list[list[int]] = []
-        # For each node and each of its ions: whether the node follows every earlier node on that ion,
-        # and whether it follows every earlier node except identities.
-        self.follows_all: list[dict[int, bool]] = []
-        self.follows_gates: list[dict[int, bool]] = []
+        # For each node and each of its ions: the earlier nodes on that ion that the node may not follow, latest
+        # first. The node follows every other earlier node on the ion. Identities appear in no list.
+        self.skipped: list[dict[int, list[int]]] = []
+        # Per ion: the nodes except identities, the latest barrier, and the identities since that barrier.
         self.on_ion: dict[int, list[int]] = {}
+        self.last_barrier: dict[int, int] = {}
+        self.identities: dict[int, list[int]] = {}
         self.barrier_gates: dict[int, frozenset[int]] = {}
         self.gate_number: dict[int, int] = {}
         self.known: dict[tuple[object, ...], bool] = {}
@@ -98,48 +101,65 @@ class _Ordering:
             The node number of the gate or barrier.
         """
         node = len(self.ions)
-        barrier = operation is None
         signature = None if operation is None else (operation.name, tuple(operation.params), len(ions))
         self.ions.append(ions)
         self.operations.append(operation)
         self.signatures.append(signature)
-        self.identity.append(operation is not None and signature is not None and self.is_identity(operation, signature))
         after: list[int] = []
-        found: set[int] = set()
-        follows_all: dict[int, bool] = {}
-        follows_gates: dict[int, bool] = {}
-        for ion in ions:
-            complete = complete_for_gates = True
-            # Walk back along the ion. A node that the new node already follows needs no entry; a node that
-            # also follows every earlier node that matters ends the walk. A gate never follows an identity,
-            # so it passes identities; a barrier follows every node.
-            for earlier in reversed(self.on_ion.get(ion, ())):
-                if not barrier and self.identity[earlier]:
-                    complete = False
-                    continue
-                if not (earlier in found or self.follows_found(earlier, after)):
-                    if self.commute(node, earlier):
-                        complete = complete_for_gates = False
-                        continue
-                    after.append(earlier)
-                    found.add(earlier)
-                if barrier and self.follows_all[earlier][ion]:
-                    break
-                if not barrier and self.follows_gates[earlier][ion]:
-                    complete = complete and self.follows_all[earlier][ion]
-                    break
-            follows_all[ion] = complete
-            follows_gates[ion] = complete_for_gates
-        for ion in ions:
-            self.on_ion.setdefault(ion, []).append(node)
+        skipped: dict[int, list[int]] = {}
+        if operation is not None and signature is not None and self.is_identity(operation, signature):
+            after.extend(dict.fromkeys(self.last_barrier[ion] for ion in ions if ion in self.last_barrier))
+            for ion in ions:
+                self.identities.setdefault(ion, []).append(node)
+        else:
+            found: set[int] = set()
+            for ion in ions:
+                skipped[ion] = self.walk_back(node, ion, after, found)
+            if operation is None:
+                for ion in ions:
+                    for identity in self.identities.pop(ion, ()):
+                        if identity not in found:
+                            after.append(identity)
+                            found.add(identity)
+                    self.last_barrier[ion] = node
+            for ion in ions:
+                self.on_ion.setdefault(ion, []).append(node)
         self.after.append(after)
-        self.follows_all.append(follows_all)
-        self.follows_gates.append(follows_gates)
-        if barrier:
+        self.skipped.append(skipped)
+        if operation is None:
             self.barrier_gates[node] = frozenset(self.gates_before(node))
         else:
             self.gate_number[node] = len(self.gate_number)
         return node
+
+    def walk_back(self, node: int, ion: int, after: list[int], found: set[int]) -> list[int]:
+        """Add to ``after`` the nodes on ``ion`` that ``node`` must follow and that ``after`` does not imply yet.
+
+        The walk stops at the first earlier node that ``node`` follows. That node
+        follows every node before it on the ion except its skipped ones, so only
+        these need a check.
+
+        Returns:
+            The earlier nodes on ``ion`` that ``node`` may not follow, latest first.
+        """
+        skipped: list[int] = []
+        for earlier in reversed(self.on_ion.get(ion, ())):
+            if self.follows(node, earlier, after, found, skipped):
+                for other in self.skipped[earlier][ion]:
+                    self.follows(node, other, after, found, skipped)
+                break
+        return skipped
+
+    def follows(self, node: int, earlier: int, after: list[int], found: set[int], skipped: list[int]) -> bool:
+        """Return whether ``node`` follows ``earlier``; add ``earlier`` to ``after`` or ``skipped`` if needed."""
+        if earlier in found or self.follows_found(earlier, after):
+            return True
+        if self.commute(node, earlier):
+            skipped.append(earlier)
+            return False
+        after.append(earlier)
+        found.add(earlier)
+        return True
 
     def is_identity(self, operation: Gate, signature: tuple[object, ...]) -> bool:
         """Return whether an operation commutes with every rotation on each of its qubits, so equals the identity."""

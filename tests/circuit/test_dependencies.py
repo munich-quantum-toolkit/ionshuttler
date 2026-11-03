@@ -65,6 +65,51 @@ def _random_circuit(seed: int, num_ions: int, num_gates: int, barrier_chance: fl
     return Circuit(num_ions, tuple(gates), tuple(predecessors), tuple(barriers))
 
 
+def _alternating_blocks_circuit(num_gates: int) -> Circuit:
+    """Return blocks of four gates on ion 0 that alternate between Z and X rotations.
+
+    The gates of one block commute. On ion 0, the gates of neighboring blocks do not.
+    """
+    gates: list[GateAction] = []
+    predecessors: list[frozenset[int]] = []
+    latest: dict[int, int] = {}
+    for gate_id in range(num_gates):
+        partner = 1 + gate_id % 2
+        gate: GateAction
+        if (gate_id // 4) % 2 == 1:
+            gate = Rx(ion=partner if gate_id % 2 else 0, theta=0.3, gate_id=gate_id)
+        elif gate_id % 2:
+            gate = Rzz(ion_a=0, ion_b=partner, theta=0.3, gate_id=gate_id)
+        else:
+            gate = Rz(ion=0, theta=0.3, gate_id=gate_id)
+        gates.append(gate)
+        predecessors.append(frozenset(latest[ion] for ion in gate.ions if ion in latest))
+        for ion in gate.ions:
+            latest[ion] = gate_id
+    return Circuit(3, tuple(gates), tuple(predecessors), ((),) * (num_gates + 1))
+
+
+def _rounds_with_identities_circuit(rounds: int) -> Circuit:
+    """Return measurement rounds on ion 0, each with an ``rz(-2*pi)`` as MQT Core synthesis produces it."""
+    gates: list[GateAction] = []
+    for _ in range(rounds):
+        gates.extend((
+            Reset(ion=0, gate_id=len(gates)),
+            Rzz(ion_a=0, ion_b=1, theta=-math.pi / 2, gate_id=len(gates) + 1),
+            Rzz(ion_a=0, ion_b=2, theta=-math.pi / 2, gate_id=len(gates) + 2),
+            Rz(ion=0, theta=-2 * math.pi, gate_id=len(gates) + 3),
+            Rx(ion=0, theta=math.pi / 2, gate_id=len(gates) + 4),
+            Measure(ion=0, gate_id=len(gates) + 5),
+        ))
+    predecessors: list[frozenset[int]] = []
+    latest: dict[int, int] = {}
+    for gate_id, gate in enumerate(gates):
+        predecessors.append(frozenset(latest[ion] for ion in gate.ions if ion in latest))
+        for ion in gate.ions:
+            latest[ion] = gate_id
+    return Circuit(3, tuple(gates), tuple(predecessors), ((),) * (len(gates) + 1))
+
+
 def _qiskit_operation(gate: GateAction) -> Gate:
     rotation = _QISKIT_ROTATIONS.get(gate.circuit_name or "")
     if rotation is None:
@@ -132,6 +177,26 @@ def test_commutation_aware_dependencies_scale_to_long_circuits() -> None:
 
     assert time.perf_counter() - began < 60
     assert len(dependencies.predecessors) == 20_000
+
+
+def test_commutation_aware_dependencies_order_alternating_blocks_like_the_pairwise_check() -> None:
+    """Order blocks of commuting rotations like the check of every pair."""
+    circuit = _alternating_blocks_circuit(200)
+
+    dependencies = with_commutation_aware_dependencies(circuit)
+
+    assert _orders(dependencies.predecessors) == _pairwise_orders(circuit)
+
+
+def test_commutation_aware_dependencies_scale_to_rounds_with_identity_rotations() -> None:
+    """Analyze 30 000 gates in seconds when each measurement round contains a rotation that equals the identity."""
+    circuit = _rounds_with_identities_circuit(5_000)
+
+    began = time.perf_counter()
+    dependencies = with_commutation_aware_dependencies(circuit)
+
+    assert time.perf_counter() - began < 60
+    assert len(dependencies.predecessors) == 30_000
 
 
 def test_commutation_aware_dependencies_release_commuting_rotations() -> None:
