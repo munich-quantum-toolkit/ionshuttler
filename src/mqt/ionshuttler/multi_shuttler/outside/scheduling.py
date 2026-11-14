@@ -266,10 +266,9 @@ def create_gate_info_list(graph: Graph) -> dict[str, list[int]]:
             elem = qubits[0]
             if gate_info_list[pz] == []:
                 gate_info_list[pz].append(elem)
-        elif len(qubits) == 2:
-            if gate_info_list[pz] == []:
-                gate_info_list[pz].append(qubits[0])
-                gate_info_list[pz].append(qubits[1])
+        elif len(qubits) == 2 and gate_info_list[pz] == []:
+            gate_info_list[pz].append(qubits[0])
+            gate_info_list[pz].append(qubits[1])
         # break if all pzs have a gate
         if all(gate_info_list.values()):
             break
