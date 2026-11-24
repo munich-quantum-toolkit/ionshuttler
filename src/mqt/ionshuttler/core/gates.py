@@ -503,7 +503,7 @@ class Measure(_SingleIonOperation):
     """
 
     outcome: int | None = None
-    circuit_name: ClassVar[str] = "measure"
+    circuit_name: ClassVar[str | None] = "measure"
     serialized_type: ClassVar[str] = "gate.measure"
 
     def __post_init__(self) -> None:
@@ -537,7 +537,7 @@ class Measure(_SingleIonOperation):
 class Reset(_SingleIonOperation):
     """Prepare one ion in the computational ground state."""
 
-    circuit_name: ClassVar[str] = "reset"
+    circuit_name: ClassVar[str | None] = "reset"
     serialized_type: ClassVar[str] = "gate.reset"
 
 
