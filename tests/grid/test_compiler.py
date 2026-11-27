@@ -1367,8 +1367,8 @@ def test_compiler_can_compute_a_gate_zone_assignment() -> None:
 @pytest.mark.parametrize(
     ("config", "expected_partitioning"),
     [
-        (GridCompilerConfig(), False),
-        (GridCompilerConfig(pre_partition=True), True),
+        (GridCompilerConfig(), True),
+        (GridCompilerConfig(pre_partition=False), False),
     ],
 )
 def test_pre_partitioning_follows_the_config(
@@ -1521,11 +1521,12 @@ def test_compiler_config_requires_dependency_mode_enum_values() -> None:
 
 
 def test_compiler_config_uses_recommended_defaults() -> None:
-    """Use the scalable routing and dependency modes unless configured otherwise."""
+    """Use the scalable routing and dependency modes and pre-partitioning unless configured otherwise."""
     config = GridCompilerConfig()
 
     assert config.strategy is GridCompilerStrategy.GREEDY
     assert config.dependency_mode is DependencyMode.COMMUTATION_AWARE
+    assert config.pre_partition is True
 
 
 def test_compiler_config_rejects_malformed_junction_crossings() -> None:

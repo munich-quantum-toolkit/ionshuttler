@@ -31,10 +31,10 @@ class GridCompilerConfig:
     """Bound the deterministic Grid compiler.
 
     ``dependency_mode`` controls whether commuting gates can change order.
-    By default, the compiler selects processing zones while scheduling. With
-    ``pre_partition=True``, it assigns gates to processing zones before
+    By default, the compiler assigns gates to processing zones before
     scheduling; this has no effect when fewer than two compatible, mutually
-    reachable processing zones are available. ``pre_partition_config`` tunes
+    reachable processing zones are available. With ``pre_partition=False``, it
+    selects processing zones while scheduling. ``pre_partition_config`` tunes
     the assignment.
     ``max_iterations`` bounds scheduling progress. ``max_routing_states``
     bounds each breadth-first search or greedy candidate evaluation.
@@ -47,7 +47,7 @@ class GridCompilerConfig:
 
     strategy: GridCompilerStrategy = GridCompilerStrategy.GREEDY
     dependency_mode: DependencyMode = DependencyMode.COMMUTATION_AWARE
-    pre_partition: bool = False
+    pre_partition: bool = True
     pre_partition_config: FineGrainedTabuConfig | None = None
     allowed_junction_crossings: frozenset[tuple[str, str]] | None = None
     max_iterations: int = 10_000

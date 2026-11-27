@@ -74,18 +74,17 @@ Use `segment.supports(Rearrangement)` to query the local capability.
 By default, the compiler also:
 
 - uses commutation-aware circuit dependencies;
-- selects processing zones while scheduling;
+- partitions gates between suitable processing zones before scheduling;
 - runs ten lookahead rounds, each selecting at most one gate per target
   processing-zone segment, and prioritizes the ions used by those gates.
 
-Set `pre_partition=True` in
-{py:class}`~mqt.ionshuttler.grid.config.GridCompilerConfig` to partition gates
-between suitable processing zones before scheduling. Use
-`gate_to_processing_zone` in
+Set `pre_partition=False` in
+{py:class}`~mqt.ionshuttler.grid.config.GridCompilerConfig` to select processing
+zones while scheduling. Use `gate_to_processing_zone` in
 {py:meth}`~mqt.ionshuttler.grid.compiler.GridCompiler.compile` to assign
 individual gate IDs to processing-zone IDs explicitly. An explicit mapping
-replaces pre-partitioning, even when `pre_partition=True`. Unassigned gates
-select a processing zone while scheduling.
+replaces pre-partitioning. Unassigned gates select a processing zone while
+scheduling.
 
 Use `target_placement` to request a final placement after all gates. The mapping
 uses the same format as `initial_placement`. A target that contains every ion is
@@ -124,7 +123,8 @@ compiler settings:
 - `dependency_mode` set to
   {py:attr}`~mqt.ionshuttler.core.dependencies.DependencyMode.CONSERVATIVE`
   preserves the dependencies produced by the shared circuit parser instead of
-  reordering commuting gates. The Linear compiler has the same setting.
+  reordering commuting gates. The Linear compiler has the same setting with
+  `CONSERVATIVE` as its default.
 - {py:attr}`~mqt.ionshuttler.grid.config.GridCompilerConfig.allowed_junction_crossings`
   can restrict routing to selected directed segment pairs without changing the
   hardware topology.

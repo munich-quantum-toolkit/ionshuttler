@@ -490,8 +490,8 @@ def test_permutation_strategy_runs_through_the_compiler() -> None:
     [
         (SearchConfig(), False),
         (SearchConfig(pre_partition=True), True),
-        (PermutationConfig(), False),
-        (PermutationConfig(pre_partition=True), True),
+        (PermutationConfig(), True),
+        (PermutationConfig(pre_partition=False), False),
     ],
 )
 def test_pre_partitioning_follows_the_active_config(

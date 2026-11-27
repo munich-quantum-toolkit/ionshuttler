@@ -27,7 +27,8 @@ class LinearCompilerConfig(ABC):
 
     ``action_types`` limits the compiler to a subset of the operations
     supported by the architecture. ``None`` uses every supported operation.
-    ``dependency_mode`` controls whether commuting gates can change order.
+    ``dependency_mode`` controls whether commuting gates can change order; by
+    default, the compiler keeps the circuit order.
     ``max_compile_time`` bounds the complete compilation in seconds; ``None``
     removes the limit. ``pre_partition`` toggles a pre-partitioning step that
     assigns gates to preferred processing zones. ``pre_partition_config``
@@ -38,7 +39,7 @@ class LinearCompilerConfig(ABC):
     """
 
     action_types: tuple[type[Action], ...] | None = None
-    dependency_mode: DependencyMode = DependencyMode.COMMUTATION_AWARE
+    dependency_mode: DependencyMode = DependencyMode.CONSERVATIVE
     max_compile_time: float | None = 1800.0
     pre_partition: bool = False
     pre_partition_config: FineGrainedTabuConfig | None = None
@@ -120,9 +121,9 @@ class SearchConfig(LinearCompilerConfig):
 class PermutationConfig(LinearCompilerConfig):
     """Configuration of the permutation-based strategy.
 
-    By default, this strategy sends the ions of each gate to the nearest
-    processing zone with room. With ``pre_partition=True``, it constructs each
-    target placement from preferred gate zones instead.
+    By default, this strategy constructs each target placement from preferred
+    gate zones. With ``pre_partition=False``, it sends the ions of each gate to
+    the nearest processing zone with room instead.
 
     ``lookahead_gates`` bounds how many upcoming gates the compiler inspects
     when it fills one group of gates. A larger value can fill groups better but
@@ -131,6 +132,7 @@ class PermutationConfig(LinearCompilerConfig):
     diagnostics. Use it to inspect the compiler's decisions; it costs memory.
     """
 
+    pre_partition: bool = True
     lookahead_gates: int = 32
     record_planning_trace: bool = False
 

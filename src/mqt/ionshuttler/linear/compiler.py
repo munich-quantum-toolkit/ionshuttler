@@ -36,12 +36,12 @@ if TYPE_CHECKING:
 class LinearCompiler:
     """Compile supported circuits to a fixed Linear hardware model.
 
-    The configuration type selects the scheduling strategy. ``PermutationConfig``
+    The configuration type selects the scheduling strategy. ``SearchConfig``
     is the default. Time advancement remains an internal part of scheduling.
     """
 
     architecture: LinearArchitecture
-    config: SearchConfig | PermutationConfig = field(default_factory=PermutationConfig)
+    config: SearchConfig | PermutationConfig = field(default_factory=SearchConfig)
 
     def __post_init__(self) -> None:
         """Ensure the configuration and hardware action catalog agree.

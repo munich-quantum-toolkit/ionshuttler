@@ -45,7 +45,7 @@ def test_architecture_and_compiler_config_use_ready_to_run_defaults() -> None:
         num_solutions=1,
         max_frontier_size=1000,
         use_dependencies=True,
-        dependency_mode=DependencyMode.COMMUTATION_AWARE,
+        dependency_mode=DependencyMode.CONSERVATIVE,
         max_compile_time=1800.0,
         pre_partition_config=None,
         pre_partition=False,
@@ -54,9 +54,9 @@ def test_architecture_and_compiler_config_use_ready_to_run_defaults() -> None:
     assert permutation == PermutationConfig(
         lookahead_gates=32,
         record_planning_trace=False,
-        dependency_mode=DependencyMode.COMMUTATION_AWARE,
+        dependency_mode=DependencyMode.CONSERVATIVE,
         max_compile_time=1800.0,
-        pre_partition=False,
+        pre_partition=True,
         pre_partition_config=None,
         action_types=None,
     )
