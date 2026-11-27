@@ -9,11 +9,14 @@ mystnb:
 # Dynamic Programs
 
 A dynamic program measures ions during execution and chooses later operations
-from the outcomes. {py:func}`~mqt.ionshuttler.dynamic.compiler.compile_program`
-compiles such a program for a Grid or Linear architecture. The result holds one
-precompiled schedule for every straight-line part of the program and a decision
-for every branch, so the control system only selects the next schedule when an
-outcome arrives.
+from the outcomes. Besides gates, it contains mid-circuit measurements, resets,
+conditional branches (`if`/`else`), loops with a fixed number of iterations
+(`for`), and conditional loops (`while`).
+{py:func}`~mqt.ionshuttler.dynamic.compiler.compile_program` compiles such a
+program for a Grid or Linear architecture. The result holds one precompiled
+schedule for every straight-line part of the program and keeps the condition of
+every conditional branch and conditional loop, so the control system only
+selects the next schedule when an outcome arrives.
 
 ## Reading programs with MQT Core
 
@@ -84,27 +87,29 @@ for summary in result.path_summaries():
 - A {py:class}`~mqt.ionshuttler.dynamic.program.Condition` is a logic expression
   over measurement outcomes, built from `Condition.measured(n)` with `&`, `|`,
   `^`, and `~`. Integer counters and register comparisons in OpenQASM become
-  such expressions, so a decision can read any number of outcomes.
-- A branch starts no earlier than `feedback_delay` after the last measurement
-  that its condition reads.
-- Both sides of a branch start from the placement before it. When later steps
-  follow the branch, both sides return to that placement as the target placement
-  of their last circuit, so the program continues from the same placement on
-  every path.
-- A {py:class}`~mqt.ionshuttler.dynamic.program.Loop` repeats its steps a fixed
-  number of times (`for`) or while a condition holds (`while`). Its body is
-  compiled once and returns to the placement in which the loop starts, so every
-  iteration runs the same schedules. Outcomes measured inside a loop are keyed
-  by outcome number and iteration, such as `(3, 0)`.
+  such expressions, so a condition can read any number of outcomes.
+- A {py:class}`~mqt.ionshuttler.dynamic.program.Branch` is a conditional branch
+  (`if`/`else`). It starts no earlier than `feedback_delay` after the last
+  measurement that its condition reads.
+- Both sides of a conditional branch start from the placement before it. When
+  later steps follow the branch, both sides return to that placement as the
+  target placement of their last circuit, so the program continues from the same
+  placement on every path.
+- A {py:class}`~mqt.ionshuttler.dynamic.program.Loop` is either a loop with a
+  fixed number of iterations (`for`) or a conditional loop (`while`), which
+  repeats its steps while a condition holds. Its body is compiled once and
+  returns to the placement in which the loop starts, so every iteration runs the
+  same schedules. Outcomes measured inside a loop are keyed by outcome number
+  and iteration, such as `(3, 0)`.
 - {py:meth}`~mqt.ionshuttler.dynamic.compiler.ProgramResult.validate` checks
   each precompiled schedule against its circuit, replays it once, and checks
   that it starts from every state in which the schedules before it can end. This
   covers every path, also through many loop iterations.
-- `paths` and `path_summaries` list paths explicitly. A `while` loop needs
+- `paths` and `path_summaries` list paths explicitly. A conditional loop needs
   `max_iterations` there; longer paths are left out.
-- Commuting gates of a circuit may change order. A Grid or Linear compiler with
-  `dependency_mode=DependencyMode.CONSERVATIVE` in its configuration keeps the
-  circuit order.
+- The Grid compiler lets commuting gates of a circuit change order by default.
+  The Linear compiler keeps the circuit order by default. The `dependency_mode`
+  setting of each compiler configuration selects the behavior.
 
 If a return finds no movement sequence within `max_routing_states`, the result
 has status `FAILED` and names the failing branch.
@@ -112,17 +117,17 @@ has status `FAILED` and names the failing branch.
 ## Compiling along a predicted path
 
 Each circuit compiles on its own by default, so transport for a circuit after a
-branch starts only when the branch decision is known. Often one outcome is much
-more likely, for example a trivial syndrome in error correction. With
-`predicted_outcome`, the compiler assumes that every measurement that a
-condition reads returns this value. It compiles the circuits of this predicted
-path as one circuit, so transport for later circuits can start while earlier
-circuits still run. Gates of a circuit still start only after every gate of the
-circuits before it ends, and the result keeps one schedule per circuit. The
-other side of each branch on the predicted path starts from the placement that
-the predicted path reaches at the branch. When later steps follow, it ends in
-the placement where the predicted path continues. A loop ends a predicted path;
-its body is compiled along its own predicted path.
+conditional branch starts only when the outcomes that its condition reads are
+known. Often one outcome is much more likely, for example a trivial syndrome in
+error correction. With `predicted_outcome`, the compiler assumes that every
+measurement that a condition reads returns this value. It compiles the circuits
+of this predicted path as one circuit, so transport for later circuits can start
+while earlier circuits still run. Gates of a circuit still start only after
+every gate of the circuits before it ends, and the result keeps one schedule per
+circuit. The other side of each branch on the predicted path starts from the
+placement that the predicted path reaches at the branch. When later steps
+follow, it ends in the placement where the predicted path continues. A loop ends
+a predicted path; its body is compiled along its own predicted path.
 
 ```python
 result = compile_program(program, GridCompiler(architecture), feedback_delay=2, predicted_outcome=0)

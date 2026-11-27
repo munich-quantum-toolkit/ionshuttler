@@ -10,12 +10,18 @@
 from __future__ import annotations
 
 import json
+import operator
+from functools import reduce
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
 from mqt.ionshuttler.circuit import Circuit
 from mqt.ionshuttler.core.gates import Measure, Rx
 from mqt.ionshuttler.dynamic import Branch, Condition, Loop, Program
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _measure(ion: int, outcome: int) -> Circuit:
@@ -54,19 +60,19 @@ def test_condition_combines_measured_outcomes() -> None:
 def test_condition_keeps_shared_parts_once() -> None:
     """Serialize and compare a condition with shared parts in size linear in its parts."""
     # Each step reads the previous step twice, so writing it out as a tree would double its size per step.
-    decision = Condition.measured(0)
+    condition = Condition.measured(0)
     for outcome in range(1, 40):
-        decision = (decision & Condition.measured(outcome)) | (decision ^ Condition.measured(outcome))
-    rebuilt = Condition.from_dict(json.loads(json.dumps(decision.to_dict())))
+        condition = (condition & Condition.measured(outcome)) | (condition ^ Condition.measured(outcome))
+    rebuilt = Condition.from_dict(json.loads(json.dumps(condition.to_dict())))
     values = {outcome: outcome % 3 == 0 for outcome in range(40)}
 
-    assert decision.outcomes == tuple(range(40))
-    parts = decision.to_dict()["parts"]
+    assert condition.outcomes == tuple(range(40))
+    parts = condition.to_dict()["parts"]
     assert isinstance(parts, list)
     assert len(parts) < 200
-    assert rebuilt == decision
-    assert hash(rebuilt) == hash(decision)
-    assert rebuilt.holds(values) == decision.holds(values)
+    assert rebuilt == condition
+    assert hash(rebuilt) == hash(condition)
+    assert rebuilt.holds(values) == condition.holds(values)
     with pytest.raises(ValueError, match="only combine earlier parts"):
         Condition.from_dict({"parts": [{"operation": "not", "operands": [0]}]})
 
@@ -139,7 +145,7 @@ def test_paths_through_a_counted_loop_key_outcomes_by_iteration() -> None:
     assert Program.from_dict(json.loads(json.dumps(program.to_dict()))) == program
 
 
-def test_paths_through_a_loop_without_count_stop_at_max_iterations() -> None:
+def test_paths_through_a_conditional_loop_stop_at_max_iterations() -> None:
     """Leave out paths that need more iterations than requested."""
     program = Program(2, (Loop((_measure(0, 0),), entry=ALWAYS, repeat=OUTCOME_ZERO_IS_ONE),))
 
@@ -154,3 +160,87 @@ def test_outcomes_measured_inside_a_loop_stay_inside_it() -> None:
         Program(2, (Loop((_measure(0, 0),), count=2), Branch(OUTCOME_ZERO_IS_ONE, (_rotate(1),))))
     with pytest.raises(ValueError, match="a loop repeat condition reads outcomes"):
         Program(2, (Loop((_rotate(0),), entry=ALWAYS, repeat=OUTCOME_ZERO_IS_ONE),))
+
+
+@pytest.mark.parametrize(
+    ("build", "error", "message"),
+    [
+        (lambda: Condition("all", (Condition.measured(0), cast("Condition", 1))), TypeError, "must be conditions"),
+        (lambda: Condition("nand", (Condition.measured(0),)), ValueError, "unknown condition operation"),
+        (lambda: Condition("always", outcome=0), ValueError, "reads no outcome"),
+        (lambda: Condition("not"), ValueError, "wrong number of operands"),
+        (lambda: Condition("any"), ValueError, "wrong number of operands"),
+        (lambda: Condition.from_dict({"parts": []}), ValueError, "at least one part"),
+        (lambda: Condition.measured(0) & 1, TypeError, "unsupported operand"),
+    ],
+    ids=[
+        "operand-not-a-condition",
+        "unknown-operation",
+        "outcome-on-a-constant",
+        "not-without-operand",
+        "any-without-operands",
+        "document-without-parts",
+        "combined-with-an-integer",
+    ],
+)
+def test_condition_rejects_malformed_parts(build: Callable[[], object], error: type[Exception], message: str) -> None:
+    """Reject condition parts whose operation, operands, and outcome do not fit together."""
+    with pytest.raises(error, match=message):
+        build()
+
+
+def test_condition_shows_its_expression() -> None:
+    """Show a short condition as an expression and a long one as a summary."""
+    short = Condition.measured(0) & ~Condition.measured(1)
+    long = reduce(operator.and_, (Condition.measured(outcome) for outcome in range(50)))
+
+    assert "measured(0)" in repr(short)
+    assert "~measured(1)" in repr(short)
+    assert "reading 50 outcomes" in repr(long)
+
+
+def test_program_lists_nested_branches_loops_and_conditions() -> None:
+    """Find branches, loops, and their conditions at every nesting depth."""
+    inner = Branch(Condition.measured(1), (_rotate(0),))
+    loop = Loop((_measure(1, 1), inner), entry=ALWAYS, repeat=Condition.measured(1))
+    outer = Branch(OUTCOME_ZERO_IS_ONE, (loop,))
+    program = Program(2, (_measure(0, 0), outer))
+
+    assert list(program.branches()) == [outer, inner]
+    assert list(program.loops()) == [loop]
+    assert list(program.conditions()) == [OUTCOME_ZERO_IS_ONE, ALWAYS, Condition.measured(1), Condition.measured(1)]
+
+
+def test_program_and_loop_reject_wrong_types() -> None:
+    """Reject an ion count or a loop count that is not an integer."""
+    with pytest.raises(TypeError, match="num_ions must be an integer"):
+        Program(cast("int", 2.0), (_rotate(0),))
+    with pytest.raises(TypeError, match="loop count must be an integer"):
+        Loop((_rotate(0),), count=cast("int", "2"))
+
+
+def _set(document: dict[str, Any], path: tuple[str | int, ...], value: object) -> None:
+    target: Any = document
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "message"),
+    [
+        (("version",), 0, "unsupported program schema or version"),
+        (("steps", 0, "gates", 0, "type"), "gate.unknown", "unknown program gate type"),
+        (("steps", 0, "predecessors"), [["first"]], "predecessor set must be a list of integers"),
+        (("steps", 0, "barriers", 0), 0, "barriers must contain lists of target sets"),
+        (("steps", 1, "count"), "2", "loop count must be an integer or null"),
+        (("steps", 1, "type"), "switch", "unknown program step type"),
+    ],
+)
+def test_program_document_rejects_malformed_data(path: tuple[str | int, ...], value: object, message: str) -> None:
+    """Name the malformed part of a serialized program."""
+    document = json.loads(json.dumps(Program(2, (_measure(0, 0), Loop((_rotate(1),), count=2))).to_dict()))
+    _set(document, path, value)
+
+    with pytest.raises(ValueError, match=message):
+        Program.from_dict(document)

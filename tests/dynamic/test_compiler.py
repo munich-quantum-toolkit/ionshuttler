@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -22,6 +22,7 @@ from mqt.ionshuttler.core.gates import GateAction, GateTiming, Measure, Rx, Rxx,
 from mqt.ionshuttler.core.schedule import Schedule
 from mqt.ionshuttler.dynamic import (
     Branch,
+    BranchingSchedule,
     Condition,
     Loop,
     Program,
@@ -45,13 +46,18 @@ from mqt.ionshuttler.grid import (
     square_grid,
 )
 from mqt.ionshuttler.grid.actions import decode_grid_action
-from mqt.ionshuttler.linear import DEFAULT_ACTION_TYPES, LinearArchitecture, LinearCompiler, SearchConfig
+from mqt.ionshuttler.linear import (
+    DEFAULT_ACTION_TYPES,
+    LinearArchitecture,
+    LinearCompiler,
+    PermutationConfig,
+    SearchConfig,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from mqt.ionshuttler.core import Compiler
-    from mqt.ionshuttler.dynamic import BranchingSchedule
     from mqt.ionshuttler.linear import LinearCompilationResult
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -63,6 +69,8 @@ LINEAR = LinearArchitecture(
     processing_zones={"left": [4, 5], "right": [10, 11]},
     supported_action_types=(*DEFAULT_ACTION_TYPES, Rxx),
 )
+# The permutation strategy compiles the error-correction fixtures in seconds; search takes much longer.
+PERMUTATION = PermutationConfig()
 
 
 def _program(name: str) -> Program:
@@ -185,6 +193,36 @@ def test_result_round_trips_through_json(tmp_path: Path) -> None:
 
     assert restored == result
     restored.validate()
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("version", 0, "unsupported program result schema or version"),
+        ("wall_clock_s", "fast", "wall_clock_s must be a number"),
+    ],
+)
+def test_result_document_rejects_malformed_data(key: str, value: object, message: str) -> None:
+    """Name the malformed part of a serialized result."""
+    result = compile_program(_program("teleportation"), GridCompiler(GRID, BREADTH_FIRST))
+    document = json.loads(json.dumps(result.to_dict()))
+    document[key] = value
+
+    with pytest.raises(ValueError, match=message):
+        ProgramResult.from_dict(
+            document,
+            decode_architecture=GridArchitecture.from_dict,
+            decode_action=decode_grid_action,
+            decode_state=GridMachineState.from_dict,
+        )
+
+
+def test_branching_schedule_requires_a_non_negative_integer_feedback_delay() -> None:
+    """Reject a feedback delay that is not a non-negative integer."""
+    with pytest.raises(TypeError, match="feedback_delay must be an integer"):
+        BranchingSchedule((), None, cast("int", 1.5))
+    with pytest.raises(ValueError, match="feedback_delay must be non-negative"):
+        BranchingSchedule((), None, -1)
 
 
 def test_an_impossible_return_names_the_failing_branch_side() -> None:
@@ -343,7 +381,7 @@ def test_loop_results_round_trip_through_json() -> None:
 )
 def test_every_fixture_program_compiles_on_a_linear_architecture(name: str) -> None:
     """Compile the same programs with the Linear compiler and check every connection."""
-    result = compile_program(_program(name), LinearCompiler(LINEAR), feedback_delay=1)
+    result = compile_program(_program(name), LinearCompiler(LINEAR, PERMUTATION), feedback_delay=1)
 
     assert result.status is CompilationStatus.SUCCESS
     result.validate()
@@ -355,7 +393,7 @@ def test_linear_branches_return_to_the_sites_before_them() -> None:
     suffix = Circuit(num_ions=2, gates=(Rx(ion=0, theta=0.1, gate_id=0),), predecessors=(frozenset(),))
     program = Program(2, (*_measure_then_branch().steps, suffix))
 
-    result = compile_program(program, LinearCompiler(LINEAR), initial_placement=(0, 15), feedback_delay=1)
+    result = compile_program(program, LinearCompiler(LINEAR, PERMUTATION), initial_placement=(0, 15), feedback_delay=1)
 
     assert result.status is CompilationStatus.SUCCESS
     assert result.schedule.initial_state.placement == (0, 15)
@@ -383,7 +421,7 @@ FIXTURE_NAMES = (
 @pytest.mark.parametrize("name", FIXTURE_NAMES)
 def test_every_fixture_program_compiles_along_a_predicted_path(name: str, predicted_outcome: int) -> None:
     """Keep every path valid when the circuits of the predicted path compile as one circuit."""
-    for compiler in (GridCompiler(GRID), LinearCompiler(LINEAR)):
+    for compiler in (GridCompiler(GRID), LinearCompiler(LINEAR, PERMUTATION)):
         result = compile_program(_program(name), compiler, feedback_delay=1, predicted_outcome=predicted_outcome)
 
         assert result.status is CompilationStatus.SUCCESS
@@ -426,7 +464,7 @@ def test_the_other_side_of_a_predicted_branch_ends_where_the_predicted_path_cont
     suffix = Circuit(num_ions=2, gates=(Rx(ion=0, theta=0.1, gate_id=0),), predecessors=(frozenset(),))
     program = Program(2, (*_measure_then_branch().steps, suffix))
 
-    result = compile_program(program, LinearCompiler(LINEAR), feedback_delay=1, predicted_outcome=0)
+    result = compile_program(program, LinearCompiler(LINEAR, PERMUTATION), feedback_delay=1, predicted_outcome=0)
 
     assert result.status is CompilationStatus.SUCCESS
     result.validate()
@@ -468,7 +506,7 @@ class _ForwardingCompiler:
 @pytest.mark.parametrize("predicted_outcome", [None, 0])
 def test_a_compiler_with_the_compiler_interface_compiles_a_program(predicted_outcome: int | None) -> None:
     """Accept a compiler by its interface, not by its class."""
-    forwarding = _ForwardingCompiler(LinearCompiler(LINEAR))
+    forwarding = _ForwardingCompiler(LinearCompiler(LINEAR, PERMUTATION))
     compiler: Compiler[Sequence[int]] = forwarding
 
     result = compile_program(_program("teleportation"), compiler, feedback_delay=1, predicted_outcome=predicted_outcome)

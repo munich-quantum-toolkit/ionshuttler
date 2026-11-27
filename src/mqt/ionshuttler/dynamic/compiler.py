@@ -68,8 +68,8 @@ class ProgramResult:
     def path_summaries(self, *, max_iterations: int | None = None) -> tuple[PathSummary, ...]:
         """Return the duration and operation counts of every path.
 
-        A loop without a fixed count needs ``max_iterations``; paths with more
-        iterations are left out.
+        A conditional loop needs ``max_iterations``; paths with more iterations
+        are left out.
         """
         summaries: list[PathSummary] = []
         for values in self.schedule.paths(max_iterations=max_iterations):
@@ -204,7 +204,7 @@ def compile_program(
     the same placement on every path. A branch that ends a step sequence ends
     where that sequence must end. A loop body is compiled once and returns to
     the placement in which the loop starts, so that every iteration runs the
-    same schedules. Time between a measurement and a decision that reads it is
+    same schedules. Time between a measurement and a condition that reads it is
     at least ``feedback_delay``.
 
     With ``predicted_outcome``, the compiler assumes that every measurement

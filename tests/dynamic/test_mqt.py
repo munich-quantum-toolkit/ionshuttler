@@ -68,7 +68,7 @@ if (ones - 1 >= 1) { x q[3]; }
 
 
 def test_a_condition_after_a_loop_cannot_read_a_bit_that_the_loop_writes() -> None:
-    """Reject a decision whose value depends on which iteration wrote it."""
+    """Reject a condition whose value depends on which iteration wrote it."""
     source = """OPENQASM 3.0;
 include "stdgates.inc";
 qubit[2] q;

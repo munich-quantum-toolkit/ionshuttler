@@ -39,7 +39,7 @@ _Part: TypeAlias = "tuple[str, int, tuple[int, ...]]"
 
 
 class Condition:
-    """Decide a branch from measurement outcomes.
+    """Select the side of a conditional branch or the iterations of a conditional loop from measurement outcomes.
 
     A condition is a logic expression over measurement outcomes, each read as
     0 or 1. Build it from :meth:`measured`, :meth:`always`, and :meth:`never`
@@ -312,9 +312,10 @@ class Branch:
 
 @dataclass(frozen=True)
 class Loop:
-    """Repeat steps a fixed number of times or while a condition holds.
+    """Repeat steps a fixed number of times (``for``) or while a condition holds (``while``).
 
-    With ``count``, the steps run exactly ``count`` times. Without it,
+    With ``count``, the loop has a fixed number of iterations: the steps run
+    exactly ``count`` times. Without it, the loop is a conditional loop:
     ``entry`` decides whether the first iteration runs, and ``repeat``, which
     reads the outcomes of the iteration that just finished, decides each
     further iteration. Outcomes measured inside the loop belong to their
@@ -446,8 +447,8 @@ class Program:
         """Yield one assignment of the deciding outcomes for each distinct path.
 
         Each assignment contains exactly the outcomes that the conditions on
-        its path read. A loop without a fixed count needs ``max_iterations``;
-        paths with more iterations are left out.
+        its path read. A conditional loop needs ``max_iterations``; paths with
+        more iterations are left out.
         """
         yield from enumerate_paths(self.steps, max_iterations=max_iterations)
 
@@ -580,15 +581,15 @@ def walk_path(
 
 
 def enumerate_paths(steps: Sequence[object], *, max_iterations: int | None = None) -> Iterator[dict[OutcomeKey, int]]:
-    """Yield one outcome assignment for each distinct sequence of decisions.
+    """Yield one outcome assignment for each distinct sequence of condition results.
 
     Steps follow the shapes described in :func:`outcome_depths`. Each
     assignment contains exactly the outcomes that the conditions on its path
-    read. A loop without a fixed count needs ``max_iterations``; paths with
-    more iterations are left out.
+    read. A conditional loop needs ``max_iterations``; paths with more
+    iterations are left out.
 
     Raises:
-        ValueError: If a loop without a fixed count is reached and ``max_iterations`` is ``None``.
+        ValueError: If a conditional loop is reached and ``max_iterations`` is ``None``.
     """  # ruff: ignore[docstring-extraneous-exception] - The path walk raises ValueError.
     depths = outcome_depths(steps)
     seen: set[tuple[bool, ...]] = set()
@@ -601,7 +602,7 @@ def enumerate_paths(steps: Sequence[object], *, max_iterations: int | None = Non
 
 @dataclass(frozen=True)
 class _LoopCheck:
-    """The decision before iteration ``iteration`` of a loop without a fixed count."""
+    """The condition check before iteration ``iteration`` of a conditional loop."""
 
     loop: _LoopShape
     iteration: int
@@ -629,7 +630,7 @@ def _walk_paths(
                 yield from _walk_paths((*body, *rest), values, decisions, depths, max_iterations)
                 return
             if max_iterations is None:
-                msg = "enumerating the paths of a loop without a fixed count needs max_iterations"
+                msg = "enumerating the paths of a conditional loop needs max_iterations"
                 raise ValueError(msg)
             yield from _walk_paths(
                 ((_LoopCheck(step, 0), iterations), *rest), values, decisions, depths, max_iterations

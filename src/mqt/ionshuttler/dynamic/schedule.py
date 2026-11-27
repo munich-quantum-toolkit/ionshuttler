@@ -76,9 +76,10 @@ class BranchingSchedule:
     """Store precompiled schedules for every measurement-dependent path.
 
     Each schedule starts at time 0 from an idle machine state, and steps run in
-    order. A schedule starts when the previous one ends. The steps after a
-    branch or loop decision start no earlier than ``feedback_delay`` after the
-    end of every measurement that the decision reads. ``initial_state`` is the
+    order. A schedule starts when the previous one ends. The steps after the
+    condition of a conditional branch or loop start no earlier than
+    ``feedback_delay`` after the end of every measurement that the condition
+    reads. ``initial_state`` is the
     machine state before the first step; it must provide ``time``,
     ``at_time``, and ``to_dict`` like the Grid machine state.
     """
@@ -105,8 +106,8 @@ class BranchingSchedule:
     def paths(self, *, max_iterations: int | None = None) -> Iterator[dict[OutcomeKey, int]]:
         """Yield one assignment of the deciding outcomes for each distinct path.
 
-        A loop without a fixed count needs ``max_iterations``; paths with more
-        iterations are left out.
+        A conditional loop needs ``max_iterations``; paths with more iterations
+        are left out.
         """
         yield from enumerate_paths(self.steps, max_iterations=max_iterations)
 
