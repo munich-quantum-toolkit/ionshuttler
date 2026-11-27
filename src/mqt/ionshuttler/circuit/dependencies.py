@@ -33,9 +33,10 @@ _QISKIT_GATE_TYPES = {
 def with_commutation_aware_dependencies(circuit: Circuit) -> Circuit:
     """Return a scheduling view that permits commuting gate reordering.
 
-    Two gates keep their order when they share an ion and do not commute, as
-    Qiskit's commutation checker decides. A barrier orders every gate on its
-    qubits. The returned predecessors imply exactly these orders; they need
+    Two gates keep their order when they share an ion and do not commute.
+    Qiskit's commutation checker decides this for rotations. A measurement or
+    reset commutes only with rotations that equal the identity. A barrier
+    orders every gate on its qubits. The returned predecessors imply exactly these orders; they need
     not be the smallest sets that do.
 
     The analysis walks back along each ion of a gate to the first earlier gate
@@ -73,8 +74,10 @@ class _Ordering:
     """Collect gates and barriers in circuit order with the nodes that each must follow.
 
     Nodes are numbered in circuit order. A barrier is a node without an
-    operation; it commutes with nothing on its qubits. An identity, such as
-    ``rz(2*pi)``, commutes with every gate, so only barriers order it.
+    operation; it commutes with nothing on its qubits. Operations without a
+    Qiskit rotation type, such as measurement and reset, also commute with
+    nothing on their qubits. An identity, such as ``rz(2*pi)``, commutes with
+    every gate, so only barriers order it.
     """
 
     def __init__(self) -> None:
@@ -163,6 +166,8 @@ class _Ordering:
 
     def is_identity(self, operation: Gate, signature: tuple[object, ...]) -> bool:
         """Return whether an operation commutes with every rotation on each of its qubits, so equals the identity."""
+        if operation.name not in _QISKIT_GATE_TYPES:
+            return False
         if signature not in self.known_identity:
             qubits = list(range(operation.num_qubits))
             self.known_identity[signature] = all(
@@ -192,10 +197,15 @@ class _Ordering:
         return gates
 
     def commute(self, first: int, second: int) -> bool:
-        """Return whether two nodes commute; nodes on disjoint ions always do, barriers never."""
+        """Return whether two nodes commute; nodes on disjoint ions always do, barriers and non-rotations never."""
         first_ions, second_ions = self.ions[first], self.ions[second]
         first_operation, second_operation = self.operations[first], self.operations[second]
-        if first_operation is None or second_operation is None:
+        if (
+            first_operation is None
+            or second_operation is None
+            or first_operation.name not in _QISKIT_GATE_TYPES
+            or second_operation.name not in _QISKIT_GATE_TYPES
+        ):
             return set(first_ions).isdisjoint(second_ions)
         # The answer depends only on the operations and on which ions they share.
         shared = tuple(second_ions.index(ion) if ion in second_ions else -1 for ion in first_ions)

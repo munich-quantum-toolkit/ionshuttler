@@ -15,14 +15,16 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
-from qiskit.circuit import Gate
 from qiskit.circuit.commutation_library import SessionCommutationChecker
-from qiskit.circuit.library import RXGate, RXXGate, RYGate, RYYGate, RZGate, RZZGate
+from qiskit.circuit.library import RXGate, RXXGate, RYGate, RYYGate, RZGate, RZZGate, UnitaryGate
+from qiskit.quantum_info import random_unitary
 
 from mqt.ionshuttler.circuit import Circuit, parse_circuit, with_commutation_aware_dependencies
 from mqt.ionshuttler.core.gates import Measure, Reset, Rx, Rxx, Ry, Ryy, Rz, Rzz
 
 if TYPE_CHECKING:
+    from qiskit.circuit import Gate
+
     from mqt.ionshuttler.core.gates import GateAction
 
 _ANGLES = (0.3, math.pi / 2, math.pi, 2 * math.pi, 0.0, -math.pi / 2)
@@ -113,7 +115,8 @@ def _rounds_with_identities_circuit(rounds: int) -> Circuit:
 def _qiskit_operation(gate: GateAction) -> Gate:
     rotation = _QISKIT_ROTATIONS.get(gate.circuit_name or "")
     if rotation is None:
-        return Gate(gate.circuit_name or "", len(gate.ions), [])
+        # A measurement or reset commutes only with operations that equal the identity, like a random unitary.
+        return UnitaryGate(random_unitary(2 ** len(gate.ions), seed=gate.gate_id))
     return rotation(*(getattr(gate, name) for name in gate.parameter_names))
 
 
@@ -215,6 +218,23 @@ def test_commutation_aware_dependencies_retain_noncommuting_rotations() -> None:
     circuit = with_commutation_aware_dependencies(parse_circuit(source))
 
     assert circuit.predecessors == (frozenset(), frozenset({0}))
+
+
+def test_commutation_aware_dependencies_retain_measurement_and_reset_order() -> None:
+    """Keep a measurement or reset in order with every other gate on its ion, also with an ``rz``."""
+    gates = (
+        Rz(ion=0, theta=0.5, gate_id=0),
+        Measure(ion=0, gate_id=1),
+        Rz(ion=0, theta=0.25, gate_id=2),
+        Reset(ion=0, gate_id=3),
+        Rx(ion=1, theta=0.5, gate_id=4),
+    )
+    predecessors = (frozenset(), frozenset({0}), frozenset({1}), frozenset({2}), frozenset())
+    circuit = Circuit(2, gates, predecessors, ((),) * (len(gates) + 1))
+
+    dependencies = with_commutation_aware_dependencies(circuit)
+
+    assert _orders(dependencies.predecessors) == _orders(predecessors)
 
 
 def test_commutation_aware_dependencies_retain_barrier_order() -> None:
