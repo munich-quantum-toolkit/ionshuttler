@@ -600,3 +600,21 @@ def test_target_placement_fails_when_the_route_needs_a_disabled_transport() -> N
         LinearCompiler(architecture).compile(qasm, initial_placement=[0, 1], target_placement=[1, 1])
     with pytest.raises(ValueError, match="distinct site of the architecture for each circuit ion"):
         LinearCompiler(architecture).compile(qasm, initial_placement=[0, 1], target_placement=[0, 3])
+
+
+def test_target_placement_on_a_ring_uses_a_cut_that_needs_no_disabled_transport() -> None:
+    """Reach the target with shuttles around the ring when the cheapest cut would need a disabled swap."""
+    architecture = LinearArchitecture(
+        num_sites=5,
+        processing_zones={"pz": [0]},
+        topology="ring",
+        supported_action_types=(Shuttle, Rx, Ry, Rz, Rzz),
+    )
+    circuit = Circuit(num_ions=2, gates=(), predecessors=())
+
+    result = LinearCompiler(architecture).compile(circuit, initial_placement=[0, 1], target_placement=[1, 4])
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.final_state.placement == (1, 4)
+    assert not any(isinstance(action, PhysicalSwap) for action in result.path)
+    result.validate()

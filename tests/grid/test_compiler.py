@@ -1286,6 +1286,14 @@ def test_greedy_compiler_can_temporarily_move_an_operand_out_of_its_processing_z
     )
 
     assert result.status is CompilationStatus.SUCCESS
+    moves = [
+        move
+        for action in result.path
+        for move in (
+            action.moves if isinstance(action, Cycle) else (action,) if isinstance(action, JunctionMove) else ()
+        )
+    ]
+    assert any(0 in move.ions and move.source.segment_id == "v:1:1" for move in moves)
     assert result.final_state.ion_segment(0) == "v:1:1"
     assert result.final_state.ion_segment(7) == "v:1:1"
     result.validate()

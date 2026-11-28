@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -184,6 +185,47 @@ def test_route_gate_bfs_returns_direct_placement_at_state_limit() -> None:
     assert route is not None
     assert len(route) == 1
     assert explored == 1
+
+
+def _fastest_placement_by_enumeration(
+    architecture: GridArchitecture,
+    state: Any,
+    ion: int,
+    target_segment_ids: frozenset[str],
+    max_actions: int,
+) -> int | None:
+    """Return the shortest transport time that moves ``ion`` into a target segment, trying every short sequence."""
+    if state.ion_segment(ion) in target_segment_ids:
+        return 0
+    if max_actions == 0:
+        return None
+    fastest = None
+    candidates, _work = movement_candidates(architecture, state, max_cycle_work=10_000)
+    for action in candidates:
+        duration = architecture.action_duration(action)
+        timed_action = ScheduledAction(0, action, state.time, duration)
+        try:
+            following = architecture.apply_layer(state, (timed_action,)).at_time(timed_action.end_time)
+        except ValueError:
+            continue
+        rest = _fastest_placement_by_enumeration(architecture, following, ion, target_segment_ids, max_actions - 1)
+        if rest is not None and (fastest is None or duration + rest < fastest):
+            fastest = duration + rest
+    return fastest
+
+
+@pytest.mark.parametrize("timing", [TransportTiming(junction_move=1, swap=1), TransportTiming(junction_move=3, swap=1)])
+def test_route_gate_bfs_returns_a_fastest_route_when_actions_take_different_times(timing: TransportTiming) -> None:
+    """Return a route as fast as the fastest sequence of up to three actions, also when swaps are shorter."""
+    architecture = replace(square_grid(2, segment_capacity=2), transport_timing=timing)
+    state = architecture.initial_state({"h:0:0": (0, 1), "v:0:0": (2, 3), "v:0:1": (4,)})
+    target_segment_ids = frozenset({"h:1:0"})
+
+    route, _explored = route_gate_bfs(architecture, state, Rx(ion=0, theta=0.5), target_segment_ids, max_states=10_000)
+
+    assert route is not None
+    duration = sum(architecture.action_duration(action) for action in route)
+    assert duration == _fastest_placement_by_enumeration(architecture, state, 0, target_segment_ids, 3)
 
 
 def test_route_gate_bfs_counts_bounded_cycle_search_work() -> None:

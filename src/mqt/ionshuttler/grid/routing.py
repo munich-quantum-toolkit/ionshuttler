@@ -54,35 +54,30 @@ def route_gate_bfs(
     """Find a fastest legal movement sequence that colocates one gate.
 
     The search expands states in the order of their transport time, so it is
-    breadth-first when every action takes the same time.
+    breadth-first when every action takes the same time. If the bound ends the
+    search first, the fastest sequence found so far is returned.
 
     Returns:
-        The movement sequence, or ``None`` if the bound is exhausted, and the
-        number of explored occupancy states and cycle-search steps.
+        The movement sequence, or ``None`` if the bound is exhausted before any
+        sequence is found, and the number of explored occupancy states and
+        cycle-search steps.
     """
     order = count()
     frontier: list[tuple[int, int, GridMachineState, tuple[Action, ...]]] = [(0, next(order), state, ())]
     best_time = {_occupancy_key(state): 0}
     explored = 0
+    best_route: tuple[int, tuple[Action, ...]] | None = None
     while frontier and explored < max_states:
         elapsed, _tie, current, path = heappop(frontier)
+        # Each waiting state already needs ``elapsed``, so no faster sequence can follow.
+        if best_route is not None and elapsed >= best_route[0]:
+            break
         if elapsed > best_time[_occupancy_key(current)]:
             continue
         explored += 1
         if _gate_is_placed(current, gate, target_segment_ids):
             return path, explored
         moves = junction_moves(architecture, current, allowed_crossings=allowed_crossings)
-        for move in moves:
-            if move.destination.segment_id not in target_segment_ids or not any(ion in move.ions for ion in gate.ions):
-                continue
-            timed_move = ScheduledAction(0, move, current.time, architecture.action_duration(move))
-            try:
-                following = architecture.apply_layer(current, (timed_move,)).at_time(timed_move.end_time)
-            except ValueError:
-                continue
-            # Every other sequence needs at least one more move or cycle, which takes as long as this move.
-            if _gate_is_placed(following, gate, target_segment_ids):
-                return (*path, move), explored
         cycles, cycle_work = _cycle_candidates(architecture, current, moves, max_work=max_states - explored)
         explored += cycle_work
         for action in (*moves, *cycles, *rearrangements(architecture, current)):
@@ -96,8 +91,12 @@ def route_gate_bfs(
             if elapsed + duration >= best_time.get(key, elapsed + duration + 1):
                 continue
             best_time[key] = elapsed + duration
+            if _gate_is_placed(following, gate, target_segment_ids):
+                if best_route is None or elapsed + duration < best_route[0]:
+                    best_route = (elapsed + duration, (*path, action))
+                continue
             heappush(frontier, (elapsed + duration, next(order), following, (*path, action)))
-    return None, explored
+    return (None if best_route is None else best_route[1]), explored
 
 
 def route_to_placement(
@@ -571,7 +570,6 @@ def _find_cycle_transport(
                             pass
                         else:
                             return candidate_actions, explored
-                    return None, explored
                 continue
             if neighbor in path or neighbor == destination_segment_id:
                 continue

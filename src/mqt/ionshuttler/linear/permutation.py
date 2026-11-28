@@ -126,14 +126,19 @@ def route_to_placement(
     source_site_of_ion: Sequence[int],
     target_site_of_ion: Sequence[int],
     architecture: LinearArchitecture,
+    *,
+    swaps_enabled: bool = True,
+    shuttles_enabled: bool = True,
 ) -> list[TransportAction]:
     """Return transports that move every ion from its source to its target site.
 
     On a chain, the route uses the fewest adjacent exchanges. On a ring, the
     compiler cuts the ring at each edge that does not split a processing zone,
     treats the remaining site order as a chain, and selects the lowest-cost
-    resulting route. An exchange of two ions is a physical swap, and an
-    exchange of an ion with an empty site is a shuttle.
+    resulting route among the routes that use only enabled transports. If no
+    cut gives such a route, it selects the lowest-cost route. An exchange of
+    two ions is a physical swap, and an exchange of an ion with an empty site
+    is a shuttle.
 
     The actions are valid in the given order, one after the other.
 
@@ -141,6 +146,8 @@ def route_to_placement(
         source_site_of_ion: Current site indexed by ion.
         target_site_of_ion: Target site indexed by ion.
         architecture: Hardware layout that defines sites and topology.
+        swaps_enabled: Whether a ring route may use physical swaps.
+        shuttles_enabled: Whether a ring route may use shuttles.
 
     Returns:
         The transports in a valid order.
@@ -160,14 +167,18 @@ def route_to_placement(
         return _route_in_site_order(_ion_at_site(source_site_of_ion, num_sites), target_site_of_ion)
 
     candidates: list[tuple[tuple[int, int, int, int], list[TransportAction]]] = []
+    usable: list[tuple[tuple[int, int, int, int], list[TransportAction]]] = []
     for first_site in _first_sites_after_ring_cuts(architecture, _processing_zones(architecture)):
         # Shift sites so the first site after the cut becomes position zero.
         source_positions = [(site - first_site) % num_sites for site in source_site_of_ion]
         target_positions = [(site - first_site) % num_sites for site in target_site_of_ion]
         position_actions = _route_in_site_order(_ion_at_site(source_positions, num_sites), target_positions)
         actions = _actions_at_physical_sites(position_actions, first_site, num_sites)
-        candidates.append((_route_score(actions, architecture, first_site), actions))
-    return min(candidates, key=operator.itemgetter(0))[1]
+        candidate = (_route_score(actions, architecture, first_site), actions)
+        candidates.append(candidate)
+        if _route_uses_available_actions(actions, swaps_enabled=swaps_enabled, shuttles_enabled=shuttles_enabled):
+            usable.append(candidate)
+    return min(usable or candidates, key=operator.itemgetter(0))[1]
 
 
 def append_route_to_placement(
@@ -192,12 +203,16 @@ def append_route_to_placement(
         outside ``action_types``.
     """
     source_site_of_ion = architecture.replay_schedule(schedule).placement
-    actions = route_to_placement(source_site_of_ion, target_site_of_ion, architecture)
-    if not _route_uses_available_actions(
-        actions,
-        swaps_enabled=PhysicalSwap in action_types,
-        shuttles_enabled=Shuttle in action_types,
-    ):
+    swaps_enabled = PhysicalSwap in action_types
+    shuttles_enabled = Shuttle in action_types
+    actions = route_to_placement(
+        source_site_of_ion,
+        target_site_of_ion,
+        architecture,
+        swaps_enabled=swaps_enabled,
+        shuttles_enabled=shuttles_enabled,
+    )
+    if not _route_uses_available_actions(actions, swaps_enabled=swaps_enabled, shuttles_enabled=shuttles_enabled):
         return None
     start = schedule.end_time
     timed = sorted(
