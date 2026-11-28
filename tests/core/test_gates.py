@@ -94,11 +94,14 @@ def test_built_in_gate_types_have_stable_serialized_types() -> None:
 def test_measure_and_reset_act_on_one_ion_without_parameters(operation_type: type[Measure | Reset]) -> None:
     """Build measurement and reset from circuit operands and restore them from JSON."""
     operation = operation_type.from_instruction((3,), (), gate_id=7)
+    restored = cast("Measure | Reset", decode_action(json.loads(json.dumps(operation.to_dict())), GATE_TYPES))
 
     assert operation == operation_type(ion=3)
     assert operation.ions == (3,)
     assert operation.gate_id == 7
-    assert decode_action(json.loads(json.dumps(operation.to_dict())), GATE_TYPES) == operation
+    # Equality ignores gate_id, so check it separately.
+    assert restored == operation
+    assert restored.gate_id == 7
     with pytest.raises(ValueError, match="requires 0 parameters"):
         operation_type.from_instruction((3,), (0.5,))
     with pytest.raises(ValueError, match="requires 1 ions"):
@@ -127,6 +130,14 @@ def test_gate_timing_sets_measurement_and_reset_durations() -> None:
     assert GateTiming.from_dict({"rx": 1}).measure == GateTiming().measure
     with pytest.raises(ValueError, match="measure duration must be an integer >= 1"):
         GateTiming(measure=0)
+
+
+def test_gate_timing_keeps_the_positional_order_of_the_gate_durations() -> None:
+    """Keep the seventh positional value for the virtual rotations; measurement and reset take keywords."""
+    timing = GateTiming(2, 2, 1, 4, 4, 5, frozenset())
+
+    assert timing.virtual_single_qubit_gates == frozenset()
+    assert (timing.measure, timing.reset) == (GateTiming().measure, GateTiming().reset)
 
 
 def test_global_gate_stores_explicit_targets_in_ascending_order() -> None:

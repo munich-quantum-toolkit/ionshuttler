@@ -28,6 +28,9 @@ class Compiler(Protocol[PlacementT_contra]):
 
     - ``architecture.replay_schedule`` returns the machine state at the end of
       each result schedule.
+    - Each machine state, including ``schedule.initial_state``, has a
+      ``time``, an ``at_time(time)`` method that returns the state at a later
+      time, and ``to_dict``. The program validation compares states with them.
     - The schedule contains each gate of the circuit once, with its gate ID.
       Each gate starts after the gates that it depends on end. These
       dependencies include at least the ones that

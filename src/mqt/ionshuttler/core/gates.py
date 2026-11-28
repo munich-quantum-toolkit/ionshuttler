@@ -31,9 +31,9 @@ class GateTiming:
     """Configure integer gate durations and virtual single-ion rotations.
 
     Every architecture level uses the same gate durations. The same timing also
-    sets the durations of measurement and reset. Each architecture defines its
-    transport durations. By default, Rz gates are virtual and
-    instantaneous and two-qubit gates have a longer duration than
+    sets the durations of measurement and reset; pass them by keyword. Each
+    architecture defines its transport durations. By default, Rz gates are
+    virtual and instantaneous and two-qubit gates have a longer duration than
     single-qubit gates.
     """
 
@@ -43,8 +43,8 @@ class GateTiming:
     rxx: int = 2
     ryy: int = 2
     rzz: int = 2
-    measure: int = 1
-    reset: int = 1
+    measure: int = field(default=1, kw_only=True)
+    reset: int = field(default=1, kw_only=True)
     virtual_single_qubit_gates: frozenset[str] = field(default_factory=lambda: frozenset({"rz"}))
 
     def __post_init__(self) -> None:

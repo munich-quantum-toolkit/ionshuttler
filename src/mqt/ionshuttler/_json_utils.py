@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -69,16 +70,24 @@ def require_optional_int(data: Mapping[str, object], key: str) -> int | None:
 
 
 def require_number(data: Mapping[str, object], key: str, *, default: float | None = None) -> float:
-    """Return a numeric field.
+    """Return a numeric field as a finite float.
 
     Raises:
-        ValueError: If the field is not numeric.
+        ValueError: If the field is not numeric or not a finite float.
     """
     value = data.get(key) if default is None else data.get(key, default)
     if isinstance(value, bool) or not isinstance(value, int | float):
         msg = f"{key} must be numeric"
         raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - JSON format errors use ValueError.
-    return float(value)
+    try:
+        number = float(value)
+    except OverflowError as error:
+        msg = f"{key} must be finite"
+        raise ValueError(msg) from error
+    if not math.isfinite(number):
+        msg = f"{key} must be finite"
+        raise ValueError(msg)
+    return number
 
 
 def require_optional_number(data: Mapping[str, object], key: str) -> float | None:
