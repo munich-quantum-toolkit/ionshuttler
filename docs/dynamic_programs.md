@@ -111,8 +111,10 @@ for summary in result.path_summaries():
   The Linear compiler keeps the circuit order by default. The `dependency_mode`
   setting of each compiler configuration selects the behavior.
 
-If a return finds no movement sequence within `max_routing_states`, the result
-has status `FAILED` and names the failing branch.
+A branch side or a loop body can fail to reach the placement where the program
+continues, for example if the Grid compiler finds no movement sequence within
+`max_routing_states`. The result then has status `FAILED`, and its message names
+the failing branch side or loop.
 
 ## Compiling along a predicted path
 

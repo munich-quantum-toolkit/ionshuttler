@@ -41,6 +41,7 @@ from mqt.ionshuttler.grid import (
     result_from_json,
     square_grid,
 )
+from mqt.ionshuttler.grid.planning_trace import MoveStatus
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -1279,7 +1280,7 @@ def test_greedy_compiler_can_temporarily_move_an_operand_out_of_its_processing_z
         "v:1:1": (0, 4),
     }
 
-    result = GridCompiler(architecture).compile(
+    result = GridCompiler(architecture, GridCompilerConfig(record_planning_trace=True)).compile(
         _qasm(8, "rzz(0.5) q[7],q[0];"),
         initial_placement=placement,
         gate_to_processing_zone={0: "pz:v:1:1"},
@@ -1295,7 +1296,36 @@ def test_greedy_compiler_can_temporarily_move_an_operand_out_of_its_processing_z
     ]
     assert any(0 in move.ions and move.source.segment_id == "v:1:1" for move in moves)
     assert result.final_state.ion_segment(0) == "v:1:1"
+    # The trace names the request that proposed the move of the waiting operand.
+    assert result.diagnostics is not None
+    assert result.diagnostics.planning_trace is not None
+    leaving = next(
+        snapshot
+        for snapshot in result.diagnostics.planning_trace
+        if any(isinstance(move, JunctionMove) and 0 in move.ions for move in snapshot.moves)
+    )
+    proposed = {
+        action
+        for request in leaving.prioritized_ions
+        if request.status is MoveStatus.SELECTED
+        for action in request.actions
+    }
+    assert set(leaving.moves) <= proposed
     assert result.final_state.ion_segment(7) == "v:1:1"
+    result.validate()
+
+
+def test_greedy_compiler_finishes_when_its_movements_return_to_an_earlier_placement() -> None:
+    """Route the ions of a selected gate into its zone when the movement layers repeat a placement."""
+    architecture = square_grid(2, processing_zone_segments=("h:0:0", "h:1:0"), segment_capacity=2)
+
+    result = GridCompiler(architecture).compile(
+        _qasm(7, "rzz(0.5) q[0],q[3];", "rzz(0.5) q[5],q[3];", "rzz(0.5) q[4],q[6];")
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.diagnostics is not None
+    assert result.diagnostics.stop_reason is GridStopReason.COMPLETED
     result.validate()
 
 

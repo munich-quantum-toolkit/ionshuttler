@@ -148,7 +148,11 @@ class _Logic:
             assert isinstance(position, _Constant)
             return (bits[position.value],) if position.value < len(bits) else ()
         if name in {"extui", "trunci"}:
-            return self.bits(operands[0])[:width]
+            operand = operands[0]
+            # Truncation keeps the low bits, so a register read converts only the bits that it keeps.
+            if isinstance(operand, _Operation) and operand.name == "concat":
+                return tuple(_first(self.bits(bit)) for bit in operand.operands[:width])
+            return self.bits(operand)[:width]
         if name == "extsi":
             bits = self.bits(operands[0])
             source_width = operands[1]

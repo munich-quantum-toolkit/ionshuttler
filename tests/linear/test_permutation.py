@@ -25,6 +25,7 @@ from mqt.ionshuttler.circuit import Circuit, parse_circuit, with_commutation_awa
 from mqt.ionshuttler.core.dependencies import DependencyMode
 from mqt.ionshuttler.core.gates import GateAction, Rx, Rz, Rzz
 from mqt.ionshuttler.core.result import CompilationStatus
+from mqt.ionshuttler.core.schedule import Schedule
 from mqt.ionshuttler.linear import (
     LinearArchitecture,
     LinearCompiler,
@@ -37,6 +38,7 @@ from mqt.ionshuttler.linear.permutation import (
     route_to_placement,
 )
 from mqt.ionshuttler.linear.result import PermutationDiagnostics
+from mqt.ionshuttler.linear.schedule import LinearMachineState
 from mqt.ionshuttler.linear.state import State, create_initial_state
 
 if TYPE_CHECKING:
@@ -586,3 +588,21 @@ def test_appended_route_starts_after_the_schedule_and_moves_independent_ions_tog
     assert [item.start_time for item in route] == [schedule.end_time, schedule.end_time]
     assert architecture.replay_schedule(extended).placement == (1, 4)
     assert append_route_to_placement(schedule, (3, 2), architecture, (Shuttle,)) is None
+
+
+def test_appended_route_waits_for_an_ion_that_stays_busy_after_the_schedule() -> None:
+    """Start the transport of a busy ion when the ion becomes free, and the other transport at once."""
+    architecture = LinearArchitecture(num_sites=6, processing_zones={"pz": [2, 3]})
+    busy_state = LinearMachineState(
+        positions=((0, 2), (1, 3)), ions_busy_until=((0, 5), (1, 0)), pzs_busy_until=(("pz", 0),)
+    )
+    schedule: Schedule[Action, LinearMachineState] = Schedule((), 0, busy_state)
+
+    extended = append_route_to_placement(schedule, (1, 4), architecture, (Shuttle, PhysicalSwap))
+
+    assert extended is not None
+    start_by_ion = {
+        item.action.ion: item.start_time for item in extended.scheduled_actions if isinstance(item.action, Shuttle)
+    }
+    assert start_by_ion == {0: 5, 1: 0}
+    assert architecture.replay_schedule(extended).placement == (1, 4)

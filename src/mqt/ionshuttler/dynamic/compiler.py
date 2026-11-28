@@ -36,6 +36,8 @@ if TYPE_CHECKING:
 
 PROGRAM_RESULT_SCHEMA = "mqt.ionshuttler.program_result"
 PROGRAM_RESULT_VERSION = 2
+# A branch side ends where the paths join, and a loop body ends where the loop starts.
+_RETURN_FAILED = "moving to the placement where the program continues failed"
 
 PlacementT = TypeVar("PlacementT")
 
@@ -83,6 +85,8 @@ class ProgramResult:
 
         Each precompiled schedule must contain exactly the gates of its
         circuit, respect their dependencies, and replay on the architecture.
+        Commuting gates may change order, so the check uses the commutation-aware
+        dependencies also for a compiler that keeps the circuit order.
         Each schedule must start from every machine state in which the
         schedules before it can end, and a loop body must end in the state in
         which it starts. Every schedule starts idle, so every path through
@@ -228,7 +232,8 @@ def compile_program(
 
     Returns:
         The compiled program. Its status is ``FAILED`` with a message when a
-        circuit or a return to the placement before a branch fails.
+        circuit fails, or when a branch side or a loop body cannot reach the
+        placement where the program continues.
 
     Raises:
         ValueError: If ``predicted_outcome`` is neither 0 nor 1.
@@ -339,7 +344,7 @@ class _ProgramBuilder(Generic[PlacementT]):
             result = self.compile_circuit(Circuit(self.program.num_ions, (), ()), target)
             compiled.append(result.schedule)
             if result.status is not CompilationStatus.SUCCESS:
-                msg = f"{where}: returning to the placement before the branch failed"
+                msg = f"{where}: {_RETURN_FAILED}"
                 raise _CompilationFailedError(msg)
         return tuple(compiled)
 
@@ -542,11 +547,7 @@ def _raise_if_failed(result: CompilationResult[Any, Any, Any, Any], circuit: Cir
     if result.status is CompilationStatus.SUCCESS:
         return
     gates_done = sum(isinstance(action, GateAction) for action in result.path) == len(circuit.gates)
-    reason = (
-        "returning to the placement before the branch failed"
-        if gates_done
-        else f"circuit compilation ended with {result.status.value}"
-    )
+    reason = _RETURN_FAILED if gates_done else f"circuit compilation ended with {result.status.value}"
     msg = f"{where}: {reason}"
     raise _CompilationFailedError(msg)
 
@@ -624,7 +625,7 @@ def _check_steps(program_steps: tuple[Step, ...], schedule_steps: tuple[Schedule
             msg = f"{where}: the schedule does not match the program structure"
             raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Invalid artifacts use ValueError.
         if any(isinstance(action, GateAction) for action in step.path):
-            msg = f"{where}: the return to the placement before the branch contains gates"
+            msg = f"{where}: the move to the placement where the program continues contains gates"
             raise ValueError(msg)
     if len(schedule_steps) < len(program_steps):
         msg = f"{where}: the schedule does not match the program structure"
@@ -655,6 +656,12 @@ def _check_circuit(circuit: Circuit, schedule: Schedule[Any, Any], where: str) -
         for item in schedule.scheduled_actions
         if isinstance(item.action, GateAction) and item.action.gate_id is not None
     }
+    # Actions with the same start time run in schedule order, which matters for gates without duration.
+    position = {
+        item.action.gate_id: index
+        for index, item in enumerate(schedule.scheduled_actions)
+        if isinstance(item.action, GateAction) and item.action.gate_id is not None
+    }
     gate_count = sum(isinstance(action, GateAction) for action in schedule.path)
     if gate_count != len(circuit.gates) or set(scheduled) != set(circuit.gate_ids):
         msg = f"{where}: the schedule must contain each circuit gate exactly once"
@@ -666,7 +673,11 @@ def _check_circuit(circuit: Circuit, schedule: Schedule[Any, Any], where: str) -
         if item.action != gate:
             msg = f"{where}: scheduled gate {gate_id} differs from the circuit"
             raise ValueError(msg)
-        if any(item.start_time < scheduled[predecessor].end_time for predecessor in predecessors[gate_id]):
+        if any(
+            item.start_time < scheduled[predecessor].end_time
+            or (item.start_time == scheduled[predecessor].start_time and position[predecessor] > position[gate_id])
+            for predecessor in predecessors[gate_id]
+        ):
             msg = f"{where}: gate {gate_id} starts before one of its predecessors ends"
             raise ValueError(msg)
 

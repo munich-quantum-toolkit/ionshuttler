@@ -59,9 +59,12 @@ result = LinearCompiler(architecture).compile(
 
 The positions must be distinct, lie within the architecture, and match the
 number of circuit qubits. Pass `target_placement` in the same form to move the
-ions to given sites after the last gate. The ions take the route with the fewest
-adjacent exchanges, and each move starts as soon as its ions and its target site
-are free:
+ions to given sites after the last gate. On a chain, the ions take the route
+with the fewest adjacent exchanges. On a ring, the compiler selects the
+lowest-cost route among the valid ring cuts, as described for the
+{ref}`permutation strategy <linear-permutation-strategy>`; this route need not
+have the fewest exchanges over the whole ring. Each move starts as soon as its
+ions and its target site are free:
 
 ```{code-cell} ipython3
 result = LinearCompiler(architecture).compile(
@@ -111,13 +114,16 @@ an occasional small slowdown. Advanced users can tune the partitioner through
 
 Strings are always treated as QASM text. Use `Path("circuit.qasm")` for a file.
 The default gate set is `rx`, `ry`, `rz`, and `rzz`, a common trapped-ion gate
-set, together with measurement and reset. The implemented `rxx` and `ryy` gates
-may be enabled through the architecture's `supported_action_types`. Rotation
-parameters must be numeric when compilation begins. Barriers and final
-measurements do not become scheduled hardware operations. A barrier orders
-gates: a gate after the barrier on one of its qubits starts only after every
-earlier gate on the barrier's qubits has finished. Unsupported or malformed
-circuits raise an exception before schedule search starts.
+set. The implemented `rxx` and `ryy` gates may be enabled through the
+architecture's `supported_action_types`. Rotation parameters must be numeric
+when compilation begins. Barriers and final measurements do not become scheduled
+hardware operations. A measurement followed by a gate raises an exception.
+Scheduled measurements and resets come from
+{doc}`dynamic programs <dynamic_programs>`, which pass prebuilt circuits to the
+compiler. A barrier orders gates: a gate after the barrier on one of its qubits
+starts only after every earlier gate on the barrier's qubits has finished.
+Unsupported or malformed circuits raise an exception before schedule search
+starts.
 
 ## Describe the architecture
 

@@ -114,6 +114,17 @@ def test_program_requires_outcomes_measured_before_each_branch() -> None:
         Program(2, (_measure(0, 0), _measure(1, 0)))
     with pytest.raises(ValueError, match="act on num_ions ions"):
         Program(3, (_rotate(0),))
+    with pytest.raises(ValueError, match="num_ions must be positive"):
+        Program(0, ())
+
+
+def test_a_constant_condition_measures_only_on_the_side_that_runs() -> None:
+    """Accept a later read of an outcome that only the side of a constant condition measures."""
+    reads_one = Branch(Condition.measured(1), (_rotate(0),))
+    Program(2, (Branch(Condition.always(), (_measure(1, 1),)), reads_one))
+    Program(2, (Branch(Condition.never(), (), (_measure(1, 1),)), reads_one))
+    with pytest.raises(ValueError, match=r"reads outcomes \[1\] before they are measured"):
+        Program(2, (Branch(Condition.never(), (_measure(1, 1),)), reads_one))
 
 
 ALWAYS = Condition.always()
@@ -171,6 +182,11 @@ def test_outcomes_measured_inside_a_loop_stay_inside_it() -> None:
         (lambda: Condition("not"), ValueError, "wrong number of operands"),
         (lambda: Condition("any"), ValueError, "wrong number of operands"),
         (lambda: Condition.from_dict({"parts": []}), ValueError, "at least one part"),
+        (
+            lambda: Condition.from_dict({"parts": [{"operation": "always", "outcome": 0}]}),
+            ValueError,
+            "reads no outcome",
+        ),
         (lambda: Condition.measured(0) & 1, TypeError, "unsupported operand"),
     ],
     ids=[
@@ -180,6 +196,7 @@ def test_outcomes_measured_inside_a_loop_stay_inside_it() -> None:
         "not-without-operand",
         "any-without-operands",
         "document-without-parts",
+        "document-outcome-on-a-constant",
         "combined-with-an-integer",
     ],
 )

@@ -202,7 +202,8 @@ def append_route_to_placement(
         The extended schedule, or ``None`` if the route needs a transport type
         outside ``action_types``.
     """
-    source_site_of_ion = architecture.replay_schedule(schedule).placement
+    final_state = architecture.replay_schedule(schedule)
+    source_site_of_ion = final_state.placement
     swaps_enabled = PhysicalSwap in action_types
     shuttles_enabled = Shuttle in action_types
     actions = route_to_placement(
@@ -215,11 +216,13 @@ def append_route_to_placement(
     if not _route_uses_available_actions(actions, swaps_enabled=swaps_enabled, shuttles_enabled=shuttles_enabled):
         return None
     start = schedule.end_time
+    # An ion of the initial state can stay busy after the last scheduled action.
+    busy_until = dict(final_state.ions_busy_until)
     timed = sorted(
         _earliest_transport_starts(
             actions,
             architecture.transport_timing,
-            [start] * len(source_site_of_ion),
+            [max(start, busy_until.get(ion, start)) for ion in range(len(source_site_of_ion))],
             [start] * architecture.num_sites,
         ),
         key=operator.itemgetter(1),

@@ -18,7 +18,7 @@ import pytest
 
 from mqt.ionshuttler.circuit import Circuit
 from mqt.ionshuttler.core.dependencies import DependencyMode
-from mqt.ionshuttler.core.gates import GateAction, GateTiming, Measure, Rx, Rxx, Rzz
+from mqt.ionshuttler.core.gates import GateAction, GateTiming, Measure, Rx, Rxx, Rz, Rzz
 from mqt.ionshuttler.core.schedule import Schedule
 from mqt.ionshuttler.dynamic import (
     Branch,
@@ -257,6 +257,44 @@ def test_branching_schedule_requires_a_non_negative_integer_feedback_delay() -> 
         BranchingSchedule((), None, -1)
 
 
+def test_a_schedule_waits_for_a_machine_state_that_starts_later() -> None:
+    """Place a schedule at its own start time when the state before it frees the ion only then."""
+    circuit = Circuit(num_ions=1, gates=(Rx(ion=0, theta=0.5, gate_id=0),), predecessors=(frozenset(),))
+    compiled = GridCompiler(_two_zone_line()).compile(circuit, initial_placement={"left": (0,)}).schedule
+    later = Schedule(
+        tuple(replace(item, start_time=item.start_time + 5) for item in compiled.scheduled_actions),
+        compiled.end_time + 5,
+        compiled.initial_state.at_time(5),
+    )
+    busy_until_five = replace(compiled.initial_state, ions_busy_until=((0, 5),))
+
+    (timed,) = BranchingSchedule((later,), busy_until_five).timeline_for({})
+
+    assert timed.start_time == 5
+
+
+def test_validation_requires_schedule_order_for_gates_with_the_same_start_time() -> None:
+    """Reject a schedule that lists a gate before its predecessor at the same start time."""
+    circuit = Circuit(
+        num_ions=2,
+        gates=(Rz(ion=0, theta=0.5, gate_id=0), Rx(ion=0, theta=0.5, gate_id=1)),
+        predecessors=(frozenset(), frozenset({0})),
+    )
+    result = compile_program(Program(2, (circuit,)), GridCompiler(_two_zone_line()))
+    result.validate()
+    (schedule,) = result.schedule.steps
+    assert isinstance(schedule, Schedule)
+    first, second = schedule.scheduled_actions
+    assert first.start_time == second.start_time
+    swapped = Schedule(
+        (replace(second, action_id=0), replace(first, action_id=1)), schedule.end_time, schedule.initial_state
+    )
+    broken = replace(result, schedule=BranchingSchedule((swapped,), result.schedule.initial_state))
+
+    with pytest.raises(ValueError, match="gate 1 starts before one of its predecessors ends"):
+        broken.validate()
+
+
 def test_an_impossible_return_names_the_failing_branch_side() -> None:
     """Report the failing branch side instead of switching strategy silently."""
     first = Segment("first")
@@ -278,7 +316,7 @@ def test_an_impossible_return_names_the_failing_branch_side() -> None:
     )
 
     assert result.status is CompilationStatus.FAILED
-    assert result.message == "program, step 1, then, step 0: returning to the placement before the branch failed"
+    assert result.message == "program, step 1, then, step 0: moving to the placement where the program continues failed"
     assert len(result.schedule.steps) == 1
 
 

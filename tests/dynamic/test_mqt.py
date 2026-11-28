@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from qiskit import QuantumCircuit
+from qiskit.quantum_info import Operator
 
 from mqt.ionshuttler.circuit import Circuit
 from mqt.ionshuttler.core.gates import Measure, Reset, Rx, Rxx, Ry, Rz
@@ -51,14 +53,38 @@ def _control_flow(steps: tuple[Step, ...]) -> tuple[object, ...]:
     return tuple(shape)
 
 
-def test_program_from_qasm_matches_the_stored_qco_fixture() -> None:
-    """Read the same control flow, conditions, measurements, and resets as the stored fixture, with native gates."""
-    from_qasm = program_from_qasm(FIXTURES / "teleportation.qasm")
-    stored = parse_program((FIXTURES / "teleportation.qco").read_text(encoding="utf-8"))
+def _unitary(circuit: Circuit) -> Operator:
+    """Return the unitary of a circuit without measurements and resets."""
+    quantum_circuit = QuantumCircuit(circuit.num_ions)
+    for gate in circuit.gates:
+        assert gate.circuit_name is not None
+        parameters = [getattr(gate, name) for name in gate.parameter_names]
+        getattr(quantum_circuit, gate.circuit_name)(*parameters, *gate.ions)
+    return Operator(quantum_circuit)
+
+
+@pytest.mark.parametrize(
+    "name", ["teleportation", "register_conditions", "nested_branches", "reset_and_reuse", "repeat_until_success"]
+)
+def test_program_from_qasm_matches_the_stored_qco_fixture(name: str) -> None:
+    """Read the same control flow, measurements, and resets as the stored fixture, and equivalent rotations.
+
+    A circuit without measurements and resets, such as a correction, must have the same unitary up to a global phase.
+    """
+    from_qasm = program_from_qasm(FIXTURES / f"{name}.qasm")
+    stored = parse_program((FIXTURES / f"{name}.qco").read_text(encoding="utf-8"))
 
     assert from_qasm.num_ions == stored.num_ions
     assert _control_flow(from_qasm.steps) == _control_flow(stored.steps)
     assert {type(gate) for gate in from_qasm.gates()} <= {Rx, Ry, Rz, Rxx, Measure, Reset}
+    unitary_pairs = [
+        (read, kept)
+        for read, kept in zip(from_qasm.circuits(), stored.circuits(), strict=True)
+        if not any(isinstance(gate, Measure | Reset) for gate in kept.gates)
+    ]
+    assert unitary_pairs
+    for read, kept in unitary_pairs:
+        assert _unitary(read).equiv(_unitary(kept))
 
 
 def test_a_qasm_program_compiles_end_to_end() -> None:

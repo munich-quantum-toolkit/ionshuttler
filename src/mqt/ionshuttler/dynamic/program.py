@@ -192,7 +192,8 @@ class Condition:
             if any(position < 0 or position >= len(built) for position in positions):
                 msg = "condition parts may only combine earlier parts"
                 raise ValueError(msg)
-            outcome = require_int(part, "outcome") if operation == "measured" else None
+            # A part other than "measured" with an outcome reaches the constructor, which rejects it.
+            outcome = require_int(part, "outcome") if operation == "measured" or "outcome" in part else None
             built.append(cls(operation, (built[position] for position in positions), outcome))
         if not built:
             msg = "a condition needs at least one part"
@@ -397,6 +398,9 @@ class Program:
         if isinstance(self.num_ions, bool) or not isinstance(self.num_ions, int):
             msg = "num_ions must be an integer"
             raise TypeError(msg)
+        if self.num_ions < 1:
+            msg = "num_ions must be positive"
+            raise ValueError(msg)
         steps = _normalize_steps(self.steps)
         object.__setattr__(self, "steps", steps)
         if any(circuit.num_ions != self.num_ions for circuit in self.circuits()):
@@ -635,6 +639,8 @@ def _walk_paths(
     max_iterations: int | None,
 ) -> Iterator[tuple[dict[OutcomeKey, int], tuple[bool, ...]]]:
     for index, (step, iterations) in enumerate(work):
+        if not isinstance(step, _LoopCheck | _BranchShape | _LoopShape):
+            continue
         rest = work[index + 1 :]
         condition: Condition | None
         if isinstance(step, _LoopCheck):
@@ -655,8 +661,6 @@ def _walk_paths(
                 ((_LoopCheck(step, 0), iterations), *rest), values, decisions, depths, max_iterations
             )
             return
-        else:
-            continue
         assert condition is not None
         keys = _keys(condition, depths, condition_iterations)
         unknown = [key for key in dict.fromkeys(keys) if key not in values]
@@ -743,7 +747,13 @@ def _check_outcomes_measured_before_use(steps: tuple[Step, ...], measured: froze
             _require_measured(step.condition, measured, "a branch")
             then_measured = _check_outcomes_measured_before_use(step.then_steps, measured)
             else_measured = _check_outcomes_measured_before_use(step.else_steps, measured)
-            measured = then_measured & else_measured
+            # A constant condition runs only one side.
+            if step.condition.operation == "always":
+                measured = then_measured
+            elif step.condition.operation == "never":
+                measured = else_measured
+            else:
+                measured = then_measured & else_measured
         else:
             if step.entry is not None:
                 _require_measured(step.entry, measured, "a loop entry condition")

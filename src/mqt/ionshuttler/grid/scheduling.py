@@ -349,6 +349,7 @@ def schedule_greedy(
             incoming_ions_first = tuple(
                 sorted(priority, key=lambda request: state.ion_segment(request[0]) == request[1])
             )
+            retry_requests: list[PrioritizedIon] | None = None if planning_trace is None else []
             movement_layer, additional_moves_explored, _blocked_targets = _priority_movement_layer(
                 architecture,
                 state,
@@ -359,10 +360,14 @@ def schedule_greedy(
                 max_states=config.max_routing_states,
                 allowed_crossings=config.allowed_junction_crossings,
                 selected_gate_requests=selected_gate_requests,
+                planning_requests=retry_requests,
                 swap_guard=swap_guard,
             )
             explored_states += additional_moves_explored
             action_layer = movement_layer
+            # The trace shows the requests of the pass whose movements run.
+            if movement_layer:
+                planning_requests = retry_requests
         if not action_layer and next_time is None and not stall_clear_attempted_since_gate_completion:
             stall_clear_attempted_since_gate_completion = True
             path_clearing_layer, clearing_paths_explored = _build_clearing_layer_for_gate(
