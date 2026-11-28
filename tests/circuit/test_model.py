@@ -94,6 +94,16 @@ def test_circuit_rejects_forward_dependencies() -> None:
             "barriers must reference circuit ions",
             id="barrier-ion-range",
         ),
+        pytest.param(
+            lambda: Circuit(
+                num_ions=1,
+                gates=(Rx(ion=1, theta=0.5, gate_id=0),),
+                predecessors=(frozenset(),),
+            ),
+            ValueError,
+            "gates must act on circuit ions",
+            id="gate-ion-range",
+        ),
     ],
 )
 def test_circuit_rejects_malformed_structure(

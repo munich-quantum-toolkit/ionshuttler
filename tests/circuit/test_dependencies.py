@@ -20,7 +20,7 @@ from qiskit.circuit.library import RXGate, RXXGate, RYGate, RYYGate, RZGate, RZZ
 from qiskit.quantum_info import random_unitary
 
 from mqt.ionshuttler.circuit import Circuit, parse_circuit, with_commutation_aware_dependencies
-from mqt.ionshuttler.core.gates import Measure, Reset, Rx, Rxx, Ry, Ryy, Rz, Rzz
+from mqt.ionshuttler.core.gates import GlobalGate, Measure, Reset, Rx, Rxx, Ry, Ryy, Rz, Rzz
 
 if TYPE_CHECKING:
     from qiskit.circuit import Gate
@@ -231,6 +231,22 @@ def test_commutation_aware_dependencies_retain_measurement_and_reset_order() -> 
     )
     predecessors = (frozenset(), frozenset({0}), frozenset({1}), frozenset({2}), frozenset())
     circuit = Circuit(2, gates, predecessors, ((),) * (len(gates) + 1))
+
+    dependencies = with_commutation_aware_dependencies(circuit)
+
+    assert _orders(dependencies.predecessors) == _orders(predecessors)
+
+
+def test_commutation_aware_dependencies_order_a_global_gate_with_every_gate_on_its_ions() -> None:
+    """Order a global gate with each gate on its ions, also with a rotation of the same axis."""
+    gates = (
+        Rx(ion=0, theta=0.5, gate_id=0),
+        GlobalGate(gate_name="rx", theta=0.25, ions=(0, 1), gate_id=1),
+        Rx(ion=1, theta=0.5, gate_id=2),
+        Rx(ion=2, theta=0.5, gate_id=3),
+    )
+    predecessors = (frozenset(), frozenset({0}), frozenset({1}), frozenset())
+    circuit = Circuit(3, gates, predecessors, ((),) * (len(gates) + 1))
 
     dependencies = with_commutation_aware_dependencies(circuit)
 

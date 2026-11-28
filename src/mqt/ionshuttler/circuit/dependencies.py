@@ -34,9 +34,10 @@ def with_commutation_aware_dependencies(circuit: Circuit) -> Circuit:
     """Return a scheduling view that permits commuting gate reordering.
 
     Two gates keep their order when they share an ion and do not commute.
-    Qiskit's commutation checker decides this for rotations. A measurement or
-    reset commutes only with rotations that equal the identity. A barrier
-    orders every gate on its qubits. The returned predecessors imply exactly these orders; they need
+    Qiskit's commutation checker decides this for rotations. Every other
+    operation, such as a measurement, a reset, or a global gate, commutes only
+    with rotations that equal the identity. A barrier orders every gate on its
+    qubits. The returned predecessors imply exactly these orders; they need
     not be the smallest sets that do.
 
     The analysis walks back along each ion of a gate to the first earlier gate
@@ -51,10 +52,7 @@ def with_commutation_aware_dependencies(circuit: Circuit) -> Circuit:
     Returns:
         A circuit whose predecessors order every pair of gates that share an
         ion and do not commute, and every gate across a barrier on its ions.
-
-    Raises:
-        ValueError: If a gate type has no circuit name.
-    """  # ruff: ignore[docstring-extraneous-exception] - Raised while building the Qiskit operations.
+    """
     ordering = _Ordering()
     gate_node: list[int] = []
     for gate_id, gate in enumerate(circuit.gates):
@@ -226,21 +224,19 @@ class _Ordering:
 
 
 def _as_qiskit_gate(gate: GateAction) -> Gate:
-    """Build one Qiskit gate while preserving its parsed name and operands.
+    """Build one Qiskit gate for the dependency analysis.
+
+    A rotation becomes the Qiskit rotation with the same angle. Every other
+    operation becomes an opaque gate on its ions, which the analysis orders
+    with every gate that shares an ion.
 
     Returns:
         The gate used for dependency analysis.
-
-    Raises:
-        ValueError: If the parsed gate type has no circuit name.
     """
-    name = gate.circuit_name
-    if name is None:
-        msg = f"gate type {type(gate).__name__} has no circuit name"
-        raise ValueError(msg)
-    parameters = [getattr(gate, parameter_name) for parameter_name in gate.parameter_names]
-    gate_type = _QISKIT_GATE_TYPES.get(name)
-    return Gate(name, len(gate.ions), parameters) if gate_type is None else gate_type(*parameters)
+    gate_type = _QISKIT_GATE_TYPES.get(gate.circuit_name or "")
+    if gate_type is None:
+        return Gate(gate.circuit_name or type(gate).__name__, len(gate.ions), [])
+    return gate_type(*(getattr(gate, parameter_name) for parameter_name in gate.parameter_names))
 
 
 __all__ = ["with_commutation_aware_dependencies"]
