@@ -9,33 +9,41 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from dataclasses import replace
+from pathlib import Path
+from typing import cast
 
 import pytest
 
-from mqt.ionshuttler.core.gates import GateAction, Rx, Ry
+import mqt.ionshuttler.grid.compiler as grid_compiler_module
+from mqt.ionshuttler.circuit import Circuit
+from mqt.ionshuttler.core.gates import GateAction, Measure, Reset, Rx, Ry
 from mqt.ionshuttler.grid import (
     CompilationStatus,
     Cycle,
+    DependencyMode,
     GateTiming,
     GridArchitecture,
+    GridCompilationResult,
     GridCompiler,
     GridCompilerConfig,
     GridCompilerStrategy,
-    GridDependencyMode,
     GridDiagnostics,
     GridStopReason,
     Junction,
     JunctionMove,
     ProcessingZone,
+    Rearrangement,
     Segment,
     SegmentOccupancy,
+    TransportTiming,
+    rectangular_grid,
     result_from_json,
     square_grid,
 )
+from mqt.ionshuttler.grid.planning_trace import MoveStatus
 
-if TYPE_CHECKING:
-    from pathlib import Path
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def _qasm(num_ions: int, *instructions: str) -> str:
@@ -64,6 +72,7 @@ def test_compiler_routes_a_two_ion_gate_and_round_trips_result(strategy: GridCom
     assert result.diagnostics is not None
     assert result.diagnostics.junction_moves == 1
     assert result.diagnostics.cycles == 0
+    assert result.diagnostics.rearrangements == 0
     assert result.diagnostics.gates == 1
     result.validate()
     assert result_from_json(result.to_json()) == result
@@ -95,6 +104,493 @@ def test_compiler_uses_a_simultaneous_cycle_when_every_segment_is_full(strategy:
     assert result.diagnostics is not None
     assert result.diagnostics.cycles == 1
     assert result.diagnostics.junction_moves == 3
+
+
+@pytest.mark.parametrize("capacity", [2, 3])
+def test_greedy_compiler_routes_whole_crystals_in_a_cycle(capacity: int) -> None:
+    """Move a gate ion at the back of a full crystal without splitting the crystal."""
+    a = Segment("a", capacity=capacity)
+    b = Segment("b", capacity=capacity, processing_zones=(ProcessingZone("pz"),))
+    c = Segment("c", capacity=capacity)
+    architecture = GridArchitecture(
+        (a, b, c),
+        (
+            Junction("ab", (a.end, b.start)),
+            Junction("bc", (b.end, c.start)),
+            Junction("ca", (c.end, a.start)),
+        ),
+    )
+    placement = {
+        segment.segment_id: tuple(range(index * capacity, (index + 1) * capacity))
+        for index, segment in enumerate((a, b, c))
+    }
+
+    result = GridCompiler(architecture).compile(
+        _qasm(3 * capacity, "rx(0.5) q[0];"),
+        initial_placement=placement,
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert isinstance(result.path[0], Cycle)
+    assert all(len(move.ions) == capacity for move in result.path[0].moves)
+    assert result.final_state.ion_segment(0) == "b"
+
+
+@pytest.mark.parametrize("strategy", list(GridCompilerStrategy))
+def test_compiler_routes_to_an_exact_target_placement(strategy: GridCompilerStrategy) -> None:
+    """Reach a final full-occupancy placement with a simultaneous cycle."""
+    a = Segment("a")
+    b = Segment("b")
+    c = Segment("c")
+    architecture = GridArchitecture(
+        (a, b, c),
+        (
+            Junction("ab", (a.end, b.start)),
+            Junction("bc", (b.end, c.start)),
+            Junction("ca", (c.end, a.start)),
+        ),
+    )
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=strategy)).compile(
+        _qasm(3),
+        initial_placement={"a": (0,), "b": (1,), "c": (2,)},
+        target_placement={"a": (2,), "b": (0,), "c": (1,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert len(result.path) == 1
+    assert isinstance(result.path[0], Cycle)
+    assert result.final_state.occupancy == architecture.initial_state({"a": (2,), "b": (0,), "c": (1,)}).occupancy
+    assert result.diagnostics is not None
+    assert result.diagnostics.cycles == 1
+    assert result.diagnostics.junction_moves == 3
+
+
+@pytest.mark.parametrize("strategy", list(GridCompilerStrategy))
+def test_compiler_schedules_measurement_and_reset_in_a_processing_zone(strategy: GridCompilerStrategy) -> None:
+    """Treat measurement and reset as timed single-ion operations in a processing zone."""
+    memory = Segment("memory", capacity=2)
+    processor = Segment("processor", capacity=2, processing_zones=(ProcessingZone("pz"),))
+    architecture = GridArchitecture(
+        (memory, processor),
+        (Junction("j0", (memory.end, processor.start)),),
+        gate_timing=GateTiming(measure=3, reset=2),
+    )
+    circuit = Circuit(
+        num_ions=2,
+        gates=(
+            Rx(ion=0, theta=0.5, gate_id=0),
+            Measure(ion=0, outcome=0, gate_id=1),
+            Reset(ion=0, gate_id=2),
+        ),
+        predecessors=(frozenset(), frozenset({0}), frozenset({1})),
+    )
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=strategy)).compile(
+        circuit,
+        initial_placement={"memory": (0, 1)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    timed = {type(item.action): item for item in result.schedule.scheduled_actions}
+    assert timed[Measure].duration == 3
+    assert timed[Measure].processing_zone_id == "pz"
+    assert timed[Reset].duration == 2
+    assert timed[Reset].start_time >= timed[Measure].end_time
+    result.validate()
+    assert result_from_json(result.to_json()) == result
+
+
+def test_greedy_compiler_starts_a_gate_after_its_predecessor_on_another_ion_ends() -> None:
+    """Keep the order that a barrier sets between gates on different ions."""
+    left = Segment("left", processing_zones=(ProcessingZone("left-pz"),))
+    right = Segment("right", processing_zones=(ProcessingZone("right-pz"),))
+    architecture = GridArchitecture(
+        (left, right),
+        (Junction("j0", (left.end, right.start)),),
+        gate_timing=GateTiming(rx=3),
+    )
+
+    result = GridCompiler(architecture).compile(
+        _qasm(2, "rx(0.5) q[0];", "barrier q[0],q[1];", "rx(0.5) q[1];"),
+        initial_placement={"left": (0,), "right": (1,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    gates = {item.action.gate_id: item for item in result.schedule.scheduled_actions if isinstance(item.action, Rx)}
+    assert gates[1].start_time >= gates[0].end_time
+
+
+def test_greedy_compiler_starts_a_virtual_gate_after_its_predecessor_ends() -> None:
+    """Keep a virtual rotation after the running gate on the same ion."""
+    memory = Segment("memory")
+    middle = Segment("middle")
+    processor = Segment("processor", capacity=3, processing_zones=(ProcessingZone("pz"),))
+    architecture = GridArchitecture(
+        (memory, middle, processor),
+        (Junction("j0", (memory.end, middle.start)), Junction("j1", (middle.end, processor.start))),
+        gate_timing=GateTiming(rxx=4),
+    )
+
+    result = GridCompiler(architecture).compile(
+        _qasm(3, "rxx(0.5) q[0],q[1];", "rz(0.5) q[0];", "rx(0.5) q[2];"),
+        initial_placement={"processor": (0, 1), "memory": (2,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    times = {type(item.action).__name__: item for item in result.schedule.scheduled_actions}
+    assert times["Rz"].start_time >= times["Rxx"].end_time
+
+
+def test_compiler_routes_an_empty_circuit_to_its_target_placement() -> None:
+    """Compile pure transport when a circuit has no gates but a target placement."""
+    memory = Segment("memory", capacity=2)
+    processor = Segment("processor", capacity=2, processing_zones=(ProcessingZone("pz"),))
+    architecture = GridArchitecture((memory, processor), (Junction("j0", (memory.end, processor.start)),))
+
+    result = GridCompiler(architecture).compile(
+        Circuit(num_ions=2, gates=(), predecessors=()),
+        initial_placement={"memory": (0, 1)},
+        target_placement={"processor": (0, 1)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.final_state.occupants("processor") == (0, 1)
+    assert all(isinstance(action, JunctionMove | Cycle) for action in result.path)
+
+
+@pytest.mark.parametrize("strategy", list(GridCompilerStrategy))
+def test_compiler_reaches_an_exact_permutation_of_nine_ions(strategy: GridCompilerStrategy) -> None:
+    """Reach a nine-ion placement that needs ions to leave and re-enter segments."""
+    architecture = square_grid(3, processing_zone_segments=("h:1:0", "h:1:1"), segment_capacity=2)
+    start = {
+        "h:0:0": (4,),
+        "h:1:0": (0, 5),
+        "h:2:0": (2,),
+        "v:0:0": (8,),
+        "v:0:1": (7,),
+        "v:0:2": (6,),
+        "v:1:0": (3,),
+        "v:1:1": (1,),
+    }
+    target = {
+        "h:0:0": (2,),
+        "h:1:0": (1,),
+        "h:1:1": (0, 6),
+        "v:0:1": (4, 5),
+        "v:0:2": (7,),
+        "v:1:0": (3,),
+        "v:1:1": (8,),
+    }
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=strategy)).compile(
+        Circuit(num_ions=9, gates=(), predecessors=()),
+        initial_placement=start,
+        target_placement=target,
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.final_state.occupancy == architecture.initial_state(target).occupancy
+    starts = [item.start_time for item in result.schedule.scheduled_actions]
+    assert len(set(starts)) < len(starts)
+
+
+def _opposite_exits(*, swap: int, side_segments: bool, rearrange: bool = True) -> GridArchitecture:
+    """Return a line W - P - Q; the two ions in P must leave through opposite ends."""
+    w = Segment("w", capacity=2, processing_zones=(ProcessingZone("pz_w"),))
+    p = Segment("p", capacity=2, supported_action_types=(Rearrangement,) if rearrange else ())
+    q = Segment("q", capacity=2, processing_zones=(ProcessingZone("pz_q"),))
+    sides = (Segment("side_w", capacity=2), Segment("side_q", capacity=2)) if side_segments else ()
+    return GridArchitecture(
+        (w, p, q, *sides),
+        (
+            Junction("wp", (w.end, p.start, *(segment.start for segment in sides[:1]))),
+            Junction("pq", (p.end, q.start, *(segment.start for segment in sides[1:]))),
+        ),
+        transport_timing=TransportTiming(junction_move=1, swap=swap),
+    )
+
+
+def _swaps(result: GridCompilationResult) -> list[Rearrangement]:
+    return [item.action for item in result.schedule.scheduled_actions if isinstance(item.action, Rearrangement)]
+
+
+def test_greedy_compiler_swaps_two_ions_that_leave_through_opposite_ends() -> None:
+    """Swap instead of carrying the ion in front away from its own target."""
+    architecture = _opposite_exits(swap=1, side_segments=False)
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY)).compile(
+        _qasm(4, "rzz(0.5) q[0],q[2];", "rzz(0.5) q[1],q[3];"),
+        initial_placement={"w": (3,), "p": (0, 1), "q": (2,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert _swaps(result) == [Rearrangement("p", (0, 1), (1, 0))]
+    assert result.diagnostics is not None
+    assert result.diagnostics.rearrangements == 1
+    result.validate()
+
+
+def test_greedy_compiler_respects_segment_rearrangement_support() -> None:
+    """Move an ion aside instead of rearranging inside a segment that does not support it."""
+    architecture = _opposite_exits(swap=1, side_segments=True, rearrange=False)
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY)).compile(
+        _qasm(4, "rzz(0.5) q[0],q[2];", "rzz(0.5) q[1],q[3];"),
+        initial_placement={"w": (3,), "p": (0, 1), "q": (2,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert _swaps(result) == []
+    result.validate()
+
+
+def test_greedy_compiler_moves_the_ion_in_front_aside_when_a_swap_takes_longer() -> None:
+    """Use a side segment when a swap takes longer than moving the ion in front away and back."""
+    architecture = _opposite_exits(swap=3, side_segments=True)
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY)).compile(
+        _qasm(4, "rzz(0.5) q[0],q[2];", "rzz(0.5) q[1],q[3];"),
+        initial_placement={"w": (3,), "p": (0, 1), "q": (2,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert _swaps(result) == []
+    result.validate()
+
+
+@pytest.mark.parametrize(("swap", "swaps"), [(2, 1), (3, 0)])
+def test_greedy_compiler_swaps_past_a_waiting_ion_only_when_the_swap_is_not_longer(swap: int, swaps: int) -> None:
+    """Weigh a swap against moving the ion in front aside and back, also when that ion waits for a later gate."""
+    w = Segment("w", capacity=2)
+    p = Segment("p", capacity=2, processing_zones=(ProcessingZone("pz_p"),))
+    q = Segment("q", capacity=2, processing_zones=(ProcessingZone("pz_q"),))
+    side = Segment("side", capacity=2)
+    architecture = GridArchitecture(
+        (w, p, q, side),
+        (Junction("wp", (w.end, p.start)), Junction("pq", (p.end, q.start, side.start))),
+        transport_timing=TransportTiming(junction_move=1, swap=swap),
+    )
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY)).compile(
+        _qasm(3, "rzz(0.5) q[0],q[2];", "rx(0.5) q[0];", "rzz(0.5) q[1],q[0];"),
+        initial_placement={"w": (), "p": (0, 1), "q": (2,), "side": ()},
+        gate_to_processing_zone={0: "pz_q", 1: "pz_q", 2: "pz_p"},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert len(_swaps(result)) == swaps
+    result.validate()
+
+
+def test_greedy_compiler_does_not_swap_a_blocked_pair_back() -> None:
+    """Swap a pair only once while neither ion makes progress toward its full target segment."""
+    p = Segment("p", capacity=2)
+    first = Segment("first", capacity=2, processing_zones=(ProcessingZone("pz_first"),))
+    second = Segment("second", capacity=2, processing_zones=(ProcessingZone("pz_second"),))
+    architecture = GridArchitecture((p, first, second), (Junction("j", (p.end, first.start, second.start)),))
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY)).compile(
+        _qasm(6, "rzz(0.5) q[0],q[2];", "rzz(0.5) q[1],q[4];"),
+        initial_placement={"p": (0, 1), "first": (2, 3), "second": (4, 5)},
+    )
+
+    assert result.status is CompilationStatus.FAILED
+    assert len(_swaps(result)) == 1
+
+
+@pytest.mark.parametrize("strategy", list(GridCompilerStrategy))
+def test_compiler_reverses_the_ion_order_inside_a_segment(strategy: GridCompilerStrategy) -> None:
+    """Treat the ion order of an ordered segment as part of an exact target."""
+    a = Segment("a", capacity=2)
+    b = Segment("b", capacity=2)
+    c = Segment("c", capacity=2)
+    architecture = GridArchitecture(
+        (a, b, c),
+        (Junction("ab", (a.end, b.start)), Junction("bc", (b.end, c.start)), Junction("ca", (c.end, a.start))),
+    )
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=strategy)).compile(
+        Circuit(num_ions=2, gates=(), predecessors=()),
+        initial_placement={"a": (0, 1)},
+        target_placement={"a": (1, 0)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.final_state.occupants("a") == (1, 0)
+    assert _swaps(result) == [Rearrangement("a", (0, 1), (1, 0))]
+
+
+def test_compiler_rejects_measurement_without_a_measuring_processing_zone() -> None:
+    """Require a processing zone that declares measurement support."""
+    processor = Segment("processor", processing_zones=(ProcessingZone("pz", (Rx,)),))
+    architecture = GridArchitecture((processor,), ())
+
+    with pytest.raises(ValueError, match="Grid architecture has no processing zone for Measure"):
+        GridCompiler(architecture).compile(
+            Circuit(num_ions=1, gates=(Measure(ion=0, gate_id=0),), predecessors=(frozenset(),))
+        )
+
+
+@pytest.mark.parametrize("strategy", list(GridCompilerStrategy))
+def test_compiler_routes_to_a_partial_target_placement(strategy: GridCompilerStrategy) -> None:
+    """Reach active ion targets without constraining spectator destinations."""
+    a = Segment("a")
+    b = Segment("b")
+    c = Segment("c")
+    architecture = GridArchitecture(
+        (a, b, c),
+        (
+            Junction("ab", (a.end, b.start)),
+            Junction("bc", (b.end, c.start)),
+            Junction("ca", (c.end, a.start)),
+        ),
+    )
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=strategy)).compile(
+        _qasm(3),
+        initial_placement={"a": (0,), "b": (1,), "c": (2,)},
+        target_placement={"b": (0,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.final_state.ion_segment(0) == "b"
+    assert result.final_state.ions == (0, 1, 2)
+    assert result.diagnostics is not None
+    assert result.diagnostics.stop_reason is GridStopReason.COMPLETED
+
+
+def test_greedy_partial_target_uses_a_cycle_when_the_grid_is_full() -> None:
+    """Skip false segment cycles and rotate a physical plaquette instead."""
+    architecture = rectangular_grid(3, 3)
+    segment_ids = tuple(segment.segment_id for segment in architecture.segments)
+    source = "h:0:0"
+    target = "v:0:1"
+    ion = segment_ids.index(source)
+    placement = {segment_id: (placed_ion,) for placed_ion, segment_id in enumerate(segment_ids)}
+
+    result = GridCompiler(
+        architecture,
+        GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY),
+    ).compile(
+        _qasm(len(segment_ids)),
+        initial_placement=placement,
+        target_placement={target: (ion,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.final_state.ion_segment(ion) == target
+    assert isinstance(result.path[0], Cycle)
+
+
+def test_greedy_partial_target_routes_multiple_ions_on_a_full_grid() -> None:
+    """Try other active-ion orders when the first order repeats a placement."""
+    architecture = rectangular_grid(3, 3)
+    placement = {
+        "h:0:0": (7,),
+        "h:0:1": (10,),
+        "h:1:0": (1,),
+        "h:1:1": (6,),
+        "h:2:0": (3,),
+        "h:2:1": (11,),
+        "v:0:0": (5,),
+        "v:0:1": (9,),
+        "v:0:2": (8,),
+        "v:1:0": (4,),
+        "v:1:1": (0,),
+        "v:1:2": (2,),
+    }
+
+    result = GridCompiler(
+        architecture,
+        GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY),
+    ).compile(
+        _qasm(12),
+        initial_placement=placement,
+        target_placement={"h:0:1": (7,), "v:0:0": (11,), "v:1:1": (6,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.final_state.ion_segment(6) == "v:1:1"
+    assert result.final_state.ion_segment(7) == "h:0:1"
+    assert result.final_state.ion_segment(11) == "v:0:0"
+
+
+def test_compiler_rejects_unknown_target_ion() -> None:
+    """Every constrained ion must occur in the initial placement."""
+    architecture = GridArchitecture((Segment("memory", capacity=2),), ())
+
+    with pytest.raises(ValueError, match="outside the initial placement"):
+        GridCompiler(architecture).compile(
+            _qasm(1),
+            initial_placement={"memory": (0,)},
+            target_placement={"memory": (1,)},
+        )
+
+
+@pytest.mark.parametrize("strategy", list(GridCompilerStrategy))
+def test_compiler_routes_to_target_after_gates_finish(strategy: GridCompilerStrategy) -> None:
+    """Perform final target transport only after the circuit gates."""
+    memory = Segment("memory")
+    processor = Segment("processor", processing_zones=(ProcessingZone("pz"),))
+    architecture = GridArchitecture(
+        (memory, processor),
+        (Junction("junction", (memory.end, processor.start)),),
+    )
+
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=strategy)).compile(
+        _qasm(1, "rx(0.5) q[0];"),
+        initial_placement={"memory": (0,)},
+        target_placement={"memory": (0,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert [type(action) for action in result.path] == [JunctionMove, Rx, JunctionMove]
+    assert result.final_state.occupants("memory") == (0,)
+
+
+def test_greedy_target_routing_waits_for_busy_transport_resources() -> None:
+    """Wait for one target move to finish before reusing its ion and junction."""
+    left = Segment("left")
+    middle = Segment("middle")
+    right = Segment("right")
+    architecture = GridArchitecture(
+        (left, middle, right),
+        (
+            Junction("left-middle", (left.end, middle.start)),
+            Junction("middle-right", (middle.end, right.start)),
+        ),
+        transport_timing=TransportTiming(junction_move=3),
+    )
+
+    result = GridCompiler(
+        architecture,
+        GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY),
+    ).compile(
+        _qasm(1),
+        initial_placement={"left": (0,)},
+        target_placement={"right": (0,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert [item.start_time for item in result.schedule.scheduled_actions] == [0, 3]
+    assert result.duration == 6
+
+
+def test_compiler_returns_failure_when_target_has_no_route() -> None:
+    """Return the unchanged partial result when no target route exists."""
+    architecture = GridArchitecture((Segment("left"), Segment("right")), ())
+
+    result = GridCompiler(architecture).compile(
+        _qasm(2),
+        initial_placement={"left": (0,), "right": (1,)},
+        target_placement={"left": (1,), "right": (0,)},
+    )
+
+    assert result.status is CompilationStatus.FAILED
+    assert result.path == []
+    assert result.diagnostics is not None
+    assert result.diagnostics.stop_reason is GridStopReason.NO_PROGRESS
 
 
 def test_compiler_schedules_independent_ready_gates_together() -> None:
@@ -132,18 +628,32 @@ def test_greedy_compiler_clears_a_stall_for_the_selected_gate() -> None:
         architecture,
         GridCompilerConfig(
             strategy=GridCompilerStrategy.GREEDY,
+            pre_partition=False,
             max_routing_states=2,
             allowed_junction_crossings=frozenset({("source", "processor"), ("processor", "free")}),
         ),
     ).compile(
         _qasm(2, "rx(0.25) q[0];"),
         initial_placement={"source": (0,), "processor": (1,)},
-        pre_partition=False,
     )
 
     assert result.status is CompilationStatus.SUCCESS
     assert result.final_state.occupants("processor") == (0,)
     assert result.final_state.occupants("free") == (1,)
+
+
+def test_greedy_compiler_leaves_a_transport_cycle() -> None:
+    """Finish a circuit whose greedy movement layers would otherwise repeat one placement forever."""
+    architecture = replace(
+        square_grid(3, processing_zone_segments=("h:1:0", "h:1:1"), segment_capacity=2),
+        transport_timing=TransportTiming(junction_move=20),
+    )
+    circuit = (FIXTURES / "transport_cycle.qasm").read_text(encoding="utf-8")
+
+    result = GridCompiler(architecture).compile(circuit)
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert sum(isinstance(item.action, GateAction) for item in result.schedule.scheduled_actions) == 38
 
 
 def test_greedy_compiler_suppresses_same_target_lookahead_when_selected_gate_is_blocked() -> None:
@@ -165,6 +675,7 @@ def test_greedy_compiler_suppresses_same_target_lookahead_when_selected_gate_is_
         architecture,
         GridCompilerConfig(
             strategy=GridCompilerStrategy.GREEDY,
+            pre_partition=False,
             max_routing_states=1,
             max_iterations=1,
             record_planning_trace=True,
@@ -172,7 +683,6 @@ def test_greedy_compiler_suppresses_same_target_lookahead_when_selected_gate_is_
     ).compile(
         _qasm(3, "rxx(0.5) q[0],q[2];", "rxx(0.25) q[0],q[1];"),
         initial_placement={"source": (0,), "blocker": (1,), "processor": (2,)},
-        pre_partition=False,
     )
 
     assert result.diagnostics is not None
@@ -227,6 +737,7 @@ def test_greedy_compiler_prioritizes_only_ions_in_the_lookahead() -> None:
     result = GridCompiler(
         architecture,
         GridCompilerConfig(
+            pre_partition=False,
             greedy_lookahead_rounds=1,
             max_iterations=1,
             record_planning_trace=True,
@@ -234,7 +745,6 @@ def test_greedy_compiler_prioritizes_only_ions_in_the_lookahead() -> None:
     ).compile(
         _qasm(2, "rx(0.5) q[0];", "ry(0.25) q[1];"),
         initial_placement={"first-source": (0,), "second-source": (1,)},
-        pre_partition=False,
     )
 
     assert result.diagnostics is not None
@@ -592,6 +1102,7 @@ def test_greedy_compiler_returns_no_progress_if_a_later_gate_becomes_unreachable
     compiler = GridCompiler(
         architecture,
         GridCompilerConfig(
+            pre_partition=False,
             allowed_junction_crossings=frozenset({("source", "rx-processor"), ("source", "ry-processor")}),
         ),
     )
@@ -599,7 +1110,6 @@ def test_greedy_compiler_returns_no_progress_if_a_later_gate_becomes_unreachable
     result = compiler.compile(
         _qasm(1, "rx(0.5) q[0];", "ry(0.25) q[0];"),
         initial_placement={"source": (0,)},
-        pre_partition=False,
     )
 
     assert result.status is CompilationStatus.FAILED
@@ -619,10 +1129,9 @@ def test_greedy_compiler_ignores_a_processing_zone_on_an_undersized_segment() ->
         (Junction("junction", (source.end, undersized.start, processor.start)),),
     )
 
-    result = GridCompiler(architecture).compile(
+    result = GridCompiler(architecture, GridCompilerConfig(pre_partition=False)).compile(
         _qasm(2, "rxx(0.5) q[0],q[1];"),
         initial_placement={"source": (0, 1)},
-        pre_partition=False,
     )
 
     assert result.status is CompilationStatus.SUCCESS
@@ -671,10 +1180,12 @@ def test_greedy_compiler_moves_a_blocking_ion_aside_at_the_exit_junction() -> No
         (Junction("exit", (source.end, processor.start, side.start)),),
     )
 
-    result = GridCompiler(architecture, GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY)).compile(
+    result = GridCompiler(
+        architecture,
+        GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY, pre_partition=False),
+    ).compile(
         _qasm(2, "rx(0.5) q[0];"),
         initial_placement={"source": (0, 1)},
-        pre_partition=False,
     )
 
     assert result.status is CompilationStatus.SUCCESS
@@ -744,6 +1255,80 @@ def test_greedy_compiler_rotates_a_sparse_topology_cycle() -> None:
     assert result.duration == 2
 
 
+def test_greedy_compiler_can_temporarily_move_an_operand_out_of_its_processing_zone() -> None:
+    """Move a waiting operand when retaining it would block the other operand."""
+    base = rectangular_grid(3, 3)
+    processing_zone_segments = {"v:0:1", "v:1:1"}
+    segments = tuple(
+        Segment(
+            segment.segment_id,
+            capacity=2,
+            occupancy=segment.occupancy,
+            processing_zones=(ProcessingZone(f"pz:{segment.segment_id}"),),
+        )
+        if segment.segment_id in processing_zone_segments
+        else segment
+        for segment in base.segments
+    )
+    architecture = GridArchitecture(segments, base.junctions)
+    placement = {
+        "h:0:0": (2,),
+        "h:1:1": (5,),
+        "h:2:0": (6,),
+        "h:2:1": (7,),
+        "v:0:1": (1, 3),
+        "v:1:1": (0, 4),
+    }
+
+    result = GridCompiler(architecture, GridCompilerConfig(record_planning_trace=True)).compile(
+        _qasm(8, "rzz(0.5) q[7],q[0];"),
+        initial_placement=placement,
+        gate_to_processing_zone={0: "pz:v:1:1"},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    moves = [
+        move
+        for action in result.path
+        for move in (
+            action.moves if isinstance(action, Cycle) else (action,) if isinstance(action, JunctionMove) else ()
+        )
+    ]
+    assert any(0 in move.ions and move.source.segment_id == "v:1:1" for move in moves)
+    assert result.final_state.ion_segment(0) == "v:1:1"
+    # The trace names the request that proposed the move of the waiting operand.
+    assert result.diagnostics is not None
+    assert result.diagnostics.planning_trace is not None
+    leaving = next(
+        snapshot
+        for snapshot in result.diagnostics.planning_trace
+        if any(isinstance(move, JunctionMove) and 0 in move.ions for move in snapshot.moves)
+    )
+    proposed = {
+        action
+        for request in leaving.prioritized_ions
+        if request.status is MoveStatus.SELECTED
+        for action in request.actions
+    }
+    assert set(leaving.moves) <= proposed
+    assert result.final_state.ion_segment(7) == "v:1:1"
+    result.validate()
+
+
+def test_greedy_compiler_finishes_when_its_movements_return_to_an_earlier_placement() -> None:
+    """Route the ions of a selected gate into its zone when the movement layers repeat a placement."""
+    architecture = square_grid(2, processing_zone_segments=("h:0:0", "h:1:0"), segment_capacity=2)
+
+    result = GridCompiler(architecture).compile(
+        _qasm(7, "rzz(0.5) q[0],q[3];", "rzz(0.5) q[5],q[3];", "rzz(0.5) q[4],q[6];")
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert result.diagnostics is not None
+    assert result.diagnostics.stop_reason is GridStopReason.COMPLETED
+    result.validate()
+
+
 def test_greedy_compiler_routes_to_the_nearest_processing_zone() -> None:
     """Choose the nearest reachable processing zone that supports the gate."""
     source = Segment("source")
@@ -759,11 +1344,10 @@ def test_greedy_compiler_routes_to_the_nearest_processing_zone() -> None:
 
     result = GridCompiler(
         architecture,
-        GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY),
+        GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY, pre_partition=False),
     ).compile(
         _qasm(1, "rx(0.5) q[0];"),
         initial_placement={"source": (0,)},
-        pre_partition=False,
     )
 
     assert result.status is CompilationStatus.SUCCESS
@@ -785,7 +1369,7 @@ def test_explicit_gate_assignment_replaces_pre_partitioning(strategy: GridCompil
         ),
     )
 
-    result = GridCompiler(architecture, GridCompilerConfig(strategy=strategy)).compile(
+    result = GridCompiler(architecture, GridCompilerConfig(strategy=strategy, pre_partition=True)).compile(
         _qasm(1, "rx(0.5) q[0];"),
         initial_placement={"source": (0,)},
         gate_to_processing_zone={0: "far-pz"},
@@ -805,7 +1389,7 @@ def test_compiler_can_compute_a_gate_zone_assignment() -> None:
     )
     compiler = GridCompiler(
         architecture,
-        GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY),
+        GridCompilerConfig(strategy=GridCompilerStrategy.GREEDY, pre_partition=True),
     )
 
     result = compiler.compile(
@@ -818,16 +1402,44 @@ def test_compiler_can_compute_a_gate_zone_assignment() -> None:
     assert result.diagnostics.gates == 3
 
 
-def test_compiler_requires_a_boolean_pre_partition_switch() -> None:
-    """Reject non-Boolean pre-partition switches at the public boundary."""
-    processor = Segment("processor", processing_zones=(ProcessingZone("pz"),))
+@pytest.mark.parametrize(
+    ("config", "expected_partitioning"),
+    [
+        (GridCompilerConfig(), True),
+        (GridCompilerConfig(pre_partition=False), False),
+    ],
+)
+def test_pre_partitioning_follows_the_config(
+    monkeypatch: pytest.MonkeyPatch,
+    config: GridCompilerConfig,
+    *,
+    expected_partitioning: bool,
+) -> None:
+    """Assign gates to processing zones before scheduling only when the config requests it."""
+    calls: list[object] = []
 
+    def partition(*args: object, **_kwargs: object) -> dict[int, str]:
+        calls.append(args)
+        return {}
+
+    monkeypatch.setattr(grid_compiler_module, "compute_gate_zone_assignment", partition)
+    left = Segment("left", capacity=2, processing_zones=(ProcessingZone("left-pz"),))
+    right = Segment("right", capacity=2, processing_zones=(ProcessingZone("right-pz"),))
+    architecture = GridArchitecture((left, right), (Junction("middle", (left.end, right.start)),))
+
+    result = GridCompiler(architecture, config).compile(
+        _qasm(2, "rxx(0.5) q[0],q[1];"),
+        initial_placement={"left": (0,), "right": (1,)},
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    assert bool(calls) is expected_partitioning
+
+
+def test_compiler_config_requires_a_boolean_pre_partition_switch() -> None:
+    """Reject non-Boolean pre-partition switches."""
     with pytest.raises(TypeError, match="pre_partition must be a boolean"):
-        GridCompiler(GridArchitecture((processor,), ())).compile(
-            _qasm(1, "rx(0.5) q[0];"),
-            initial_placement={"processor": (0,)},
-            pre_partition=cast("bool", 1),
-        )
+        GridCompilerConfig(pre_partition=cast("bool", 1))
 
 
 def test_greedy_compiler_skips_an_incompatible_processing_zone() -> None:
@@ -899,7 +1511,7 @@ def test_compiler_returns_a_valid_failed_prefix_when_the_zone_is_unreachable() -
     assert result.status is CompilationStatus.FAILED
     assert result.path == []
     assert result.final_state == result.initial_state
-    assert result.diagnostics == GridDiagnostics(1, 1, 0, 0, 0, GridStopReason.NO_PROGRESS)
+    assert result.diagnostics == GridDiagnostics(1, 1, 0, 0, 0, 0, GridStopReason.NO_PROGRESS)
     result.validate()
 
 
@@ -942,16 +1554,17 @@ def test_compiler_config_requires_strategy_enum_values() -> None:
 
 def test_compiler_config_requires_dependency_mode_enum_values() -> None:
     """Reject raw strings so dependency choices remain explicit."""
-    with pytest.raises(TypeError, match="dependency_mode must be a GridDependencyMode"):
-        GridCompilerConfig(dependency_mode=cast("GridDependencyMode", "commutation_aware"))
+    with pytest.raises(TypeError, match="dependency_mode must be a DependencyMode"):
+        GridCompilerConfig(dependency_mode=cast("DependencyMode", "commutation_aware"))
 
 
 def test_compiler_config_uses_recommended_defaults() -> None:
-    """Use the scalable routing and dependency modes unless configured otherwise."""
+    """Use the scalable routing and dependency modes and pre-partitioning unless configured otherwise."""
     config = GridCompilerConfig()
 
     assert config.strategy is GridCompilerStrategy.GREEDY
-    assert config.dependency_mode is GridDependencyMode.COMMUTATION_AWARE
+    assert config.dependency_mode is DependencyMode.COMMUTATION_AWARE
+    assert config.pre_partition is True
 
 
 def test_compiler_config_rejects_malformed_junction_crossings() -> None:

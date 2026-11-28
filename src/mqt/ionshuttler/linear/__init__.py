@@ -9,6 +9,7 @@
 
 from typing import TYPE_CHECKING
 
+from mqt.ionshuttler.core.dependencies import DependencyMode
 from mqt.ionshuttler.core.gates import GateTiming
 from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
@@ -60,6 +61,7 @@ __all__ = [
     "DEFAULT_ACTION_TYPES",
     "CompilationResult",
     "CompilationStatus",
+    "DependencyMode",
     "GateGroup",
     "GateTiming",
     "HeuristicFn",

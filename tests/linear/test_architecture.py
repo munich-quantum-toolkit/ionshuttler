@@ -212,6 +212,8 @@ def test_architecture_round_trips_through_json() -> None:
         "gate.ry",
         "gate.rz",
         "gate.rzz",
+        "gate.measure",
+        "gate.reset",
         "gate.global",
     ]
     assert architecture.to_dict()["transport_timing"] == {"shuttle": 2, "swap": 4}
@@ -243,6 +245,8 @@ def test_default_architecture_serializes_the_chain_topology() -> None:
         "topology": "chain",
         "processing_zones": {"all_sites": [0, 1, 2]},
         "gate_timing": {
+            "measure": 1,
+            "reset": 1,
             "rx": 1,
             "rxx": 2,
             "ry": 1,

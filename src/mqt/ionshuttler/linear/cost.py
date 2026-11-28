@@ -18,7 +18,7 @@ from math import ceil
 from sys import maxsize
 from typing import TYPE_CHECKING, Protocol
 
-from mqt.ionshuttler.core.gates import SingleQubitGate, TwoQubitGate
+from mqt.ionshuttler.core.gates import GlobalGate
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -173,20 +173,18 @@ def heuristic(
     routing_estimate = 0
     for gate_id in remaining:
         gate = circuit.gates[gate_id]
-        if isinstance(gate, SingleQubitGate):
-            continue
-        if isinstance(gate, TwoQubitGate):
+        if isinstance(gate, GlobalGate):
+            routing_estimate += 1
+        elif len(gate.ions) == 2:
             valid_pairs = architecture.valid_two_qubit_site_pairs
             if gate_zone is not None and zone_site_pairs is not None and gate_id in gate_zone:
                 valid_pairs = zone_site_pairs.get(gate_zone[gate_id], valid_pairs)
             routing_estimate += min_distance_to_valid_pair(
-                positions[gate.ion_a],
-                positions[gate.ion_b],
+                positions[gate.ions[0]],
+                positions[gate.ions[1]],
                 valid_pairs,
                 architecture,
             )
-        else:
-            routing_estimate += 1
 
     if not use_dependencies:
         return routing_estimate + ceil(len(remaining) / len(architecture.processing_zones or {}))
@@ -230,11 +228,11 @@ def makespan_lower_bound(circuit: Circuit, architecture: LinearArchitecture) -> 
             default=0,
         )
         gate_end_times.append(earliest_start + duration)
-        if isinstance(gate, TwoQubitGate):
-            processing_zone_work += duration
+        if isinstance(gate, GlobalGate) or architecture.is_virtual_gate(gate):
+            continue
+        processing_zone_work += duration
+        if len(gate.ions) == 2:
             two_ion_work += duration
-        elif isinstance(gate, SingleQubitGate) and not architecture.is_virtual_gate(gate):
-            processing_zone_work += duration
     two_ion_zone_count = sum(1 for size in zone_sizes if size >= 2)
     return max(
         max(gate_end_times, default=0),

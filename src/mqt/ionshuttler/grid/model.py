@@ -9,18 +9,26 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Literal
 
-from mqt.ionshuttler.core.gates import GateAction, Rx, Rxx, Ry, Ryy, Rz, Rzz
+from mqt.ionshuttler.core.actions import Action
+from mqt.ionshuttler.core.gates import GateAction, Measure, Reset, Rx, Rxx, Ry, Ryy, Rz, Rzz
 
-from .._json_utils import require_int, require_list, require_mapping, require_str
+from .._json_utils import require_int, require_list, require_mapping, require_str, require_str_list
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-LOCAL_GATE_TYPES: tuple[type[GateAction], ...] = (Rx, Ry, Rz, Rxx, Ryy, Rzz)
+LOCAL_GATE_TYPES: tuple[type[GateAction], ...] = (Rx, Ry, Rz, Rxx, Ryy, Rzz, Measure, Reset)
+
+
+def _segment_action_types() -> tuple[type[Action], ...]:
+    """Return the action types that a segment can support."""
+    from .actions import Rearrangement  # ruff: ignore[import-outside-top-level] - A top-level import would create a model/action cycle.
+
+    return (Rearrangement,)
 
 
 class SegmentOccupancy(StrEnum):
@@ -72,19 +80,24 @@ class SegmentEndpoint:
 
 @dataclass(frozen=True)
 class Segment:
-    """Describe one capacity-bounded location in the transport graph."""
+    """Describe one capacity-bounded location in the transport graph.
+
+    Segment action support is subordinate to the architecture-wide action
+    catalog. By default, a segment supports all available segment actions.
+    """
 
     segment_id: str
     capacity: int = 1
     occupancy: SegmentOccupancy = SegmentOccupancy.ORDERED
     processing_zones: tuple[ProcessingZone, ...] = ()
+    supported_action_types: tuple[type[Action], ...] = field(default_factory=_segment_action_types)
 
     def __post_init__(self) -> None:
         """Validate the segment.
 
         Raises:
             TypeError: If a field has the wrong type.
-            ValueError: If processing-zone identities repeat.
+            ValueError: If identities or action types repeat, or an action type is unavailable.
         """
         _require_identifier(self.segment_id, "segment_id")
         _require_positive_int(self.capacity, "capacity")
@@ -99,7 +112,27 @@ class Segment:
         if len(set(zone_ids)) != len(zone_ids):
             msg = "processing_zones must have unique identifiers within a segment"
             raise ValueError(msg)
+        action_types = tuple(self.supported_action_types)
+        if any(
+            not isinstance(action_type, type) or not issubclass(action_type, Action) for action_type in action_types
+        ):
+            msg = "supported_action_types must contain Action subclasses"
+            raise TypeError(msg)
+        if len(set(action_types)) != len(action_types):
+            msg = "supported_action_types must not contain duplicates"
+            raise ValueError(msg)
+        available = _segment_action_types()
+        unknown = [action_type.__name__ for action_type in action_types if action_type not in available]
+        if unknown:
+            msg = f"segments implement no action types named: {', '.join(unknown)}"
+            raise ValueError(msg)
         object.__setattr__(self, "processing_zones", zones)
+        object.__setattr__(self, "supported_action_types", action_types)
+
+    def supports(self, action: Action | type[Action]) -> bool:
+        """Return whether this segment implements an action type."""
+        action_type = action if isinstance(action, type) else type(action)
+        return action_type in self.supported_action_types
 
     @property
     def start(self) -> SegmentEndpoint:
@@ -118,6 +151,7 @@ class Segment:
             "capacity": self.capacity,
             "occupancy": self.occupancy.value,
             "processing_zones": [zone.to_dict() for zone in self.processing_zones],
+            "supported_action_types": [action_type.serialized_type for action_type in self.supported_action_types],
         }
 
     @classmethod
@@ -126,6 +160,7 @@ class Segment:
         data: object,
         *,
         gate_types: Mapping[str, type[GateAction]] | None = None,
+        action_types: Mapping[str, type[Action]] | None = None,
     ) -> Segment:
         """Restore a segment from serialized data.
 
@@ -141,19 +176,32 @@ class Segment:
         except ValueError as error:
             msg = "segment occupancy must be 'ordered' or 'unordered'"
             raise ValueError(msg) from error
-        registry = (
+        gate_registry = (
             {gate_type.serialized_type: gate_type for gate_type in LOCAL_GATE_TYPES}
             if gate_types is None
             else gate_types
         )
+        action_registry = (
+            {action_type.serialized_type: action_type for action_type in _segment_action_types()}
+            if action_types is None
+            else action_types
+        )
+        supported_action_types: list[type[Action]] = []
+        for name in require_str_list(mapping, "supported_action_types"):
+            action_type = action_registry.get(name)
+            if action_type is None:
+                msg = f"unknown segment action type: {name}"
+                raise ValueError(msg)
+            supported_action_types.append(action_type)
         return cls(
             require_str(mapping, "segment_id"),
             require_int(mapping, "capacity"),
             occupancy,
             tuple(
-                ProcessingZone.from_dict(item, gate_types=registry)
+                ProcessingZone.from_dict(item, gate_types=gate_registry)
                 for item in require_list(mapping, "processing_zones")
             ),
+            tuple(supported_action_types),
         )
 
 
@@ -269,27 +317,35 @@ class ProcessingZone:
 
 @dataclass(frozen=True)
 class TransportTiming:
-    """Configure the duration of Grid transport actions."""
+    """Configure the duration of Grid transport actions.
+
+    ``swap`` is the duration of one swap of two neighboring ions inside a
+    segment. A :class:`~mqt.ionshuttler.grid.Rearrangement` takes one swap
+    duration per layer of swaps.
+    """
 
     junction_move: int = 1
+    swap: int = 1
 
     def __post_init__(self) -> None:
         """Ensure transport takes at least one timestep."""
         _require_positive_int(self.junction_move, "junction_move")
+        _require_positive_int(self.swap, "swap")
 
     def to_dict(self) -> dict[str, int]:
         """Return JSON-compatible timing data."""
-        return {"junction_move": self.junction_move}
+        return {"junction_move": self.junction_move, "swap": self.swap}
 
     @classmethod
     def from_dict(cls, data: object) -> TransportTiming:
-        """Restore Grid transport timing.
+        """Restore Grid transport timing; a missing swap duration takes its default.
 
         Returns:
             The restored timing.
         """
         mapping = require_mapping(data, "transport timing")
-        return cls(require_int(mapping, "junction_move"))
+        swap = cls.swap if mapping.get("swap") is None else require_int(mapping, "swap")
+        return cls(require_int(mapping, "junction_move"), swap)
 
 
 def _require_identifier(value: object, label: str) -> None:

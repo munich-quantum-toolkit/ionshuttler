@@ -28,6 +28,15 @@ processing zones and operation timing, inspect explicit schedules, visualize ion
 trajectories, and apply dynamical decoupling.
 :::
 
+:::{grid-item-card} Dynamic programs
+:link: dynamic_programs
+:link-type: doc
+
+Compile programs with mid-circuit measurements, resets, conditional branches,
+and loops for Grid or Linear architectures. Each straight-line part compiles
+once, and the control system selects the next schedule from the outcomes.
+:::
+
 ::::
 
 Start with the {doc}`installation guide <installation>`, then choose the
@@ -40,7 +49,9 @@ represent a QCCD.
 - ion placement, transport, and gate scheduling;
 - one or several processing zones;
 - exact and heuristic compilation methods;
-- schedule cost, makespan, and transport overhead; and
+- schedule cost, makespan, and transport overhead;
+- dynamic programs with mid-circuit measurements, conditional branches, and
+  loops; and
 - dynamical decoupling for Linear schedules.
 
 <p align="center">
@@ -57,6 +68,8 @@ represent a QCCD.
 
 - {doc}`Grid compilers <grid_compilers>` — run the exact and heuristic tools
 - {doc}`Linear compiler <linear_compiler>` — build and inspect Linear schedules
+- {doc}`Dynamic programs <dynamic_programs>` — compile conditional branches and
+  loops
 - {doc}`Dynamical decoupling <linear_dd>` — add DD to Linear schedules
 - {doc}`Compiler design <design>` — understand and extend the software
 - {doc}`References <references>` — cite the relevant methods
@@ -80,6 +93,7 @@ self
 installation
 hardware_models
 grid_compilers
+dynamic_programs
 linear_compiler
 linear_dd
 references

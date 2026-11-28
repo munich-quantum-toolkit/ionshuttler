@@ -26,6 +26,7 @@ from mqt.ionshuttler.grid import (
     Junction,
     JunctionMove,
     ProcessingZone,
+    Rearrangement,
     Segment,
     SegmentEndpoint,
     SegmentOccupancy,
@@ -90,6 +91,14 @@ def test_junction_move_rejects_malformed_fields(
         ),
         (lambda: ProcessingZone("pz", cast("Any", (Segment,))), TypeError, "GateAction"),
         (lambda: ProcessingZone("pz", (Rx, Rx)), ValueError, "duplicates"),
+        (lambda: Segment("a", supported_action_types=cast("Any", (object,))), TypeError, "Action subclasses"),
+        pytest.param(
+            lambda: Segment("a", supported_action_types=(Rearrangement, Rearrangement)),
+            ValueError,
+            "duplicates",
+            id="duplicate-segment-actions",
+        ),
+        (lambda: Segment("a", supported_action_types=(JunctionMove,)), ValueError, "implement no action"),
         (
             lambda: Segment("a", processing_zones=cast("Any", ("pz",))),
             TypeError,
@@ -441,6 +450,9 @@ def test_serialized_values_reject_invalid_enumerations_and_gate_names() -> None:
         ProcessingZone.from_dict({**zone, "supported_gate_types": [1]}, gate_types={})
     with pytest.raises(ValueError, match="unknown processing-zone gate type"):
         ProcessingZone.from_dict({**zone, "supported_gate_types": ["gate.missing"]}, gate_types={})
+    segment = Segment("a").to_dict()
+    with pytest.raises(ValueError, match="unknown segment action type"):
+        Segment.from_dict({**segment, "supported_action_types": ["grid.missing"]})
     with pytest.raises(TypeError, match="JunctionMove values"):
         Cycle(cast("Any", (JunctionMove(Segment("a").end, Segment("b").start, (0,)), "move")))
     state = _line_architecture().initial_state({"a": (0,)})
@@ -518,3 +530,12 @@ def test_architecture_and_schedule_save_to_explicit_json_paths(tmp_path: Path) -
     assert restored_architecture == architecture
     assert GridArchitecture.load(architecture_path) == architecture
     assert load_schedule(schedule_path) == schedule
+
+
+def test_machine_state_reports_its_placement() -> None:
+    """Give the ions of every segment in the form that compilation accepts."""
+    architecture = _line_architecture()
+    state = architecture.initial_state({"a": (0,)})
+
+    assert state.placement == dict(state.occupancy)
+    assert architecture.initial_state(state.placement) == state

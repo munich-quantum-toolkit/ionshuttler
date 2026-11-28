@@ -35,7 +35,7 @@ class Circuit:
 
         Raises:
             TypeError: If the ion count has the wrong type.
-            ValueError: If the ion count or dependency structure is invalid.
+            ValueError: If the ion count, a gate's ions, or the dependency structure is invalid.
         """
         gates = tuple(self.gates)
         predecessors = tuple(frozenset(values) for values in self.predecessors)
@@ -57,6 +57,9 @@ class Circuit:
         barrier_ions = (ion for gate_barriers in barriers for targets in gate_barriers for ion in targets)
         if any(ion < 0 or ion >= self.num_ions for ion in barrier_ions):
             msg = "barriers must reference circuit ions"
+            raise ValueError(msg)
+        if any(ion >= self.num_ions for gate in gates for ion in gate.ions):
+            msg = "gates must act on circuit ions"
             raise ValueError(msg)
         if tuple(gate.gate_id for gate in gates) != tuple(range(len(gates))):
             msg = "gates must have stable circuit-order gate_id values"

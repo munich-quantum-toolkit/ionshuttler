@@ -58,9 +58,24 @@ result = LinearCompiler(architecture).compile(
 ```
 
 The positions must be distinct, lie within the architecture, and match the
-number of circuit qubits. See also the
-{doc}`hardware model overview <hardware_models>` for further details on the
-hardware abstraction.
+number of circuit qubits. Pass `target_placement` in the same form to move the
+ions to given sites after the last gate. On a chain, the ions take the route
+with the fewest adjacent exchanges. On a ring, the compiler selects the
+lowest-cost route among the valid ring cuts, as described for the
+{ref}`permutation strategy <linear-permutation-strategy>`; this route need not
+have the fewest exchanges over the whole ring. Each move starts as soon as its
+ions and its target site are free:
+
+```{code-cell} ipython3
+result = LinearCompiler(architecture).compile(
+    circuit,
+    initial_placement=[0, 4],
+    target_placement=[4, 0],
+)
+```
+
+See also the {doc}`hardware model overview <hardware_models>` for further
+details on the hardware abstraction.
 
 | Compile option      | User-visible effect                                                                                                               |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
@@ -102,10 +117,13 @@ The default gate set is `rx`, `ry`, `rz`, and `rzz`, a common trapped-ion gate
 set. The implemented `rxx` and `ryy` gates may be enabled through the
 architecture's `supported_action_types`. Rotation parameters must be numeric
 when compilation begins. Barriers and final measurements do not become scheduled
-hardware operations. A barrier orders gates: a gate after the barrier on one of
-its qubits starts only after every earlier gate on the barrier's qubits has
-finished. Unsupported or malformed circuits raise an exception before schedule
-search starts.
+hardware operations. A measurement followed by a gate raises an exception.
+Scheduled measurements and resets come from
+{doc}`dynamic programs <dynamic_programs>`, which pass prebuilt circuits to the
+compiler. A barrier orders gates: a gate after the barrier on one of its qubits
+starts only after every earlier gate on the barrier's qubits has finished.
+Unsupported or malformed circuits raise an exception before schedule search
+starts.
 
 ## Describe the architecture
 
@@ -208,12 +226,13 @@ The configuration type selects one of two scheduling strategies:
 Both configuration types inherit these settings from
 {py:class}`~mqt.ionshuttler.linear.LinearCompilerConfig`:
 
-| Shared setting         | User-visible effect                                                                                                                                                                             |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `action_types`         | Operations that the compiler may use. `None` uses every operation supported by the architecture.                                                                                                |
-| `max_compile_time`     | Wall-clock budget in seconds for the complete compilation, including pre-partitioning. A finite value prevents unexpectedly long runs; `None` removes the time limit. Defaults to 1800 seconds. |
-| `pre_partition`        | Assigns gates to preferred processing zones. Search disables it by default; the permutation strategy requires it.                                                                               |
-| `pre_partition_config` | Optional fine-grained tabu settings used when pre-partitioning runs. `None` uses the partitioner's defaults.                                                                                    |
+| Shared setting         | User-visible effect                                                                                                                                                                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `action_types`         | Operations that the compiler may use. `None` uses every operation supported by the architecture.                                                                                                                                                  |
+| `dependency_mode`      | `DependencyMode.CONSERVATIVE`, the default, keeps the dependencies from the circuit parser. `DependencyMode.COMMUTATION_AWARE` lets commuting gates change order. The Grid compiler has the same setting with `COMMUTATION_AWARE` as its default. |
+| `max_compile_time`     | Wall-clock budget in seconds for the complete compilation, including pre-partitioning. A finite value prevents unexpectedly long runs; `None` removes the time limit. Defaults to 1800 seconds.                                                   |
+| `pre_partition`        | Assigns gates to preferred processing zones. `SearchConfig` disables it by default; `PermutationConfig` enables it by default.                                                                                                                    |
+| `pre_partition_config` | Optional fine-grained tabu settings used when pre-partitioning runs. `None` uses the partitioner's defaults.                                                                                                                                      |
 
 (linear-permutation-strategy)=
 
@@ -221,9 +240,11 @@ Both configuration types inherit these settings from
 
 The permutation strategy works as follows:
 
-1. It uses
+1. By default, it uses
    {py:func}`~mqt.ionshuttler.partitioning.compute_fine_grained_gate_partition`
-   to assign each gate to a preferred processing zone.
+   to assign each gate to a preferred processing zone. With
+   `pre_partition=False`, it sends the ions of each gate to the nearest
+   processing zone with room instead.
 2. It groups ready gates that fit one ion placement.
 3. It analytically computes a target placement and a sequence of connected-site
    exchanges from the current placement.
@@ -240,9 +261,6 @@ a processing zone. The compiler treats the remaining site order as a chain and
 selects the lowest-cost resulting route. This route is the best among those
 evaluated cuts, but it is not guaranteed to be the global minimum over all ring
 routes. The complete schedule is heuristic for both topologies.
-
-The permutation strategy always assigns preferred processing zones before
-scheduling.
 
 ```{code-cell} ipython3
 from mqt.ionshuttler.linear import PermutationConfig

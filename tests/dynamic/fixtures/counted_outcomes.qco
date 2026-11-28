@@ -1,0 +1,281 @@
+module attributes {mqt.layout = {initial = array<i64: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18>, input_count = 19 : i64, sites = array<i64: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18>}, mqt.target_env = #mqt.target_env<compilation_target = <sites = [<id = 0>, <id = 1>, <id = 2>, <id = 3>, <id = 4>, <id = 5>, <id = 6>, <id = 7>, <id = 8>, <id = 9>, <id = 10>, <id = 11>, <id = 12>, <id = 13>, <id = 14>, <id = 15>, <id = 16>, <id = 17>, <id = 18>], connectivity = all_to_all, couplings = [], native_operations = explicit, operations = [<name = "rx", arity = <kind = fixed, value = 1>, num_parameters = 1, site_tuples = []>, <name = "ry", arity = <kind = fixed, value = 1>, num_parameters = 1, site_tuples = []>, <name = "rz", arity = <kind = fixed, value = 1>, num_parameters = 1, site_tuples = []>, <name = "rxx", arity = <kind = fixed, value = 2>, num_parameters = 1, site_tuples = []>, <name = "measure", arity = <kind = fixed, value = 1>, num_parameters = 0, site_tuples = []>, <name = "reset", arity = <kind = fixed, value = 1>, num_parameters = 0, site_tuples = []>]>, payload_specification = <format = <id = "qco", version = "1.0.0", profile = "", encoding = text>, capabilities = [<id = "forward-branching", value = 0, constraints = []>, <id = "counted-iteration", value = 0, constraints = []>, <id = "conditional-loop", value = 0, constraints = []>], optional_capabilities_known = false>>} {
+  func.func @main() -> (!cbit.reg<9>, !cbit.reg<9>, i8) attributes {mqt.entry_point} {
+    %cst = arith.constant -3.1415926535897931 : f64
+    %cst_0 = arith.constant -1.5707963267948966 : f64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    %c4 = arith.constant 4 : index
+    %c5 = arith.constant 5 : index
+    %c6 = arith.constant 6 : index
+    %c7 = arith.constant 7 : index
+    %c8 = arith.constant 8 : index
+    %c1_i64 = arith.constant 1 : i64
+    %c9_i64 = arith.constant 9 : i64
+    %c3_i64 = arith.constant 3 : i64
+    %c2_i64 = arith.constant 2 : i64
+    %q = qco.static 0 : !qco.qubit
+    %q_1 = qco.static 1 : !qco.qubit
+    %q_2 = qco.static 2 : !qco.qubit
+    %q_3 = qco.static 3 : !qco.qubit
+    %q_4 = qco.static 4 : !qco.qubit
+    %q_5 = qco.static 5 : !qco.qubit
+    %q_6 = qco.static 6 : !qco.qubit
+    %q_7 = qco.static 7 : !qco.qubit
+    %q_8 = qco.static 8 : !qco.qubit
+    %q_9 = qco.static 9 : !qco.qubit
+    %q_10 = qco.static 10 : !qco.qubit
+    %q_11 = qco.static 11 : !qco.qubit
+    %q_12 = qco.static 12 : !qco.qubit
+    %q_13 = qco.static 13 : !qco.qubit
+    %q_14 = qco.static 14 : !qco.qubit
+    %q_15 = qco.static 15 : !qco.qubit
+    %q_16 = qco.static 16 : !qco.qubit
+    %q_17 = qco.static 17 : !qco.qubit
+    %q_18 = qco.static 18 : !qco.qubit
+    %a = cbit.alloc(#cbit.init<undefined>) {mqt.register_name = "a"} : !cbit.reg<9>
+    %b = cbit.alloc(#cbit.init<undefined>) {mqt.register_name = "b"} : !cbit.reg<9>
+    %q_19, %b_20 = qco.measure %q : !qco.qubit
+    cbit.store %b_20, %a[%c0] : !cbit.reg<9>
+    %q_21, %b_22 = qco.measure %q_1 : !qco.qubit
+    cbit.store %b_22, %a[%c1] : !cbit.reg<9>
+    %q_23, %b_24 = qco.measure %q_2 : !qco.qubit
+    cbit.store %b_24, %a[%c2] : !cbit.reg<9>
+    %q_25, %b_26 = qco.measure %q_3 : !qco.qubit
+    cbit.store %b_26, %a[%c3] : !cbit.reg<9>
+    %q_27, %b_28 = qco.measure %q_4 : !qco.qubit
+    cbit.store %b_28, %a[%c4] : !cbit.reg<9>
+    %q_29, %b_30 = qco.measure %q_5 : !qco.qubit
+    cbit.store %b_30, %a[%c5] : !cbit.reg<9>
+    %q_31, %b_32 = qco.measure %q_6 : !qco.qubit
+    cbit.store %b_32, %a[%c6] : !cbit.reg<9>
+    %q_33, %b_34 = qco.measure %q_7 : !qco.qubit
+    cbit.store %b_34, %a[%c7] : !cbit.reg<9>
+    %q_35, %b_36 = qco.measure %q_8 : !qco.qubit
+    cbit.store %b_36, %a[%c8] : !cbit.reg<9>
+    %q_37, %b_38 = qco.measure %q_9 : !qco.qubit
+    cbit.store %b_38, %b[%c0] : !cbit.reg<9>
+    %q_39, %b_40 = qco.measure %q_10 : !qco.qubit
+    cbit.store %b_40, %b[%c1] : !cbit.reg<9>
+    %q_41, %b_42 = qco.measure %q_11 : !qco.qubit
+    cbit.store %b_42, %b[%c2] : !cbit.reg<9>
+    %q_43, %b_44 = qco.measure %q_12 : !qco.qubit
+    cbit.store %b_44, %b[%c3] : !cbit.reg<9>
+    %q_45, %b_46 = qco.measure %q_13 : !qco.qubit
+    cbit.store %b_46, %b[%c4] : !cbit.reg<9>
+    %q_47, %b_48 = qco.measure %q_14 : !qco.qubit
+    cbit.store %b_48, %b[%c5] : !cbit.reg<9>
+    %q_49, %b_50 = qco.measure %q_15 : !qco.qubit
+    cbit.store %b_50, %b[%c6] : !cbit.reg<9>
+    %q_51, %b_52 = qco.measure %q_16 : !qco.qubit
+    cbit.store %b_52, %b[%c7] : !cbit.reg<9>
+    %q_53, %b_54 = qco.measure %q_17 : !qco.qubit
+    cbit.store %b_54, %b[%c8] : !cbit.reg<9>
+    %0 = arith.extui %b_20 : i1 to i8
+    %b_55 = cbit.load %a[%c1] : !cbit.reg<9>
+    %1 = scf.if %b_55 -> (i8) {
+      %23 = arith.extui %b_20 : i1 to i64
+      %24 = arith.addi %23, %c1_i64 : i64
+      %25 = arith.trunci %24 : i64 to i8
+      scf.yield %25 : i8
+    } else {
+      scf.yield %0 : i8
+    }
+    %b_56 = cbit.load %a[%c2] : !cbit.reg<9>
+    %2 = scf.if %b_56 -> (i8) {
+      %23 = arith.extsi %1 : i8 to i64
+      %24 = arith.addi %23, %c1_i64 : i64
+      %25 = arith.trunci %24 : i64 to i8
+      scf.yield %25 : i8
+    } else {
+      scf.yield %1 : i8
+    }
+    %b_57 = cbit.load %a[%c3] : !cbit.reg<9>
+    %3 = scf.if %b_57 -> (i8) {
+      %23 = arith.extsi %2 : i8 to i64
+      %24 = arith.addi %23, %c1_i64 : i64
+      %25 = arith.trunci %24 : i64 to i8
+      scf.yield %25 : i8
+    } else {
+      scf.yield %2 : i8
+    }
+    %b_58 = cbit.load %a[%c4] : !cbit.reg<9>
+    %4 = scf.if %b_58 -> (i8) {
+      %23 = arith.extsi %3 : i8 to i64
+      %24 = arith.addi %23, %c1_i64 : i64
+      %25 = arith.trunci %24 : i64 to i8
+      scf.yield %25 : i8
+    } else {
+      scf.yield %3 : i8
+    }
+    %b_59 = cbit.load %a[%c5] : !cbit.reg<9>
+    %5 = scf.if %b_59 -> (i8) {
+      %23 = arith.extsi %4 : i8 to i64
+      %24 = arith.addi %23, %c1_i64 : i64
+      %25 = arith.trunci %24 : i64 to i8
+      scf.yield %25 : i8
+    } else {
+      scf.yield %4 : i8
+    }
+    %b_60 = cbit.load %a[%c6] : !cbit.reg<9>
+    %6 = scf.if %b_60 -> (i8) {
+      %23 = arith.extsi %5 : i8 to i64
+      %24 = arith.addi %23, %c1_i64 : i64
+      %25 = arith.trunci %24 : i64 to i8
+      scf.yield %25 : i8
+    } else {
+      scf.yield %5 : i8
+    }
+    %b_61 = cbit.load %a[%c7] : !cbit.reg<9>
+    %7 = scf.if %b_61 -> (i8) {
+      %23 = arith.extsi %6 : i8 to i64
+      %24 = arith.addi %23, %c1_i64 : i64
+      %25 = arith.trunci %24 : i64 to i8
+      scf.yield %25 : i8
+    } else {
+      scf.yield %6 : i8
+    }
+    %b_62 = cbit.load %a[%c8] : !cbit.reg<9>
+    %8 = scf.if %b_62 -> (i8) {
+      %23 = arith.extsi %7 : i8 to i64
+      %24 = arith.addi %23, %c1_i64 : i64
+      %25 = arith.trunci %24 : i64 to i8
+      scf.yield %25 : i8
+    } else {
+      scf.yield %7 : i8
+    }
+    %b_63 = cbit.load %b[%c0] : !cbit.reg<9>
+    %9 = scf.if %b_63 -> (i8) {
+      %23 = arith.extsi %8 : i8 to i64
+      %24 = arith.addi %23, %c1_i64 : i64
+      %25 = arith.trunci %24 : i64 to i8
+      scf.yield %25 : i8
+    } else {
+      scf.yield %8 : i8
+    }
+    %b_64 = cbit.load %b[%c1] : !cbit.reg<9>
+    %10 = scf.if %b_64 -> (i8) {
+      %23 = arith.extsi %9 : i8 to i64
+      %24 = arith.addi %23, %c1_i64 : i64
+      %25 = arith.trunci %24 : i64 to i8
+      scf.yield %25 : i8
+    } else {
+      scf.yield %9 : i8
+    }
+    %b_65 = cbit.load %b[%c2] : !cbit.reg<9>
+    %11 = scf.if %b_65 -> (i8) {
+      %23 = arith.extsi %10 : i8 to i64
+      %24 = arith.addi %23, %c1_i64 : i64
+      %25 = arith.trunci %24 : i64 to i8
+      scf.yield %25 : i8
+    } else {
+      scf.yield %10 : i8
+    }
+    %b_66 = cbit.load %b[%c3] : !cbit.reg<9>
+    %12 = scf.if %b_66 -> (i8) {
+      %23 = arith.extsi %11 : i8 to i64
+      %24 = arith.addi %23, %c1_i64 : i64
+      %25 = arith.trunci %24 : i64 to i8
+      scf.yield %25 : i8
+    } else {
+      scf.yield %11 : i8
+    }
+    %b_67 = cbit.load %b[%c4] : !cbit.reg<9>
+    %13 = scf.if %b_67 -> (i8) {
+      %23 = arith.extsi %12 : i8 to i64
+      %24 = arith.addi %23, %c1_i64 : i64
+      %25 = arith.trunci %24 : i64 to i8
+      scf.yield %25 : i8
+    } else {
+      scf.yield %12 : i8
+    }
+    %b_68 = cbit.load %b[%c5] : !cbit.reg<9>
+    %14 = scf.if %b_68 -> (i8) {
+      %23 = arith.extsi %13 : i8 to i64
+      %24 = arith.addi %23, %c1_i64 : i64
+      %25 = arith.trunci %24 : i64 to i8
+      scf.yield %25 : i8
+    } else {
+      scf.yield %13 : i8
+    }
+    %b_69 = cbit.load %b[%c6] : !cbit.reg<9>
+    %15 = scf.if %b_69 -> (i8) {
+      %23 = arith.extsi %14 : i8 to i64
+      %24 = arith.addi %23, %c1_i64 : i64
+      %25 = arith.trunci %24 : i64 to i8
+      scf.yield %25 : i8
+    } else {
+      scf.yield %14 : i8
+    }
+    %b_70 = cbit.load %b[%c7] : !cbit.reg<9>
+    %16 = scf.if %b_70 -> (i8) {
+      %23 = arith.extsi %15 : i8 to i64
+      %24 = arith.addi %23, %c1_i64 : i64
+      %25 = arith.trunci %24 : i64 to i8
+      scf.yield %25 : i8
+    } else {
+      scf.yield %15 : i8
+    }
+    %b_71 = cbit.load %b[%c8] : !cbit.reg<9>
+    %17 = scf.if %b_71 -> (i8) {
+      %23 = arith.extsi %16 : i8 to i64
+      %24 = arith.addi %23, %c1_i64 : i64
+      %25 = arith.trunci %24 : i64 to i8
+      scf.yield %25 : i8
+    } else {
+      scf.yield %16 : i8
+    }
+    %18 = arith.extsi %17 : i8 to i64
+    %19 = arith.cmpi sge, %18, %c9_i64 : i64
+    qco.sink %q_19 : !qco.qubit
+    qco.sink %q_21 : !qco.qubit
+    qco.sink %q_23 : !qco.qubit
+    qco.sink %q_25 : !qco.qubit
+    qco.sink %q_27 : !qco.qubit
+    qco.sink %q_29 : !qco.qubit
+    qco.sink %q_31 : !qco.qubit
+    qco.sink %q_33 : !qco.qubit
+    qco.sink %q_35 : !qco.qubit
+    qco.sink %q_37 : !qco.qubit
+    qco.sink %q_39 : !qco.qubit
+    qco.sink %q_41 : !qco.qubit
+    qco.sink %q_43 : !qco.qubit
+    qco.sink %q_45 : !qco.qubit
+    qco.sink %q_47 : !qco.qubit
+    qco.sink %q_49 : !qco.qubit
+    qco.sink %q_51 : !qco.qubit
+    qco.sink %q_53 : !qco.qubit
+    %linearResults = qco.if %19 args(%q_75 = %q_18) -> (!qco.qubit) {
+      %q_76 = qco.rz(%cst_0) %q_75 : !qco.qubit
+      %q_77 = qco.rx(%cst) %q_76 : !qco.qubit
+      %q_78 = qco.rz(%cst_0) %q_77 : !qco.qubit
+      qco.yield %q_78 : !qco.qubit
+    } else args(%q_75 = %q_18) {
+      qco.yield %q_75 : !qco.qubit
+    }
+    %val = cbit.read %a : !cbit.reg<9> -> i9
+    %val_72 = cbit.read %b : !cbit.reg<9> -> i9
+    %20 = arith.cmpi eq, %val, %val_72 : i9
+    %linearResults_73 = qco.if %20 args(%q_75 = %linearResults) -> (!qco.qubit) {
+      %q_76 = qco.rz(%cst_0) %q_75 : !qco.qubit
+      %q_77 = qco.rx(%cst) %q_76 : !qco.qubit
+      %q_78 = qco.rz(%cst_0) %q_77 : !qco.qubit
+      qco.yield %q_78 : !qco.qubit
+    } else args(%q_75 = %linearResults) {
+      qco.yield %q_75 : !qco.qubit
+    }
+    %21 = arith.subi %18, %c3_i64 : i64
+    %22 = arith.cmpi slt, %21, %c2_i64 : i64
+    %linearResults_74 = qco.if %22 args(%q_75 = %linearResults_73) -> (!qco.qubit) {
+      %q_76 = qco.rz(%cst_0) %q_75 : !qco.qubit
+      %q_77 = qco.rx(%cst) %q_76 : !qco.qubit
+      %q_78 = qco.rz(%cst_0) %q_77 : !qco.qubit
+      qco.yield %q_78 : !qco.qubit
+    } else args(%q_75 = %linearResults_73) {
+      qco.yield %q_75 : !qco.qubit
+    }
+    qco.sink %linearResults_74 : !qco.qubit
+    return %a, %b, %17 : !cbit.reg<9>, !cbit.reg<9>, i8
+  }
+}

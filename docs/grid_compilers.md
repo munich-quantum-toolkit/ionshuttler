@@ -58,6 +58,19 @@ upcoming gates, routes several ions concurrently, and uses cycles to clear
 blocked paths. Independent gates and transport actions can overlap when they use
 different resources.
 
+Transport consists of junction moves, cycles of junction moves, and
+rearrangements. A {py:class}`~mqt.ionshuttler.grid.Rearrangement` reorders
+neighboring ions inside an ordered segment. It takes the `swap` duration of
+{py:class}`~mqt.ionshuttler.grid.TransportTiming` once per layer of neighbor
+swaps, counted as in the
+{ref}`permutation-based Linear compiler <linear-permutation-strategy>`. It
+occupies only the ions that it reorders: an ion that enters the segment
+meanwhile joins at the segment end it enters, outside the reordered ions. Remove
+`Rearrangement` from the architecture's `supported_action_types` to compile
+without it. Each segment supports rearrangement by default; set the segment's
+`supported_action_types` to an empty tuple to disable it only on that segment.
+Use `segment.supports(Rearrangement)` to query the local capability.
+
 By default, the compiler also:
 
 - uses commutation-aware circuit dependencies;
@@ -66,11 +79,37 @@ By default, the compiler also:
   processing-zone segment, and prioritizes the ions used by those gates.
 
 Set `pre_partition=False` in
-{py:meth}`~mqt.ionshuttler.grid.compiler.GridCompiler.compile` to select
-processing zones while scheduling. Use `gate_to_processing_zone` to assign
+{py:class}`~mqt.ionshuttler.grid.config.GridCompilerConfig` to select processing
+zones while scheduling. Use `gate_to_processing_zone` in
+{py:meth}`~mqt.ionshuttler.grid.compiler.GridCompiler.compile` to assign
 individual gate IDs to processing-zone IDs explicitly. An explicit mapping
-replaces pre-partitioning, even when `pre_partition=True`. Unassigned gates
-select a processing zone while scheduling.
+replaces pre-partitioning. Unassigned gates select a processing zone while
+scheduling.
+
+Use `target_placement` to request a final placement after all gates. The mapping
+uses the same format as `initial_placement`. A target that contains every ion is
+exact, and omitted segments are empty; in ordered segments, the ion order is
+part of the target. A target that contains a subset constrains only those ions;
+all other ions and segments remain unconstrained. Both strategies reach the
+target with the same search after the last gate, and independent moves run at
+the same time. A circuit without gates therefore only moves ions into the
+target.
+
+```{code-cell} ipython3
+result = GridCompiler(architecture).compile(
+    circuit,
+    initial_placement={"memory": (0, 1)},
+    target_placement={"memory": (0, 1)},
+)
+```
+
+```{code-cell} ipython3
+result = GridCompiler(architecture).compile(
+    circuit,
+    initial_placement={"memory": (0, 1)},
+    target_placement={"processing": (0,)},
+)
+```
 
 ### Configuration
 
@@ -81,9 +120,11 @@ compiler settings:
   default and suits larger inputs.
 - {py:attr}`~mqt.ionshuttler.grid.config.GridCompilerStrategy.BREADTH_FIRST`
   performs bounded routing search and is intended for small architectures.
-- {py:attr}`~mqt.ionshuttler.grid.config.GridDependencyMode.CONSERVATIVE`
+- `dependency_mode` set to
+  {py:attr}`~mqt.ionshuttler.core.dependencies.DependencyMode.CONSERVATIVE`
   preserves the dependencies produced by the shared circuit parser instead of
-  reordering commuting gates.
+  reordering commuting gates. The Linear compiler has the same setting with
+  `CONSERVATIVE` as its default.
 - {py:attr}`~mqt.ionshuttler.grid.config.GridCompilerConfig.allowed_junction_crossings`
   can restrict routing to selected directed segment pairs without changing the
   hardware topology.
@@ -103,9 +144,8 @@ result = GridCompiler(architecture, config).compile(circuit)
 
 ### Model limits
 
-- The Grid model has no segment-reordering action or reordering cost.
-  `UNORDERED` segments leave their internal ion order unspecified, so the Grid
-  model permits reordering without a separate action or duration.
+- `UNORDERED` segments leave their internal ion order unspecified, so the Grid
+  model permits reordering there without a separate action or duration.
 - The compiler uses bounded heuristics and does not guarantee a minimum
   makespan. A failed compilation does not prove that the input is infeasible.
 - Grid timing does not include any transport or reordering that a future

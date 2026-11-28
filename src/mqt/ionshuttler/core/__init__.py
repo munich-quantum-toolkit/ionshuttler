@@ -8,7 +8,9 @@
 """Shared compiler value types and contracts."""
 
 from mqt.ionshuttler.core.actions import Action
-from mqt.ionshuttler.core.gates import GateAction, GateTiming, GlobalGate, Rx, Rxx, Ry, Ryy, Rz, Rzz
+from mqt.ionshuttler.core.compiler import Compiler
+from mqt.ionshuttler.core.dependencies import DependencyMode
+from mqt.ionshuttler.core.gates import GateAction, GateTiming, GlobalGate, Measure, Reset, Rx, Rxx, Ry, Ryy, Rz, Rzz
 from mqt.ionshuttler.core.result import CompilationResult, CompilationStatus
 from mqt.ionshuttler.core.schedule import Schedule, ScheduledAction
 
@@ -16,9 +18,13 @@ __all__ = [
     "Action",
     "CompilationResult",
     "CompilationStatus",
+    "Compiler",
+    "DependencyMode",
     "GateAction",
     "GateTiming",
     "GlobalGate",
+    "Measure",
+    "Reset",
     "Rx",
     "Rxx",
     "Ry",

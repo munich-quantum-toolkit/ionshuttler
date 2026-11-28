@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from mqt.ionshuttler.core.actions import Action
+from mqt.ionshuttler.core.dependencies import DependencyMode
 
 if TYPE_CHECKING:
     from mqt.ionshuttler.linear.cost import HeuristicFn
@@ -26,6 +27,8 @@ class LinearCompilerConfig(ABC):
 
     ``action_types`` limits the compiler to a subset of the operations
     supported by the architecture. ``None`` uses every supported operation.
+    ``dependency_mode`` controls whether commuting gates can change order; by
+    default, the compiler keeps the circuit order.
     ``max_compile_time`` bounds the complete compilation in seconds; ``None``
     removes the limit. ``pre_partition`` toggles a pre-partitioning step that
     assigns gates to preferred processing zones. ``pre_partition_config``
@@ -36,6 +39,7 @@ class LinearCompilerConfig(ABC):
     """
 
     action_types: tuple[type[Action], ...] | None = None
+    dependency_mode: DependencyMode = DependencyMode.CONSERVATIVE
     max_compile_time: float | None = 1800.0
     pre_partition: bool = False
     pre_partition_config: FineGrainedTabuConfig | None = None
@@ -45,10 +49,13 @@ class LinearCompilerConfig(ABC):
         """Validate the shared settings.
 
         Raises:
-            TypeError: If an action type is invalid.
+            TypeError: If an action type or the dependency mode is invalid.
             ValueError: If the time limit is invalid or an action type is repeated.
         """
         object.__setattr__(self, "action_types", _normalize_action_types(self.action_types))
+        if not isinstance(self.dependency_mode, DependencyMode):
+            msg = "dependency_mode must be a DependencyMode"
+            raise TypeError(msg)
         _validate_compile_time(self.max_compile_time)
         if not isinstance(self.pre_partition, bool):
             msg = "pre_partition must be a boolean"
@@ -84,7 +91,7 @@ class SearchConfig(LinearCompilerConfig):
         """Ensure all search limits are meaningful and mutually consistent.
 
         Raises:
-            TypeError: If a Boolean option or action type is invalid.
+            TypeError: If a Boolean option, an action type, or the dependency mode is invalid.
             ValueError: If a bound is invalid or an action type is repeated.
         """
         super().__post_init__()
@@ -114,8 +121,9 @@ class SearchConfig(LinearCompilerConfig):
 class PermutationConfig(LinearCompilerConfig):
     """Configuration of the permutation-based strategy.
 
-    This strategy requires ``pre_partition=True`` because it constructs each
-    target placement from preferred gate zones.
+    By default, this strategy constructs each target placement from preferred
+    gate zones. With ``pre_partition=False``, it sends the ions of each gate to
+    the nearest processing zone with room instead.
 
     ``lookahead_gates`` bounds how many upcoming gates the compiler inspects
     when it fills one group of gates. A larger value can fill groups better but
@@ -124,7 +132,7 @@ class PermutationConfig(LinearCompilerConfig):
     diagnostics. Use it to inspect the compiler's decisions; it costs memory.
     """
 
-    pre_partition: Literal[True] = True
+    pre_partition: bool = True
     lookahead_gates: int = 32
     record_planning_trace: bool = False
 
@@ -132,13 +140,9 @@ class PermutationConfig(LinearCompilerConfig):
         """Validate the permutation settings.
 
         Raises:
-            TypeError: If a Boolean option or action type is invalid.
-            ValueError: If pre-partitioning is disabled.
+            TypeError: If a Boolean option, an action type, or the dependency mode is invalid.
         """
         super().__post_init__()
-        if not self.pre_partition:
-            msg = "PermutationConfig requires pre_partition=True"
-            raise ValueError(msg)
         _require_integer_at_least(self.lookahead_gates, "lookahead_gates", minimum=1)
         if not isinstance(self.record_planning_trace, bool):
             msg = "record_planning_trace must be a boolean"
