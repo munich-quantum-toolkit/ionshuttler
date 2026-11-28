@@ -1,4 +1,6 @@
-// One round of flagged Steane-code error correction (Chao and Reichardt, arXiv:1705.02329).
+// Flagged syndrome extraction for the Steane code (Chao and Reichardt, arXiv:1705.02329).
+// If a flagged stabilizer measurement or its flag gives 1, the program measures all six stabilizers without flags.
+// It does not decode the syndrome or apply a correction.
 OPENQASM 3.0;
 include "stdgates.inc";
 qubit[9] q;

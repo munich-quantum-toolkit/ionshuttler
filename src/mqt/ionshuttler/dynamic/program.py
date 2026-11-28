@@ -31,7 +31,9 @@ OutcomeKey: TypeAlias = "int | tuple[int, ...]"
 
 _OPERATIONS = frozenset({"measured", "always", "never", "not", "all", "any", "odd"})
 _SYMBOLS = {"all": " & ", "any": " | ", "odd": " ^ "}
+# A condition with more parts, or with a longer expression for one part, is shown as a summary.
 _LONGEST_SHOWN_CONDITION = 40
+_LONGEST_SHOWN_EXPRESSION = 400
 
 # One part of a condition: its operation, its outcome number (-1 if none),
 # and the positions of the parts it combines.
@@ -232,8 +234,9 @@ class Condition:
     def __repr__(self) -> str:
         """Return the condition as an expression, or a summary of a long condition."""
         parts = self._part_list()
+        summary = f"Condition(<{len(parts)} parts reading {len(self.outcomes)} outcomes>)"
         if len(parts) > _LONGEST_SHOWN_CONDITION:
-            return f"Condition(<{len(parts)} parts reading {len(self.outcomes)} outcomes>)"
+            return summary
         texts: list[str] = []
         for operation, outcome, operands in parts:
             if operation == "measured":
@@ -244,6 +247,9 @@ class Condition:
                 texts.append(f"~{texts[operands[0]]}")
             else:
                 texts.append("(" + _SYMBOLS[operation].join(texts[position] for position in operands) + ")")
+            # Shared parts appear once per use in the expression, so a few parts can give a very long text.
+            if len(texts[-1]) > _LONGEST_SHOWN_EXPRESSION:
+                return summary
         return f"Condition({texts[-1]})"
 
     def _part_list(self) -> tuple[_Part, ...]:
@@ -433,7 +439,11 @@ class Program:
             yield from circuit.gates
 
     def path(self, values: Mapping[OutcomeKey, int]) -> tuple[Circuit, ...]:
-        """Return the circuits that run for the given measurement outcomes, with loops repeated."""
+        """Return the circuits that run for the given measurement outcomes, with loops repeated.
+
+        Raises:
+            ValueError: If a conditional loop repeats forever for these outcomes.
+        """  # ruff: ignore[docstring-extraneous-exception] - The path walk raises ValueError.
         circuits: list[Circuit] = []
 
         def collect(step: object, _iterations: tuple[int, ...]) -> None:
@@ -549,6 +559,10 @@ def walk_path(
     ``on_step`` receives each straight-line step with the iterations of its
     enclosing loops. ``on_decision`` receives the outcome keys of each
     condition before it is evaluated.
+
+    Raises:
+        ValueError: If a conditional loop repeats forever, because its repeat
+            condition holds and reads no outcome of the loop body.
     """
 
     def decide(condition: Condition, condition_iterations: tuple[int, ...]) -> bool:
@@ -569,12 +583,17 @@ def walk_path(
                 continue
             assert step.entry is not None
             assert step.repeat is not None
+            # Outcomes measured outside the loop keep their values, so such a repeat condition never changes.
+            reads_body = any(depths.get(outcome, 0) > len(iterations) for outcome in step.repeat.outcomes)
             iteration = 0
             running = decide(step.entry, iterations)
             while running:
                 current = (*iterations, iteration)
                 walk_path(step.steps, values, depths, on_step=on_step, on_decision=on_decision, iterations=current)
                 running = decide(step.repeat, current)
+                if running and not reads_body:
+                    msg = "a conditional loop repeats forever: its repeat condition reads no outcome of its body"
+                    raise ValueError(msg)
                 iteration += 1
         else:
             on_step(step, iterations)
@@ -802,6 +821,9 @@ def _step_from_dict(data: object) -> Step:
         count = mapping.get("count")
         if count is not None and (isinstance(count, bool) or not isinstance(count, int)):
             msg = "loop count must be an integer or null"
+            raise ValueError(msg)
+        if count is None and (entry is None or repeat is None):
+            msg = "a loop without a count needs entry and repeat conditions"
             raise ValueError(msg)
         return Loop(
             steps=tuple(_step_from_dict(item) for item in require_list(mapping, "steps")),

@@ -20,7 +20,7 @@ from mqt.ionshuttler.core.gates import GateAction
 from mqt.ionshuttler.core.result import CompilationStatus
 from mqt.ionshuttler.core.schedule import Schedule
 
-from .._json_utils import require_mapping, require_str
+from .._json_utils import require_mapping, require_number, require_str
 from .program import Branch, Loop, Program
 from .schedule import BranchingSchedule, ScheduledBranch, ScheduledLoop
 
@@ -111,9 +111,10 @@ class ProgramResult:
                     raise ValueError(msg)
                 states = [self.architecture.replay_schedule(step)]
             elif isinstance(step, ScheduledBranch):
-                ends = self._check_connections(step.then_steps, states, f"{label}, then")
-                ends += self._check_connections(step.else_steps, states, f"{label}, else")
-                states = _distinct_states(ends)
+                # A side without steps returns ``states`` itself, so build a new list instead of extending it.
+                then_ends = self._check_connections(step.then_steps, states, f"{label}, then")
+                else_ends = self._check_connections(step.else_steps, states, f"{label}, else")
+                states = _distinct_states([*then_ends, *else_ends])
             else:
                 ends = self._check_connections(step.steps, states, f"{label}, loop")
                 if not all(_same_idle_state(end, state) for end in ends for state in states):
@@ -155,10 +156,7 @@ class ProgramResult:
         if mapping.get("schema") != PROGRAM_RESULT_SCHEMA or mapping.get("version") != PROGRAM_RESULT_VERSION:
             msg = "unsupported program result schema or version"
             raise ValueError(msg)
-        wall_clock_s = mapping.get("wall_clock_s", 0.0)
-        if isinstance(wall_clock_s, bool) or not isinstance(wall_clock_s, int | float):
-            msg = "wall_clock_s must be a number"
-            raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - Malformed JSON uses ValueError.
+        wall_clock_s = require_number(mapping, "wall_clock_s", default=0.0)
         return cls(
             status=CompilationStatus(require_str(mapping, "status")),
             program=Program.from_dict(mapping.get("program")),
@@ -166,7 +164,7 @@ class ProgramResult:
                 mapping.get("schedule"), decode_action=decode_action, decode_state=decode_state
             ),
             architecture=decode_architecture(mapping.get("architecture")),
-            wall_clock_s=float(wall_clock_s),
+            wall_clock_s=wall_clock_s,
             message=require_str(mapping, "message"),
         )
 
@@ -312,8 +310,8 @@ class _ProgramBuilder(Generic[PlacementT]):
                 last = position == len(steps) - 1
                 if isinstance(step, Circuit):
                     result = self.compile_circuit(step, target if last else None)
-                    compiled.append(result.schedule)
                     _raise_if_failed(result, step, f"{where}, step {position}")
+                    compiled.append(result.schedule)
                 else:
                     compiled.append(self.compile_control_step(step, target, f"{where}, step {position}", last=last))
         else:
@@ -329,13 +327,12 @@ class _ProgramBuilder(Generic[PlacementT]):
                 while end < len(steps) and not _contains_loop(steps[end]):
                     end += 1
                 final = end == len(steps)
-                compiled.extend(
-                    self.compile_predicted_path(
-                        steps[position:end],
-                        target if final else None,
-                        f"{where}, step {position}",
-                        free_end=final and target is None,
-                    )
+                self.compile_predicted_path(
+                    steps[position:end],
+                    target if final else None,
+                    f"{where}, step {position}",
+                    free_end=final and target is None,
+                    into=compiled,
                 )
                 position = end
         if target is not None and self.placement != target:
@@ -363,21 +360,24 @@ class _ProgramBuilder(Generic[PlacementT]):
         return self.compile_branch(step, join, where)
 
     def compile_predicted_path(
-        self, steps: tuple[Step, ...], target: PlacementT | None, where: str, *, free_end: bool
-    ) -> list[ScheduleStep]:
-        """Compile loop-free steps along their predicted path.
+        self,
+        steps: tuple[Step, ...],
+        target: PlacementT | None,
+        where: str,
+        *,
+        free_end: bool,
+        into: list[ScheduleStep],
+    ) -> None:
+        """Compile loop-free steps along their predicted path and append each finished step to ``into``.
 
         ``free_end`` means that no step follows and no placement is required
         after ``steps``.
-
-        Returns:
-            The compiled steps.
         """
         if self.placement is None:
             self.compile_circuit(Circuit(self.program.num_ions, (), ()))
         circuits = tuple(self.predicted_circuits(steps))
         cut = self.cut_predicted_path(circuits, target, where) if circuits else []
-        return self.build_predicted(steps, iter(cut), where, free_end=free_end)
+        self.build_predicted(steps, iter(cut), where, free_end=free_end, built=into)
 
     def predicted_circuits(self, steps: tuple[Step, ...]) -> Iterator[Circuit]:
         """Yield the circuits of loop-free steps on their predicted path, in order."""
@@ -472,13 +472,16 @@ class _ProgramBuilder(Generic[PlacementT]):
         where: str,
         *,
         free_end: bool,
+        built: list[ScheduleStep],
     ) -> list[ScheduleStep]:
         """Arrange the cut schedules of the predicted path and compile the other side of each branch.
 
+        Each finished step goes to ``built`` at once, so a later failure keeps
+        the steps before it. A branch goes there after both of its sides.
+
         Returns:
-            The compiled steps.
+            ``built`` with the compiled steps appended.
         """
-        built: list[ScheduleStep] = []
         for position, step in enumerate(steps):
             label = f"{where}, step {position}" if position else where
             last = position == len(steps) - 1
@@ -491,7 +494,7 @@ class _ProgramBuilder(Generic[PlacementT]):
             predicted, other, predicted_then = self.predicted_side(step)
             names = ("then", "else") if predicted_then else ("else", "then")
             predicted_steps = tuple(
-                self.build_predicted(predicted, cut, f"{label}, {names[0]}", free_end=free_end and last)
+                self.build_predicted(predicted, cut, f"{label}, {names[0]}", free_end=free_end and last, built=[])
             )
             after = self.placement
             # The other side ends where the predicted path continues; at the end of the program it ends anywhere.

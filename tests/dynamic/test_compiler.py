@@ -35,6 +35,7 @@ from mqt.ionshuttler.dynamic import (
 from mqt.ionshuttler.grid import (
     CompilationStatus,
     GridArchitecture,
+    GridCompilationResult,
     GridCompiler,
     GridCompilerConfig,
     GridCompilerStrategy,
@@ -55,7 +56,7 @@ from mqt.ionshuttler.linear import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from mqt.ionshuttler.core import Compiler
     from mqt.ionshuttler.linear import LinearCompilationResult
@@ -107,6 +108,20 @@ def test_every_path_of_a_fixture_program_replays(name: str) -> None:
     summaries = result.path_summaries()
     assert [summary.outcomes for summary in summaries] == list(result.program.paths())
     assert all(summary.gates > 0 for summary in summaries)
+    for summary in summaries:
+        flat = result.schedule.schedule_for(summary.outcomes)
+        assert GRID.replay_schedule(flat).time == flat.end_time == summary.duration
+
+
+def test_every_path_through_a_conditional_loop_replays() -> None:
+    """Replay the flat schedule of each path that runs a loop body up to three times."""
+    result = compile_program(_program("repeat_until_success"), GridCompiler(GRID), feedback_delay=1)
+
+    paths = list(result.schedule.paths(max_iterations=3))
+    assert [len(values) for values in paths] == [1, 2, 3]
+    for values in paths:
+        flat = result.schedule.schedule_for(values)
+        assert GRID.replay_schedule(flat).time == flat.end_time
 
 
 def test_flagged_steane_error_correction_compiles_on_every_path() -> None:
@@ -199,7 +214,9 @@ def test_result_round_trips_through_json(tmp_path: Path) -> None:
     ("key", "value", "message"),
     [
         ("version", 0, "unsupported program result schema or version"),
-        ("wall_clock_s", "fast", "wall_clock_s must be a number"),
+        ("wall_clock_s", "fast", "wall_clock_s must be numeric"),
+        ("wall_clock_s", float("inf"), "wall_clock_s must be finite"),
+        ("wall_clock_s", 10**400, "wall_clock_s must be finite"),
     ],
 )
 def test_result_document_rejects_malformed_data(key: str, value: object, message: str) -> None:
@@ -209,6 +226,21 @@ def test_result_document_rejects_malformed_data(key: str, value: object, message
     document[key] = value
 
     with pytest.raises(ValueError, match=message):
+        ProgramResult.from_dict(
+            document,
+            decode_architecture=GridArchitecture.from_dict,
+            decode_action=decode_grid_action,
+            decode_state=GridMachineState.from_dict,
+        )
+
+
+def test_result_document_rejects_a_loop_without_a_way_to_repeat() -> None:
+    """Report a scheduled loop without count and conditions as malformed data."""
+    result = compile_program(_program("counted_loop"), GridCompiler(GRID))
+    document = json.loads(json.dumps(result.to_dict()))
+    document["schedule"]["steps"][0]["count"] = None
+
+    with pytest.raises(ValueError, match="needs entry and repeat conditions"):
         ProgramResult.from_dict(
             document,
             decode_architecture=GridArchitecture.from_dict,
@@ -248,6 +280,93 @@ def test_an_impossible_return_names_the_failing_branch_side() -> None:
     assert result.status is CompilationStatus.FAILED
     assert result.message == "program, step 1, then, step 0: returning to the placement before the branch failed"
     assert len(result.schedule.steps) == 1
+
+
+def test_a_failed_predicted_branch_side_keeps_the_steps_before_it() -> None:
+    """Keep the finished circuit before a branch whose other side cannot return along the predicted path."""
+    first = Segment("first")
+    second = Segment("second")
+    processor = Segment("processor", capacity=2, processing_zones=(ProcessingZone("pz"),))
+    architecture = GridArchitecture(
+        (first, second, processor), (Junction("j0", (first.end, second.end, processor.start)),)
+    )
+    one_way = GridCompilerConfig(
+        allowed_junction_crossings=frozenset({("first", "processor"), ("second", "processor")})
+    )
+    prefix = Circuit(num_ions=2, gates=(Measure(ion=0, outcome=0, gate_id=0),), predecessors=(frozenset(),))
+    correction = Circuit(num_ions=2, gates=(Rx(ion=1, theta=0.5, gate_id=0),), predecessors=(frozenset(),))
+    suffix = Circuit(num_ions=2, gates=(Rx(ion=0, theta=0.5, gate_id=0),), predecessors=(frozenset(),))
+    program = Program(2, (prefix, Branch(Condition.measured(0), (correction,)), suffix))
+
+    result = compile_program(
+        program,
+        GridCompiler(architecture, one_way),
+        initial_placement={"first": (0,), "second": (1,)},
+        predicted_outcome=0,
+    )
+
+    assert result.status is CompilationStatus.FAILED
+    assert len(result.schedule.steps) == 1
+    first_step = result.schedule.steps[0]
+    assert isinstance(first_step, Schedule)
+    assert any(isinstance(action, Measure) for action in first_step.path)
+
+
+class _TimeoutAfterFirstCircuit:
+    """Compile the first circuit with gates and report a timeout for every later one, as a slow backend would."""
+
+    def __init__(self, compiler: GridCompiler) -> None:
+        self.compiler = compiler
+        self.circuits_with_gates = 0
+
+    @property
+    def architecture(self) -> GridArchitecture:
+        return self.compiler.architecture
+
+    def compile(
+        self,
+        circuit: Circuit,
+        *,
+        initial_placement: Mapping[str, Sequence[int]] | None = None,
+        target_placement: Mapping[str, Sequence[int]] | None = None,
+    ) -> GridCompilationResult:
+        result = self.compiler.compile(circuit, initial_placement=initial_placement, target_placement=target_placement)
+        if not circuit.gates:
+            return result
+        self.circuits_with_gates += 1
+        return result if self.circuits_with_gates == 1 else replace(result, status=CompilationStatus.TIMEOUT)
+
+
+def test_a_failed_circuit_leaves_only_the_finished_steps() -> None:
+    """Return the schedules before a failed circuit, but not the schedule of the failed circuit."""
+    first = Circuit(num_ions=2, gates=(Rx(ion=0, theta=0.5, gate_id=0),), predecessors=(frozenset(),))
+    second = Circuit(num_ions=2, gates=(Rx(ion=1, theta=0.5, gate_id=0),), predecessors=(frozenset(),))
+
+    result = compile_program(Program(2, (first, second)), _TimeoutAfterFirstCircuit(GridCompiler(_two_zone_line())))
+
+    assert result.status is CompilationStatus.FAILED
+    assert result.message.startswith("program, step 1:")
+    assert len(result.schedule.steps) == 1
+
+
+def test_validation_accepts_a_nested_branch_with_an_empty_side() -> None:
+    """Check the else side of a branch against its own entry state when a nested branch has an empty side."""
+    prefix = Circuit(
+        num_ions=2,
+        gates=(Measure(ion=0, outcome=0, gate_id=0), Measure(ion=1, outcome=1, gate_id=1)),
+        predecessors=(frozenset(), frozenset()),
+    )
+    entangle = Circuit(num_ions=2, gates=(Rxx(ion_a=0, ion_b=1, theta=0.5, gate_id=0),), predecessors=(frozenset(),))
+    rotate = Circuit(num_ions=2, gates=(Rx(ion=0, theta=0.5, gate_id=0),), predecessors=(frozenset(),))
+    inner = Branch(Condition.measured(1), (), (entangle,))
+    program = Program(2, (prefix, Branch(Condition.measured(0), (inner,), (rotate,))))
+
+    result = compile_program(
+        program, GridCompiler(_two_zone_line()), initial_placement={"left": (0,), "right": (1,)}, feedback_delay=1
+    )
+
+    assert result.status is CompilationStatus.SUCCESS
+    result.validate()
 
 
 def test_a_final_branch_does_not_return_to_the_placement_before_it() -> None:

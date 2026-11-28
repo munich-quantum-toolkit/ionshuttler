@@ -235,6 +235,9 @@ def _step_from_dict(
             raise ValueError(msg)
         entry = mapping.get("entry")
         repeat = mapping.get("repeat")
+        if count is None and (entry is None or repeat is None):
+            msg = "a loop without a count needs entry and repeat conditions"
+            raise ValueError(msg)
         return ScheduledLoop(
             steps=tuple(_step_from_dict(item, decode_action, decode_state) for item in require_list(mapping, "steps")),
             count=count,

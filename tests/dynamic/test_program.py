@@ -199,6 +199,28 @@ def test_condition_shows_its_expression() -> None:
     assert "reading 50 outcomes" in repr(long)
 
 
+def test_condition_with_few_shared_parts_shows_a_short_summary() -> None:
+    """Show a summary when shared parts would repeat in a very long expression."""
+    condition = Condition.measured(0)
+    for outcome in range(1, 10):
+        condition = (condition & Condition.measured(outcome)) | (condition ^ Condition.measured(outcome))
+
+    parts = condition.to_dict()["parts"]
+    assert isinstance(parts, list)
+    assert len(parts) <= 40
+    assert len(repr(condition)) < 100
+    assert "reading 10 outcomes" in repr(condition)
+
+
+def test_a_conditional_loop_that_cannot_stop_is_reported() -> None:
+    """Report a loop whose repeat condition reads only an outcome from before the loop, instead of running forever."""
+    program = Program(2, (_measure(0, 0), Loop((_rotate(1),), entry=OUTCOME_ZERO_IS_ONE, repeat=OUTCOME_ZERO_IS_ONE)))
+
+    assert program.path({0: 0}) == (_measure(0, 0),)
+    with pytest.raises(ValueError, match="repeats forever"):
+        program.path({0: 1})
+
+
 def test_program_lists_nested_branches_loops_and_conditions() -> None:
     """Find branches, loops, and their conditions at every nesting depth."""
     inner = Branch(Condition.measured(1), (_rotate(0),))
@@ -234,6 +256,7 @@ def _set(document: dict[str, Any], path: tuple[str | int, ...], value: object) -
         (("steps", 0, "predecessors"), [["first"]], "predecessor set must be a list of integers"),
         (("steps", 0, "barriers", 0), 0, "barriers must contain lists of target sets"),
         (("steps", 1, "count"), "2", "loop count must be an integer or null"),
+        (("steps", 1, "count"), None, "needs entry and repeat conditions"),
         (("steps", 1, "type"), "switch", "unknown program step type"),
     ],
 )
