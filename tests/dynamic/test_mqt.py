@@ -11,16 +11,52 @@ from __future__ import annotations
 
 from itertools import product
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
+from mqt.ionshuttler.circuit import Circuit
 from mqt.ionshuttler.core.gates import Measure, Reset, Rx, Rxx, Ry, Rz
-from mqt.ionshuttler.dynamic import Branch, compile_program, parse_program, program_from_qasm
+from mqt.ionshuttler.dynamic import Branch, Loop, compile_program, parse_program, program_from_qasm
 from mqt.ionshuttler.grid import CompilationStatus, GridCompiler, square_grid
+
+if TYPE_CHECKING:
+    from mqt.ionshuttler.dynamic.program import Step
 
 pytest.importorskip("mqt.core.mlir")
 
 FIXTURES = Path(__file__).parent / "fixtures"
+# Synthesis on another platform may round an angle differently in the last digit.
+ANGLE_TOLERANCE = 1e-12
+
+
+def _assert_same_steps(actual: tuple[Step, ...], expected: tuple[Step, ...]) -> None:
+    """Require the same structure, conditions, gates, ions, and dependencies, and angles within the tolerance."""
+    assert len(actual) == len(expected)
+    for got, want in zip(actual, expected, strict=True):
+        assert type(got) is type(want)
+        if isinstance(want, Circuit):
+            assert isinstance(got, Circuit)
+            assert (got.num_ions, got.predecessors, got.barriers) == (want.num_ions, want.predecessors, want.barriers)
+            assert len(got.gates) == len(want.gates)
+            for got_gate, want_gate in zip(got.gates, want.gates, strict=True):
+                assert type(got_gate) is type(want_gate)
+                assert got_gate.ions == want_gate.ions
+                assert getattr(got_gate, "outcome", None) == getattr(want_gate, "outcome", None)
+                for name in want_gate.parameter_names:
+                    assert getattr(got_gate, name) == pytest.approx(
+                        getattr(want_gate, name), rel=0, abs=ANGLE_TOLERANCE
+                    )
+        elif isinstance(want, Branch):
+            assert isinstance(got, Branch)
+            assert got.condition == want.condition
+            _assert_same_steps(got.then_steps, want.then_steps)
+            _assert_same_steps(got.else_steps, want.else_steps)
+        else:
+            assert isinstance(got, Loop)
+            assert isinstance(want, Loop)
+            assert (got.count, got.entry, got.repeat) == (want.count, want.entry, want.repeat)
+            _assert_same_steps(got.steps, want.steps)
 
 
 def test_program_from_qasm_matches_the_stored_qco_fixture() -> None:
@@ -28,7 +64,8 @@ def test_program_from_qasm_matches_the_stored_qco_fixture() -> None:
     from_qasm = program_from_qasm(FIXTURES / "teleportation.qasm")
     stored = parse_program((FIXTURES / "teleportation.qco").read_text(encoding="utf-8"))
 
-    assert from_qasm == stored
+    assert from_qasm.num_ions == stored.num_ions
+    _assert_same_steps(from_qasm.steps, stored.steps)
     assert {type(gate) for gate in from_qasm.gates()} <= {Rx, Ry, Rz, Rxx, Measure, Reset}
 
 

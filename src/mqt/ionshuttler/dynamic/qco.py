@@ -549,6 +549,11 @@ class _Reader:
         steps, close, yielded = self.read_region(index + 1, region)
         if steps or not yielded:
             raise self.error(index, "the condition region of scf.while must only compute its condition")
+        # The reader discards the register writes of this region, so the program would lose them.
+        for line_index in range(index + 1, close):
+            match = _OPERATION.match(self.lines[line_index].strip())
+            if match is not None and match.group("name") in {"cbit.store", "cbit.write"}:
+                raise self.error(line_index, "the condition region of scf.while must not write classical registers")
         decision, *forwarded = yielded
         ions = [region.ions[value] for value in forwarded]
         return self.condition(index, self.value(index, decision, region)), close, ions

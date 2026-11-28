@@ -46,6 +46,7 @@ def test_teleportation_becomes_a_circuit_and_two_branches() -> None:
     correction = z_correction.then_steps[0]
     assert isinstance(correction, Circuit)
     # MQT places q[2] on site 1; the ion number follows the program qubit.
+    assert correction.gates
     assert all(gate.ions == (2,) for gate in correction.gates)
 
 
@@ -59,6 +60,7 @@ def test_ions_follow_sites_without_a_recorded_placement() -> None:
     assert isinstance(z_correction, Branch)
     correction = z_correction.then_steps[0]
     assert isinstance(correction, Circuit)
+    assert correction.gates
     assert all(gate.ions == (1,) for gate in correction.gates)
 
 
@@ -156,9 +158,21 @@ def test_reader_names_unsupported_operations(original: str, replacement: str, me
 
 def test_reader_rejects_a_condition_on_an_unset_bit() -> None:
     """Refuse a branch that reads a classical bit that no measurement sets."""
-    text = _read("teleportation").replace("    cbit.store %b, %c[%c0] : !cbit.reg<2>\n", "", 1)
+    lines = _read("teleportation").splitlines()
+    store = lines.index("    cbit.store %b, %c[%c0] : !cbit.reg<2>")
+    text = "\n".join((*lines[:store], *lines[store + 1 :]))
 
     with pytest.raises(ValueError, match="never set"):
+        parse_program(text)
+
+
+def test_reader_rejects_a_register_write_in_a_loop_condition() -> None:
+    """Refuse a while-loop condition region that changes a register, because the program would lose the write."""
+    lines = _read("repeat_until_success").splitlines()
+    load = lines.index("      %b = cbit.load %c[%c0] : !cbit.reg<1>")
+    text = "\n".join((*lines[: load + 1], "      cbit.store %b, %c[%c0] : !cbit.reg<1>", *lines[load + 1 :]))
+
+    with pytest.raises(ValueError, match="must not write classical registers"):
         parse_program(text)
 
 
